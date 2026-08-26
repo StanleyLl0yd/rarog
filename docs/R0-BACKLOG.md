@@ -55,6 +55,7 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] user-agent + author `<style>` + inline style origins
 - [x] selector invalidation key prototype
 - [x] DOM-mutation-to-style/layout/paint invalidation primitives
+- [x] persistent dirty state survives across DOM mutations until a render consumes it
 - [ ] style sharing/cache design note
 - [ ] descendant/sibling selector invalidation dependencies
 - [ ] standards-oriented CSS tokenizer/parser adapter
@@ -68,10 +69,11 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] derived `FragmentTree`
 - [x] explicit content/padding/border/margin boxes
 - [x] deterministic Layout Tree / computed-style / Fragment Tree snapshots
+- [x] first paint-only incremental reuse experiment with persistent Layout/Fragment geometry
 - [ ] containing-block model beyond the bootstrap available-width input
 - [ ] intrinsic sizing interface
 - [ ] text run abstraction (without committing to a shaping backend)
-- [ ] persistent dirty flags / incremental relayout application
+- [ ] incremental relayout application for geometry-affecting dirty nodes
 - [ ] fragmentation cases that produce multiple fragments per layout node
 
 ### Required invariant
@@ -92,6 +94,7 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [ ] stacking-context representation
 - [ ] transforms/opacity representation
 - [ ] retained display-list experiment
+- [ ] damage-scoped raster update instead of full framebuffer rerasterization
 
 ## P0 — platform boundary
 
@@ -114,6 +117,7 @@ Win32, WinRT, Direct3D and other Windows-specific APIs must not leak into DOM, H
 
 - [x] `render_html` orchestration bootstrap
 - [x] previous-display-list input and damage output for bootstrap rendering
+- [x] stateful R0 `RenderSession` bootstrap for mutation → dirty state → update orchestration
 - [ ] `Engine` object
 - [ ] `View` object
 - [ ] navigation/request interfaces without networking implementation
@@ -145,6 +149,8 @@ peak temporary memory
 persistent document memory
 ```
 
+Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `full rebuild`) and how many nodes were dirtied/patched.
+
 R0 may use wall-clock timers; later milestones replace these with a structured tracing system.
 
 ## R0 exit test
@@ -158,5 +164,7 @@ Given a committed HTML fixture, repeated runs on the same architecture/toolchain
 5. an identical display list with identical display-item IDs;
 6. an identical framebuffer hash;
 7. an identical combined deterministic render-signature hash.
+
+The stateful R0 path must also prove that a paint-only computed-style mutation can reuse existing Layout/Fragment geometry, while a geometry-affecting or structural mutation falls back to a deterministic full rebuild.
 
 The same deterministic test must pass in the Windows-primary CI lane. Only after the R0 pipeline and remaining bootstrap interfaces are stable do we start R1 standards work.
