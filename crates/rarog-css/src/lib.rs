@@ -10,10 +10,26 @@ pub struct EdgeSizes {
 }
 
 impl EdgeSizes {
-    pub const ZERO: Self = Self { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 };
-    pub fn all(v: f32) -> Self { Self { top: v, right: v, bottom: v, left: v } }
-    pub fn horizontal(self) -> f32 { self.left + self.right }
-    pub fn vertical(self) -> f32 { self.top + self.bottom }
+    pub const ZERO: Self = Self {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    pub fn all(v: f32) -> Self {
+        Self {
+            top: v,
+            right: v,
+            bottom: v,
+            left: v,
+        }
+    }
+    pub fn horizontal(self) -> f32 {
+        self.left + self.right
+    }
+    pub fn vertical(self) -> f32 {
+        self.top + self.bottom
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,13 +43,21 @@ pub struct ComputedStyle {
 
 impl Default for ComputedStyle {
     fn default() -> Self {
-        Self { width: None, height: None, padding: EdgeSizes::ZERO, background: Color::TRANSPARENT, display_none: false }
+        Self {
+            width: None,
+            height: None,
+            padding: EdgeSizes::ZERO,
+            background: Color::TRANSPARENT,
+            display_none: false,
+        }
     }
 }
 
 pub fn computed_style(doc: &Document, node: NodeId) -> ComputedStyle {
     let mut style = ComputedStyle::default();
-    let NodeKind::Element(el) = &doc.node(node).kind else { return style; };
+    let NodeKind::Element(el) = &doc.node(node).kind else {
+        return style;
+    };
 
     if el.tag_name == "body" {
         style.background = Color::WHITE;
@@ -42,14 +66,24 @@ pub fn computed_style(doc: &Document, node: NodeId) -> ComputedStyle {
 
     if let Some(inline) = el.attributes.get("style") {
         for decl in inline.split(';') {
-            let Some((name, value)) = decl.split_once(':') else { continue; };
+            let Some((name, value)) = decl.split_once(':') else {
+                continue;
+            };
             let name = name.trim().to_ascii_lowercase();
             let value = value.trim();
             match name.as_str() {
                 "width" => style.width = parse_px(value),
                 "height" => style.height = parse_px(value),
-                "padding" => if let Some(v) = parse_px(value) { style.padding = EdgeSizes::all(v); },
-                "background" | "background-color" => if let Some(c) = parse_color(value) { style.background = c; },
+                "padding" => {
+                    if let Some(v) = parse_px(value) {
+                        style.padding = EdgeSizes::all(v);
+                    }
+                }
+                "background" | "background-color" => {
+                    if let Some(c) = parse_color(value) {
+                        style.background = c;
+                    }
+                }
                 "display" if value.eq_ignore_ascii_case("none") => style.display_none = true,
                 _ => {}
             }
@@ -59,7 +93,12 @@ pub fn computed_style(doc: &Document, node: NodeId) -> ComputedStyle {
 }
 
 fn parse_px(value: &str) -> Option<f32> {
-    value.trim().strip_suffix("px").unwrap_or(value.trim()).parse().ok()
+    value
+        .trim()
+        .strip_suffix("px")
+        .unwrap_or(value.trim())
+        .parse()
+        .ok()
 }
 
 fn parse_color(value: &str) -> Option<Color> {
@@ -69,7 +108,9 @@ fn parse_color(value: &str) -> Option<Color> {
         "black" => Some(Color::BLACK),
         _ => {
             let hex = v.strip_prefix('#')?;
-            if hex.len() != 6 { return None; }
+            if hex.len() != 6 {
+                return None;
+            }
             Some(Color::rgb(
                 u8::from_str_radix(&hex[0..2], 16).ok()?,
                 u8::from_str_radix(&hex[2..4], 16).ok()?,

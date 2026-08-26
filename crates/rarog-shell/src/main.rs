@@ -1,5 +1,5 @@
-use std::{env, fs, process::ExitCode};
 use rarog_engine::{RenderOptions, render_html};
+use std::{env, fs, process::ExitCode};
 
 fn main() -> ExitCode {
     match run() {

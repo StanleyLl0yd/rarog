@@ -30,24 +30,43 @@ pub struct Document {
 
 impl Document {
     pub fn new() -> Self {
-        let root = Node { kind: NodeKind::Document, parent: None, children: Vec::new() };
-        Self { nodes: vec![root], root: 0 }
+        let root = Node {
+            kind: NodeKind::Document,
+            parent: None,
+            children: Vec::new(),
+        };
+        Self {
+            nodes: vec![root],
+            root: 0,
+        }
     }
 
-    pub fn root(&self) -> NodeId { self.root }
-    pub fn node(&self, id: NodeId) -> &Node { &self.nodes[id] }
-    pub fn children(&self, id: NodeId) -> &[NodeId] { &self.nodes[id].children }
+    pub fn root(&self) -> NodeId {
+        self.root
+    }
+    pub fn node(&self, id: NodeId) -> &Node {
+        &self.nodes[id]
+    }
+    pub fn children(&self, id: NodeId) -> &[NodeId] {
+        &self.nodes[id].children
+    }
 
     pub fn append(&mut self, parent: NodeId, kind: NodeKind) -> NodeId {
         let id = self.nodes.len();
-        self.nodes.push(Node { kind, parent: Some(parent), children: Vec::new() });
+        self.nodes.push(Node {
+            kind,
+            parent: Some(parent),
+            children: Vec::new(),
+        });
         self.nodes[parent].children.push(id);
         id
     }
 }
 
 impl Default for Document {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

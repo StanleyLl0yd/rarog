@@ -10,7 +10,13 @@ pub struct RenderOptions {
 
 impl Default for RenderOptions {
     fn default() -> Self {
-        Self { viewport: Size { width: 1024.0, height: 768.0 }, background: Color::WHITE }
+        Self {
+            viewport: Size {
+                width: 1024.0,
+                height: 768.0,
+            },
+            background: Color::WHITE,
+        }
     }
 }
 
@@ -26,7 +32,11 @@ pub fn render_html(source: &str, options: RenderOptions) -> RenderOutput {
     let display_list = build_display_list(&layout);
     let mut framebuffer = Framebuffer::new(options.viewport, options.background);
     framebuffer.rasterize(&display_list);
-    RenderOutput { layout, display_list, framebuffer }
+    RenderOutput {
+        layout,
+        display_list,
+        framebuffer,
+    }
 }
 
 #[cfg(test)]
