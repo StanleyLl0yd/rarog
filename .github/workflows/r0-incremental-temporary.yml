@@ -1,0 +1,46 @@
+name: Temporary R0 incremental validation
+
+on:
+  push:
+    branches:
+      - r0-persistent-dirty-incremental
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows primary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Determinism gate
+        run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+      - name: Bootstrap render
+        run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
+
+  linux-portability:
+    name: Linux portability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
+      - name: Determinism gate
+        run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+      - name: Bootstrap render
+        run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
