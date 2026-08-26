@@ -35,7 +35,8 @@ jobs:
       - name: Incremental gate
         run: |
           cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
-          cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild
+          cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_tree
+          cargo test -p rarog-engine structural_change_still_falls_back_to_full_rebuild
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -65,6 +66,7 @@ jobs:
       - name: Incremental gate
         run: |
           cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
-          cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild
+          cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_tree
+          cargo test -p rarog-engine structural_change_still_falls_back_to_full_rebuild
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
