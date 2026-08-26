@@ -524,7 +524,10 @@ pub fn parse_selector(input: &str) -> Option<Selector> {
 
     if bytes.first().copied() == Some(b'*') {
         cursor = 1;
-    } else if bytes.first().is_some_and(|byte| *byte != b'.' && *byte != b'#') {
+    } else if bytes
+        .first()
+        .is_some_and(|byte| *byte != b'.' && *byte != b'#')
+    {
         let start = cursor;
         while cursor < bytes.len() && bytes[cursor] != b'.' && bytes[cursor] != b'#' {
             cursor += 1;
@@ -843,12 +846,7 @@ impl InvalidationSet {
     }
 }
 
-fn mark_subtree(
-    document: &Document,
-    node: NodeId,
-    set: &mut InvalidationSet,
-    flags: DirtyFlags,
-) {
+fn mark_subtree(document: &Document, node: NodeId, set: &mut InvalidationSet, flags: DirtyFlags) {
     set.mark(node, flags);
     for child in document.children(node) {
         mark_subtree(document, *child, set, flags);
@@ -873,10 +871,7 @@ mod tests {
     use super::*;
     use rarog_dom::{ElementData, NodeKind};
 
-    fn document_with_element(
-        tag: &str,
-        attributes: &[(&str, &str)],
-    ) -> (Document, NodeId) {
+    fn document_with_element(tag: &str, attributes: &[(&str, &str)]) -> (Document, NodeId) {
         let mut document = Document::new();
         let mut attrs = BTreeMap::new();
         for (name, value) in attributes {

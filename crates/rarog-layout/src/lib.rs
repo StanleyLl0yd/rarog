@@ -452,9 +452,7 @@ mod tests {
     #[test]
     fn author_stylesheet_participates_in_layout() {
         let mut doc = Document::new();
-        let style = doc
-            .append_new(doc.root(), element("style", None))
-            .unwrap();
+        let style = doc.append_new(doc.root(), element("style", None)).unwrap();
         doc.append_new(style, NodeKind::Text(".card { width:42px; }".into()))
             .unwrap();
         let mut attributes = BTreeMap::new();
@@ -475,7 +473,14 @@ mod tests {
                 height: 200.0,
             },
         );
-        assert_eq!(output.fragments.root.children[0].boxes.content_box.size.width, 42.0);
+        assert_eq!(
+            output.fragments.root.children[0]
+                .boxes
+                .content_box
+                .size
+                .width,
+            42.0
+        );
     }
 
     #[test]

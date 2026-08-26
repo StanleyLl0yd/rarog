@@ -167,10 +167,7 @@ impl Document {
         &self.nodes[id].children
     }
 
-    pub fn mutation_records_since(
-        &self,
-        generation: u64,
-    ) -> impl Iterator<Item = &MutationRecord> {
+    pub fn mutation_records_since(&self, generation: u64) -> impl Iterator<Item = &MutationRecord> {
         self.mutations
             .iter()
             .filter(move |record| record.generation > generation)
