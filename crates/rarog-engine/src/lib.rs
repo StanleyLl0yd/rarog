@@ -372,7 +372,7 @@ mod tests {
         *document
             .children(document.root())
             .iter()
-            .find(|node| matches!(document.node(**node).kind, NodeKind::Element(_)))
+            .find(|node| matches!(&document.node(**node).kind, NodeKind::Element(_)))
             .expect("fixture contains an element")
     }
 
