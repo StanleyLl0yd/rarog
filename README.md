@@ -52,9 +52,11 @@ The current R0 foundation includes:
 - a stateful `RenderSession` that performs a real paint-only incremental reuse path when geometry is unchanged and falls back conservatively to a full derived-tree rebuild otherwise;
 - separate DOM, layout-node and fragment identities;
 - a derived/disposable Fragment Tree and explicit content/padding/border/margin boxes;
-- stable display-item IDs and damage rectangles between display lists;
+- display-item IDs anchored to stable DOM source identity for current one-fragment-per-node paths, plus damage rectangles between display lists;
+- bounded framebuffer allocation with checked pixel counts;
+- mutation-journal pruning after the engine consumes a DOM generation;
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
-- CI with Windows as the primary platform lane and Linux as a portability lane.
+- CI with Windows as the primary platform lane, Linux as a portability lane and an explicit Rust 1.85 MSRV check; CI actions are pinned to immutable revisions.
 
 The first incremental experiment is intentionally narrow. It proves that dirty state can survive across frames and that existing Layout Tree / Fragment Tree geometry can be reused safely for paint-only computed-style changes. It does **not** yet claim incremental relayout, retained display-list updates, standards-complete invalidation or performance gains.
 

@@ -116,8 +116,9 @@ pub struct RenderSession {
 
 impl RenderSession {
     pub fn new(source: &str, options: RenderOptions) -> Self {
-        let output = render_html(source, options);
+        let mut output = render_html(source, options);
         let generation = output.document.generation();
+        output.document.prune_mutations_through(generation);
         Self {
             options,
             document: output.document,
@@ -176,6 +177,7 @@ impl RenderSession {
         if mutations.is_empty() || dirty_nodes == 0 {
             self.damage = DamageRegion::default();
             self.dirty.clear();
+            self.document.prune_mutations_through(through_generation);
             return IncrementalReport {
                 mode: IncrementalMode::Unchanged,
                 from_generation,
@@ -251,6 +253,7 @@ impl RenderSession {
         }
 
         self.dirty.clear();
+        self.document.prune_mutations_through(through_generation);
         IncrementalReport {
             mode,
             from_generation,
@@ -450,6 +453,29 @@ mod tests {
     }
 
     #[test]
+    fn render_session_prunes_consumed_mutation_history() {
+        let mut session = RenderSession::new(
+            "<div style=\"width:80px;height:20px\">Rarog</div>",
+            deterministic_options(),
+        );
+        let node = first_element(session.document());
+        assert_eq!(session.document().mutation_record_count(), 0);
+
+        session
+            .document_mut()
+            .set_attribute(node, "title", "metadata")
+            .unwrap();
+        assert_eq!(session.document().mutation_record_count(), 1);
+        session.update();
+
+        assert_eq!(session.document().mutation_record_count(), 0);
+        assert_eq!(
+            session.document().mutation_history_floor(),
+            session.document().generation()
+        );
+    }
+
+    #[test]
     fn paint_only_update_reuses_layout_and_fragment_geometry() {
         let mut session = RenderSession::new(
             "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div>",
@@ -556,7 +582,7 @@ mod tests {
         );
         assert_eq!(
             first.deterministic_signature_hash(),
-            12_885_545_535_776_656_151
+            13_019_471_889_845_055_156
         );
     }
 }

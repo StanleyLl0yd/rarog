@@ -114,7 +114,7 @@ The R0 mutation surface establishes these rules:
 - detached nodes are valid DOM objects;
 - `validate_invariants` is available for deterministic tests and debug checks.
 
-Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary.
+Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary. `Document` also tracks a mutation-history floor; once the active engine consumer has advanced through a generation, older records are pruned so a long-lived document does not retain an unbounded journal. Requests older than the retained floor fail loudly instead of silently producing incomplete invalidation input.
 
 This keeps the direction of dependency clear:
 
@@ -239,7 +239,7 @@ This is a geometry foundation, **not** a claim of CSS box-model compliance. Marg
 
 ## Paint identity and damage tracking
 
-The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. IDs are derived from fragment identity plus a command slot, so an unchanged bootstrap fragment emits the same item IDs on repeated deterministic builds.
+The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. For the current one-fragment-per-DOM-node bootstrap path, IDs are anchored to stable DOM source identity plus a command slot; anonymous/future sources fall back to layout identity. This avoids unrelated fragment renumbering churning display IDs while keeping the representation replaceable before general fragmentation.
 
 Damage is computed by comparing previous and current display lists by item ID:
 
@@ -263,7 +263,7 @@ The R0 pipeline exposes deterministic textual snapshots for:
 - Fragment Tree geometry;
 - display-item IDs and commands.
 
-The software framebuffer exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels. `rarog-engine` combines the textual snapshots and framebuffer hash into a deterministic render-signature hash used as a regression gate.
+The software framebuffer enforces a checked R0 pixel budget before allocation and exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels. `rarog-engine` combines the textual snapshots and framebuffer hash into a deterministic render-signature hash used as a regression gate.
 
 This is not a cryptographic hash and must never be used for security decisions. It is a small deterministic regression fingerprint for R0.
 

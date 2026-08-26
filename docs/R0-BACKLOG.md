@@ -18,6 +18,8 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] deterministic framebuffer hash and combined render-signature hash
 - [x] explicit deterministic-render CI gate
 - [x] explicit incremental reuse/fallback CI gate
+- [x] explicit Rust 1.85 MSRV check
+- [x] immutable CI action pinning
 - [ ] benchmark harness with no performance claims yet
 
 ## P0 — DOM model
@@ -29,6 +31,7 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] element attribute and text mutation primitives
 - [x] explicit document generation ID
 - [x] generation-ordered mutation records for invalidation consumers
+- [x] mutation-history pruning/checkpoint after the active engine consumer advances
 - [ ] element namespace representation
 - [ ] interned atom/string strategy ADR
 
@@ -88,7 +91,9 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] paint consumes Fragment Tree rather than drawing from layout code
 - [x] bootstrap background and border painting
 - [x] stable deterministic display-item IDs for current fragment commands
+- [x] current display-item identity anchored to DOM source identity so unrelated fragment renumbering does not churn retained IDs
 - [x] damage rectangles by comparing previous/current display lists
+- [x] checked framebuffer allocation with an explicit R0 pixel budget
 - [x] deterministic display-list snapshot
 - [x] stable framebuffer hash
 - [ ] clip commands

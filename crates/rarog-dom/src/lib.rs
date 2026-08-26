@@ -125,6 +125,7 @@ pub struct Document {
     nodes: Vec<Node>,
     root: NodeId,
     generation: u64,
+    mutation_floor: u64,
     mutations: Vec<MutationRecord>,
 }
 
@@ -139,6 +140,7 @@ impl Document {
             nodes: vec![root],
             root: 0,
             generation: 0,
+            mutation_floor: 0,
             mutations: Vec::new(),
         }
     }
@@ -168,9 +170,30 @@ impl Document {
     }
 
     pub fn mutation_records_since(&self, generation: u64) -> impl Iterator<Item = &MutationRecord> {
+        assert!(
+            generation >= self.mutation_floor,
+            "mutation history before generation {} was pruned",
+            self.mutation_floor
+        );
         self.mutations
             .iter()
             .filter(move |record| record.generation > generation)
+    }
+
+    pub fn mutation_history_floor(&self) -> u64 {
+        self.mutation_floor
+    }
+
+    pub fn mutation_record_count(&self) -> usize {
+        self.mutations.len()
+    }
+
+    pub fn prune_mutations_through(&mut self, generation: u64) -> usize {
+        let cutoff = generation.min(self.generation);
+        let before = self.mutations.len();
+        self.mutations.retain(|record| record.generation > cutoff);
+        self.mutation_floor = self.mutation_floor.max(cutoff);
+        before - self.mutations.len()
     }
 
     pub fn create_node(&mut self, kind: NodeKind) -> Result<NodeId, MutationError> {
@@ -500,6 +523,20 @@ mod tests {
         assert_eq!(doc.node(child).parent, Some(doc.root()));
         assert_eq!(doc.children(doc.root()), &[child]);
         assert_eq!(doc.validate_invariants(), Ok(()));
+    }
+
+    #[test]
+    fn mutation_history_can_be_pruned_after_consumption() {
+        let mut doc = Document::new();
+        let first = doc.append_new(doc.root(), element("div")).unwrap();
+        let consumed = doc.generation();
+        doc.set_attribute(first, "class", "card").unwrap();
+
+        assert_eq!(doc.mutation_record_count(), 2);
+        assert_eq!(doc.prune_mutations_through(consumed), 1);
+        assert_eq!(doc.mutation_history_floor(), consumed);
+        assert_eq!(doc.mutation_record_count(), 1);
+        assert_eq!(doc.mutation_records_since(consumed).count(), 1);
     }
 
     #[test]

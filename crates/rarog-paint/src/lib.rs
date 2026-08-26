@@ -1,6 +1,9 @@
 use rarog_layout::{Fragment, FragmentKind, FragmentTree};
 use rarog_types::{Color, Rect, Size};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+pub const MAX_FRAMEBUFFER_PIXELS: u64 = 67_108_864;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DisplayItemId(pub u64);
@@ -152,7 +155,11 @@ fn collect_border(fragment: &Fragment, list: &mut DisplayList) {
 }
 
 fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {
-    DisplayItemId(((fragment.id.index() as u64) << 8) | u64::from(slot))
+    let source = fragment
+        .dom_node
+        .map(|node| node as u64)
+        .unwrap_or_else(|| (1_u64 << 55) | fragment.layout_node.index() as u64);
+    DisplayItemId((source << 8) | u64::from(slot))
 }
 
 fn push_fill(list: &mut DisplayList, id: DisplayItemId, rect: Rect, color: Color) {
@@ -220,6 +227,32 @@ fn indexed_commands(list: &DisplayList) -> BTreeMap<DisplayItemId, DisplayComman
         .collect()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FramebufferError {
+    NonFiniteSize,
+    DimensionsTooLarge,
+    PixelCountOverflow,
+    PixelLimitExceeded { pixels: u64, limit: u64 },
+}
+
+impl fmt::Display for FramebufferError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonFiniteSize => formatter.write_str("framebuffer size must be finite"),
+            Self::DimensionsTooLarge => formatter.write_str("framebuffer dimensions exceed u32"),
+            Self::PixelCountOverflow => formatter.write_str("framebuffer pixel count overflow"),
+            Self::PixelLimitExceeded { pixels, limit } => {
+                write!(
+                    formatter,
+                    "framebuffer requires {pixels} pixels; limit is {limit}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for FramebufferError {}
+
 #[derive(Clone, Debug)]
 pub struct Framebuffer {
     pub width: u32,
@@ -229,13 +262,39 @@ pub struct Framebuffer {
 
 impl Framebuffer {
     pub fn new(size: Size, background: Color) -> Self {
-        let width = size.width.max(1.0).round() as u32;
-        let height = size.height.max(1.0).round() as u32;
-        Self {
+        Self::try_new(size, background)
+            .expect("framebuffer dimensions must fit the R0 safety budget")
+    }
+
+    pub fn try_new(size: Size, background: Color) -> Result<Self, FramebufferError> {
+        if !size.width.is_finite() || !size.height.is_finite() {
+            return Err(FramebufferError::NonFiniteSize);
+        }
+
+        let width = size.width.max(1.0).round();
+        let height = size.height.max(1.0).round();
+        if width > u32::MAX as f32 || height > u32::MAX as f32 {
+            return Err(FramebufferError::DimensionsTooLarge);
+        }
+
+        let width = width as u32;
+        let height = height as u32;
+        let pixels = u64::from(width)
+            .checked_mul(u64::from(height))
+            .ok_or(FramebufferError::PixelCountOverflow)?;
+        if pixels > MAX_FRAMEBUFFER_PIXELS {
+            return Err(FramebufferError::PixelLimitExceeded {
+                pixels,
+                limit: MAX_FRAMEBUFFER_PIXELS,
+            });
+        }
+        let length = usize::try_from(pixels).map_err(|_| FramebufferError::PixelCountOverflow)?;
+
+        Ok(Self {
             width,
             height,
-            pixels: vec![background; (width * height) as usize],
-        }
+            pixels: vec![background; length],
+        })
     }
 
     pub fn rasterize(&mut self, list: &DisplayList) {
@@ -323,6 +382,21 @@ mod tests {
     fn unchanged_display_list_has_no_damage() {
         let list = single_fill(1, Rect::new(0.0, 0.0, 10.0, 10.0), Color::BLACK);
         assert!(DamageRegion::between(Some(&list), &list).rects.is_empty());
+    }
+
+    #[test]
+    fn framebuffer_rejects_unbounded_allocations() {
+        let result = Framebuffer::try_new(
+            Size {
+                width: 100_000.0,
+                height: 100_000.0,
+            },
+            Color::WHITE,
+        );
+        assert!(matches!(
+            result,
+            Err(FramebufferError::PixelLimitExceeded { .. })
+        ));
     }
 
     #[test]
