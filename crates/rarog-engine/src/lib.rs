@@ -166,7 +166,10 @@ mod tests {
             first.layout.fragments.snapshot(),
             second.layout.fragments.snapshot()
         );
-        assert_eq!(first.display_list.snapshot(), second.display_list.snapshot());
+        assert_eq!(
+            first.display_list.snapshot(),
+            second.display_list.snapshot()
+        );
         assert_eq!(
             first.framebuffer.stable_hash64(),
             second.framebuffer.stable_hash64()
@@ -180,6 +183,9 @@ mod tests {
             first.framebuffer.stable_hash64(),
             13_219_555_538_035_458_927
         );
-        assert_eq!(first.deterministic_signature_hash(), 0);
+        assert_eq!(
+            first.deterministic_signature_hash(),
+            12_885_545_535_776_656_151
+        );
     }
 }
