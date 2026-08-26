@@ -1,0 +1,106 @@
+name: Update R0 retained rendering docs
+
+on:
+  push:
+    branches:
+      - r0-subtree-retained-damage
+    paths:
+      - .github/workflows/r0-update-retained-docs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-subtree-retained-damage
+      - name: Update documentation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"pattern not found in {path}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          patch(
+              "README.md",
+              "   ├─ paint-only style change → reuse Layout/Fragment geometry\n   ├─ geometry-only style change → retain Layout Tree + rebuild fragments\n   └─ structural/text/display-membership change → deterministic full rebuild\n",
+              "   ├─ paint-only style change → reuse Layout/Fragment geometry + retained paint update\n   ├─ footprint-safe geometry change → subtree Fragment relayout\n   ├─ vertical-footprint geometry change → retain Layout Tree + rebuild Fragment Tree\n   └─ structural/text/display-membership change → deterministic full rebuild\n",
+          )
+          patch(
+              "README.md",
+              "- a stateful `RenderSession` with paint-only reuse, geometry relayout from a retained Layout Tree, and conservative full-rebuild fallback for structural/text/display-membership changes;\n",
+              "- a stateful `RenderSession` with paint-only reuse, footprint-safe subtree Fragment relayout, whole-Fragment-Tree geometry fallback from a retained Layout Tree, and conservative full rebuild for structural/text/display-membership changes;\n",
+          )
+          patch(
+              "README.md",
+              "- display-item IDs anchored to stable DOM source identity for current one-fragment-per-node paths, plus damage rectangles between display lists;\n",
+              "- display-item IDs anchored to stable DOM source identity, retained replacement of affected display-list ranges when safe, and damage rectangles between display lists;\n- damage-scoped software framebuffer updates that clear and rerasterize only damaged rectangles;\n",
+          )
+          patch(
+              "README.md",
+              "The incremental experiment is intentionally narrow. It proves that dirty state can survive across frames, paint-only changes can reuse Layout/Fragment geometry, and geometry-only style changes can retain the Layout Tree while rebuilding Fragment geometry. It does **not** yet claim subtree-local relayout, retained display-list updates, standards-complete invalidation or performance gains.\n",
+              "The incremental experiment is intentionally narrow. It now proves paint-only retained updates, subtree-local Fragment relayout for geometry changes that preserve vertical flow footprint, whole-Fragment-Tree relayout when vertical flow may move siblings, and damage-scoped software raster updates. It does **not** yet claim general CSS incremental reflow, fragmentation-aware retained painting, standards-complete invalidation or measured performance gains.\n",
+          )
+          patch(
+              "README.md",
+              "cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild\n",
+              "cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_tree\ncargo test -p rarog-engine vertical_geometry_change_uses_full_fragment_relayout\ncargo test -p rarog-paint retained_display_patch_preserves_unrelated_items\ncargo test -p rarog-paint damage_raster_matches_full_raster\n",
+          )
+
+          patch(
+              "docs/R0-BACKLOG.md",
+              "- [ ] subtree-local incremental relayout for geometry-affecting dirty nodes\n",
+              "- [x] first subtree-local incremental relayout for geometry changes that preserve vertical flow footprint\n- [ ] ancestor/sibling-aware local reflow for vertical-footprint changes\n",
+          )
+          patch(
+              "docs/R0-BACKLOG.md",
+              "- [ ] retained display-list experiment\n- [ ] damage-scoped raster update instead of full framebuffer rerasterization\n",
+              "- [x] retained display-list replacement experiment for affected fragment subtrees\n- [x] damage-scoped software raster update instead of full framebuffer rerasterization\n- [ ] fragmentation/stacking/clip-aware retained display-list updates\n",
+          )
+          patch(
+              "docs/R0-BACKLOG.md",
+              "Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `full rebuild`) and how many nodes were dirtied/patched.\n",
+              "Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `subtree relayout`, `geometry relayout`, `full rebuild`) and how many nodes were dirtied/patched.\n",
+          )
+          patch(
+              "docs/R0-BACKLOG.md",
+              "The stateful R0 path must also prove that a paint-only computed-style mutation can reuse existing Layout/Fragment geometry, while a geometry-affecting or structural mutation falls back to a deterministic full rebuild.\n",
+              "The stateful R0 path must also prove paint-only reuse, footprint-safe subtree relayout, deterministic whole-Fragment-Tree fallback for geometry that can move siblings, and a deterministic full rebuild for structural changes.\n",
+          )
+
+          patch(
+              "docs/ARCHITECTURE.md",
+              "  ├─ paint-only computed-style change → reuse Layout/Fragment geometry\n  ├─ geometry-only computed-style change → retain Layout Tree + rebuild fragments\n  └─ structure/text/display-membership change → deterministic full rebuild\n",
+              "  ├─ paint-only computed-style change → reuse geometry + retained paint update\n  ├─ footprint-safe geometry change → subtree Fragment relayout\n  ├─ vertical-footprint geometry change → retain Layout Tree + rebuild Fragment Tree\n  └─ structure/text/display-membership change → deterministic full rebuild\n",
+          )
+          old = "The first reuse path is intentionally narrow:\n\n1. collect DOM mutations since the last consumed generation;\n2. accumulate the corresponding dirty entries;\n3. for `id`, `class` and inline `style` mutations, recompute the affected element style;\n4. compare geometry/visibility fields with the style stored on the current Layout Tree;\n5. if only paint values changed, patch style on the existing Layout Tree and Fragment Tree nodes while preserving their geometry and identities;\n6. otherwise rebuild derived layout/fragment state deterministically.\n\nThe geometry-affecting comparison currently includes width, height, margin, border width, padding and `display`. Background and border color are treated as paint-only values.\n\nGeometry-affecting style changes that preserve layout-tree membership now patch computed style on the retained Layout Tree and rebuild Fragment geometry through the explicit containing-block path. Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid still fall back to a full rebuild.\n\nThe current experiment still regenerates the display list and rerasterizes the full software framebuffer after both paint-only updates and geometry relayout. The geometry relayout also rebuilds the whole Fragment Tree rather than only the affected subtree. Therefore this proves safe retained Layout Tree reuse and a relayout boundary, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and subtree-local relayout remain later work.\n"
+          new = "The current reuse path is intentionally conservative:\n\n1. collect DOM mutations since the last consumed generation and accumulate dirty entries;\n2. recompute affected element styles for `id`, `class` and inline `style` mutations;\n3. patch paint-only changes onto retained Layout/Fragment state;\n4. for geometry changes that preserve vertical flow footprint, rebuild only the affected Fragment subtree from its parent's content-box containing block;\n5. if height or vertical margin/padding/border can move following siblings, retain the Layout Tree but rebuild the whole Fragment Tree;\n6. structural mutations, text changes, display-membership changes or unprovable cases use the deterministic full-rebuild fallback.\n\nThe geometry-affecting comparison includes width, height, margin, border width, padding and `display`. Background and border color remain paint-only values. The current subtree-safety rule deliberately treats only vertical footprint as the hard flow boundary because the bootstrap text path does not wrap yet. This rule must become formatting-context-aware before it can represent general CSS incremental reflow.\n\nPaint now retains unaffected display-list ranges when an affected fragment subtree already has a stable command range. If that range cannot be patched safely, the engine regenerates the display list. Damage is still derived by stable display-item identity. The persistent software framebuffer is then cleared and rerasterized only inside the resulting damage rectangles, with commands clipped to each damaged rectangle.\n\nThis proves narrower retained work boundaries and pixel-equivalent damage rasterization, **not a measured end-to-end performance win**. General ancestor/sibling reflow, fragmentation-aware retained painting, stacking/clip/transform-aware damage and compositor integration remain later work.\n"
+          patch("docs/ARCHITECTURE.md", old, new)
+          patch(
+              "docs/ARCHITECTURE.md",
+              "The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. Retained display lists, clip/transform-aware damage, occlusion, damage-scoped raster and compositor damage are later work.\n",
+              "The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. R0 can replace the stable command range belonging to an affected fragment subtree and preserve unrelated commands; if a stable previous range does not exist, it falls back to display-list regeneration. The software framebuffer clears damaged rectangles to the frame background and replays only command portions intersecting those rectangles. Clip/transform-aware damage, occlusion, stacking-aware retained updates and compositor damage remain later work.\n",
+          )
+          patch(
+              "docs/ARCHITECTURE.md",
+              "The stateful incremental tests add another invariant: a paint-only style mutation must preserve Layout Tree / Fragment Tree geometry snapshots, while a geometry-affecting mutation must select the full-rebuild fallback.\n",
+              "The stateful incremental tests add invariants for paint-only geometry preservation, footprint-safe subtree relayout, whole-Fragment-Tree fallback when vertical flow can move siblings, retained display-list replacement, and damage-scoped raster output equivalence with a full reraster.\n",
+          )
+          PY
+      - name: Commit documentation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md docs
+          git commit -m "Document retained subtree rendering boundaries"
+          git push origin HEAD:r0-subtree-retained-damage
