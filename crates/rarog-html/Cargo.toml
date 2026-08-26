@@ -1,0 +1,12 @@
+[package]
+name = "rarog-html"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-dom = { path = "../rarog-dom" }
+
+[lints]
+workspace = true

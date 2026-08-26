@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/rarog-types",
+  "crates/rarog-dom",
+  "crates/rarog-html",
+  "crates/rarog-css",
+  "crates/rarog-layout",
+  "crates/rarog-paint",
+  "crates/rarog-engine",
+  "crates/rarog-shell",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Stanley Lloyd", "Rarog Project Contributors"]
+rust-version = "1.85"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

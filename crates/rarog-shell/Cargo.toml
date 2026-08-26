@@ -1,0 +1,12 @@
+[package]
+name = "rarog-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-engine = { path = "../rarog-engine" }
+
+[lints]
+workspace = true

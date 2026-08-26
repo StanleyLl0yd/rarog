@@ -1,0 +1,14 @@
+[package]
+name = "rarog-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-dom = { path = "../rarog-dom" }
+rarog-css = { path = "../rarog-css" }
+rarog-types = { path = "../rarog-types" }
+
+[lints]
+workspace = true
