@@ -63,9 +63,8 @@ pub fn parse(input: &str) -> Document {
 }
 
 fn parse_tag(input: &str) -> (String, BTreeMap<String, String>) {
-    let mut chars = input.char_indices().peekable();
     let mut tag_end = input.len();
-    while let Some((idx, ch)) = chars.next() {
+    for (idx, ch) in input.char_indices() {
         if ch.is_whitespace() {
             tag_end = idx;
             break;
