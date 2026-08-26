@@ -32,6 +32,8 @@ jobs:
         run: cargo test --workspace
       - name: Determinism gate
         run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+      - name: Incremental gate
+        run: cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry geometry_change_falls_back_to_full_rebuild
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -47,5 +49,7 @@ jobs:
         run: cargo test --workspace
       - name: Determinism gate
         run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+      - name: Incremental gate
+        run: cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry geometry_change_falls_back_to_full_rebuild
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
