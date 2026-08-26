@@ -1,0 +1,171 @@
+name: Apply R0 hardening
+
+on:
+  push:
+    branches:
+      - r0-hardening-layout-incremental
+    paths:
+      - .github/workflows/r0-apply-hardening.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-hardening-layout-incremental
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Apply hardening changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"pattern not found in {path}: {old[:80]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          patch(
+              "crates/rarog-dom/src/lib.rs",
+              "    generation: u64,\n    mutations: Vec<MutationRecord>,\n",
+              "    generation: u64,\n    mutation_floor: u64,\n    mutations: Vec<MutationRecord>,\n",
+          )
+          patch(
+              "crates/rarog-dom/src/lib.rs",
+              "            generation: 0,\n            mutations: Vec::new(),\n",
+              "            generation: 0,\n            mutation_floor: 0,\n            mutations: Vec::new(),\n",
+          )
+          patch(
+              "crates/rarog-dom/src/lib.rs",
+              "    pub fn mutation_records_since(&self, generation: u64) -> impl Iterator<Item = &MutationRecord> {\n        self.mutations\n            .iter()\n            .filter(move |record| record.generation > generation)\n    }\n",
+              "    pub fn mutation_records_since(&self, generation: u64) -> impl Iterator<Item = &MutationRecord> {\n        assert!(\n            generation >= self.mutation_floor,\n            \"mutation history before generation {} was pruned\",\n            self.mutation_floor\n        );\n        self.mutations\n            .iter()\n            .filter(move |record| record.generation > generation)\n    }\n\n    pub fn mutation_history_floor(&self) -> u64 {\n        self.mutation_floor\n    }\n\n    pub fn mutation_record_count(&self) -> usize {\n        self.mutations.len()\n    }\n\n    pub fn prune_mutations_through(&mut self, generation: u64) -> usize {\n        let cutoff = generation.min(self.generation);\n        let before = self.mutations.len();\n        self.mutations.retain(|record| record.generation > cutoff);\n        self.mutation_floor = self.mutation_floor.max(cutoff);\n        before - self.mutations.len()\n    }\n",
+          )
+          patch(
+              "crates/rarog-dom/src/lib.rs",
+              "    fn reparent_updates_both_sides_of_the_relationship() {",
+              "    fn mutation_history_can_be_pruned_after_consumption() {\n        let mut doc = Document::new();\n        let first = doc.append_new(doc.root(), element(\"div\")).unwrap();\n        let consumed = doc.generation();\n        doc.set_attribute(first, \"class\", \"card\").unwrap();\n\n        assert_eq!(doc.mutation_record_count(), 2);\n        assert_eq!(doc.prune_mutations_through(consumed), 1);\n        assert_eq!(doc.mutation_history_floor(), consumed);\n        assert_eq!(doc.mutation_record_count(), 1);\n        assert_eq!(doc.mutation_records_since(consumed).count(), 1);\n    }\n\n    #[test]\n    fn reparent_updates_both_sides_of_the_relationship() {",
+          )
+
+          patch(
+              "crates/rarog-paint/src/lib.rs",
+              "use std::collections::{BTreeMap, BTreeSet};\n",
+              "use std::collections::{BTreeMap, BTreeSet};\nuse std::fmt;\n\npub const MAX_FRAMEBUFFER_PIXELS: u64 = 67_108_864;\n",
+          )
+          patch(
+              "crates/rarog-paint/src/lib.rs",
+              "fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {\n    DisplayItemId(((fragment.id.index() as u64) << 8) | u64::from(slot))\n}\n",
+              "fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {\n    let source = fragment\n        .dom_node\n        .map(|node| node as u64)\n        .unwrap_or_else(|| (1_u64 << 55) | fragment.layout_node.index() as u64);\n    DisplayItemId((source << 8) | u64::from(slot))\n}\n",
+          )
+          patch(
+              "crates/rarog-paint/src/lib.rs",
+              "#[derive(Clone, Debug)]\npub struct Framebuffer {",
+              "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum FramebufferError {\n    NonFiniteSize,\n    DimensionsTooLarge,\n    PixelCountOverflow,\n    PixelLimitExceeded { pixels: u64, limit: u64 },\n}\n\nimpl fmt::Display for FramebufferError {\n    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {\n        match self {\n            Self::NonFiniteSize => formatter.write_str(\"framebuffer size must be finite\"),\n            Self::DimensionsTooLarge => formatter.write_str(\"framebuffer dimensions exceed u32\"),\n            Self::PixelCountOverflow => formatter.write_str(\"framebuffer pixel count overflow\"),\n            Self::PixelLimitExceeded { pixels, limit } => {\n                write!(formatter, \"framebuffer requires {pixels} pixels; limit is {limit}\")\n            }\n        }\n    }\n}\n\nimpl std::error::Error for FramebufferError {}\n\n#[derive(Clone, Debug)]\npub struct Framebuffer {",
+          )
+          patch(
+              "crates/rarog-paint/src/lib.rs",
+              "impl Framebuffer {\n    pub fn new(size: Size, background: Color) -> Self {\n        let width = size.width.max(1.0).round() as u32;\n        let height = size.height.max(1.0).round() as u32;\n        Self {\n            width,\n            height,\n            pixels: vec![background; (width * height) as usize],\n        }\n    }\n",
+              "impl Framebuffer {\n    pub fn new(size: Size, background: Color) -> Self {\n        Self::try_new(size, background).expect(\"framebuffer dimensions must fit the R0 safety budget\")\n    }\n\n    pub fn try_new(size: Size, background: Color) -> Result<Self, FramebufferError> {\n        if !size.width.is_finite() || !size.height.is_finite() {\n            return Err(FramebufferError::NonFiniteSize);\n        }\n\n        let width = size.width.max(1.0).round();\n        let height = size.height.max(1.0).round();\n        if width > u32::MAX as f32 || height > u32::MAX as f32 {\n            return Err(FramebufferError::DimensionsTooLarge);\n        }\n\n        let width = width as u32;\n        let height = height as u32;\n        let pixels = u64::from(width)\n            .checked_mul(u64::from(height))\n            .ok_or(FramebufferError::PixelCountOverflow)?;\n        if pixels > MAX_FRAMEBUFFER_PIXELS {\n            return Err(FramebufferError::PixelLimitExceeded {\n                pixels,\n                limit: MAX_FRAMEBUFFER_PIXELS,\n            });\n        }\n        let length = usize::try_from(pixels).map_err(|_| FramebufferError::PixelCountOverflow)?;\n\n        Ok(Self {\n            width,\n            height,\n            pixels: vec![background; length],\n        })\n    }\n",
+          )
+          patch(
+              "crates/rarog-paint/src/lib.rs",
+              "    fn framebuffer_hash_is_stable() {",
+              "    fn framebuffer_rejects_unbounded_allocations() {\n        let result = Framebuffer::try_new(\n            Size {\n                width: 100_000.0,\n                height: 100_000.0,\n            },\n            Color::WHITE,\n        );\n        assert!(matches!(\n            result,\n            Err(FramebufferError::PixelLimitExceeded { .. })\n        ));\n    }\n\n    #[test]\n    fn framebuffer_hash_is_stable() {",
+          )
+
+          patch(
+              "crates/rarog-engine/src/lib.rs",
+              "        let output = render_html(source, options);\n        let generation = output.document.generation();\n        Self {",
+              "        let mut output = render_html(source, options);\n        let generation = output.document.generation();\n        output.document.prune_mutations_through(generation);\n        Self {",
+          )
+          patch(
+              "crates/rarog-engine/src/lib.rs",
+              "            self.dirty.clear();\n            return IncrementalReport {",
+              "            self.dirty.clear();\n            self.document.prune_mutations_through(through_generation);\n            return IncrementalReport {",
+          )
+          patch(
+              "crates/rarog-engine/src/lib.rs",
+              "        self.dirty.clear();\n        IncrementalReport {",
+              "        self.dirty.clear();\n        self.document.prune_mutations_through(through_generation);\n        IncrementalReport {",
+          )
+          patch(
+              "crates/rarog-engine/src/lib.rs",
+              "    fn paint_only_update_reuses_layout_and_fragment_geometry() {",
+              "    fn render_session_prunes_consumed_mutation_history() {\n        let mut session = RenderSession::new(\n            \"<div style=\\\"width:80px;height:20px\\\">Rarog</div>\",\n            deterministic_options(),\n        );\n        let node = first_element(session.document());\n        assert_eq!(session.document().mutation_record_count(), 0);\n\n        session\n            .document_mut()\n            .set_attribute(node, \"title\", \"metadata\")\n            .unwrap();\n        assert_eq!(session.document().mutation_record_count(), 1);\n        session.update();\n\n        assert_eq!(session.document().mutation_record_count(), 0);\n        assert_eq!(\n            session.document().mutation_history_floor(),\n            session.document().generation()\n        );\n    }\n\n    #[test]\n    fn paint_only_update_reuses_layout_and_fragment_geometry() {",
+          )
+
+          ci = Path(".github/workflows/ci.yml")
+          text = ci.read_text()
+          text = text.replace("actions/checkout@v5", "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09")
+          text = text.replace("dtolnay/rust-toolchain@stable", "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c")
+          marker = "  linux-portability:\n"
+          msrv = "  msrv:\n    name: MSRV 1.85\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09\n      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c\n        with:\n          toolchain: 1.85.0\n      - name: Check MSRV\n        run: cargo check --workspace --all-targets\n\n"
+          if marker not in text:
+              raise SystemExit("CI marker not found")
+          ci.write_text(text.replace(marker, msrv + marker, 1))
+
+          patch(
+              "README.md",
+              "- stable display-item IDs and damage rectangles between display lists;\n",
+              "- display-item IDs anchored to stable DOM source identity for current one-fragment-per-node paths, plus damage rectangles between display lists;\n- bounded framebuffer allocation with checked pixel counts;\n- mutation-journal pruning after the engine consumes a DOM generation;\n",
+          )
+          patch(
+              "README.md",
+              "- CI with Windows as the primary platform lane and Linux as a portability lane.\n",
+              "- CI with Windows as the primary platform lane, Linux as a portability lane and an explicit Rust 1.85 MSRV check; CI actions are pinned to immutable revisions.\n",
+          )
+          patch(
+              "docs/R0-BACKLOG.md",
+              "- [x] explicit incremental reuse/fallback CI gate\n- [ ] benchmark harness with no performance claims yet\n",
+              "- [x] explicit incremental reuse/fallback CI gate\n- [x] explicit Rust 1.85 MSRV check\n- [x] immutable CI action pinning\n- [ ] benchmark harness with no performance claims yet\n",
+          )
+          patch(
+              "docs/R0-BACKLOG.md",
+              "- [x] generation-ordered mutation records for invalidation consumers\n- [ ] element namespace representation\n",
+              "- [x] generation-ordered mutation records for invalidation consumers\n- [x] mutation-history pruning/checkpoint after the active engine consumer advances\n- [ ] element namespace representation\n",
+          )
+          patch(
+              "docs/R0-BACKLOG.md",
+              "- [x] stable deterministic display-item IDs for current fragment commands\n- [x] damage rectangles by comparing previous/current display lists\n",
+              "- [x] stable deterministic display-item IDs for current fragment commands\n- [x] current display-item identity anchored to DOM source identity so unrelated fragment renumbering does not churn retained IDs\n- [x] damage rectangles by comparing previous/current display lists\n- [x] checked framebuffer allocation with an explicit R0 pixel budget\n",
+          )
+          patch(
+              "docs/ARCHITECTURE.md",
+              "Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary.\n",
+              "Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary. `Document` also tracks a mutation-history floor; once the active engine consumer has advanced through a generation, older records are pruned so a long-lived document does not retain an unbounded journal. Requests older than the retained floor fail loudly instead of silently producing incomplete invalidation input.\n",
+          )
+          patch(
+              "docs/ARCHITECTURE.md",
+              "The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. IDs are derived from fragment identity plus a command slot, so an unchanged bootstrap fragment emits the same item IDs on repeated deterministic builds.\n",
+              "The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. For the current one-fragment-per-DOM-node bootstrap path, IDs are anchored to stable DOM source identity plus a command slot; anonymous/future sources fall back to layout identity. This avoids unrelated fragment renumbering churning display IDs while keeping the representation replaceable before general fragmentation.\n",
+          )
+          patch(
+              "docs/ARCHITECTURE.md",
+              "The software framebuffer exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels.",
+              "The software framebuffer enforces a checked R0 pixel budget before allocation and exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels.",
+          )
+
+          Path(".github/workflows/r0-apply-hardening.yml").unlink()
+          PY
+      - name: Format
+        run: cargo fmt --all
+      - name: Validate
+        run: |
+          cargo check --workspace --all-targets
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Harden R0 mutation, paint, and CI foundations"
+          git push origin HEAD:r0-hardening-layout-incremental
