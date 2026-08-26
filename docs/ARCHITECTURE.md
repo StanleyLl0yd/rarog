@@ -12,6 +12,29 @@ Engineering motto:
 
 > **Compatible without becoming Chromium.**
 
+## Platform priority
+
+Rarog is **Windows-first**.
+
+The first production target is Windows 10/11, followed by other desktop platforms when the engine is mature enough to justify the porting work. This affects prioritization, test coverage and platform integration, but not the boundaries of the engine core.
+
+Windows-specific APIs must stay behind platform adapters. The DOM, HTML, CSS, layout, script-facing Web platform and compatibility layers must not depend directly on Win32, WinRT, Direct3D or other Windows-only interfaces.
+
+The first implementations of the following platform surfaces will therefore be Windows implementations:
+
+- window/event integration;
+- text and font platform integration;
+- keyboard, mouse, touch and IME input;
+- clipboard and drag-and-drop;
+- accessibility bridge;
+- sandbox/process hardening;
+- GPU/compositor backend integration;
+- file dialogs and OS capability brokering.
+
+Zorya Browser is the reference host and will also target Windows first.
+
+See ADR-0006.
+
 ## Architectural invariants
 
 1. **Compatibility is the first product requirement.** Standards conformance and real-Web behavior are measured separately.
@@ -22,6 +45,8 @@ Engineering motto:
 6. **Embedding is a first-class product.** Zorya is the reference browser, not the only possible host.
 7. **The standards engine stays clean.** Site-specific compatibility behavior belongs to a separate, auditable compatibility subsystem.
 8. **Dependencies are replaceable behind adapters.** SpiderMonkey, networking backends, graphics APIs and platform integrations must not leak throughout the Web platform implementation.
+9. **DOM, layout and fragments have different identities and lifetimes.** DOM is mutable source state; layout nodes and fragments are derived snapshots and may be discarded or rebuilt at any time.
+10. **Layout never paints directly.** Paint consumes derived fragments and emits a display list.
 
 ## Long-term process topology
 
@@ -51,11 +76,13 @@ bytes
   ↓
 HTML tokenizer/tree builder
   ↓
-DOM arena
+mutable DOM
   ↓
 style matching + cascade
   ↓
-layout tree / fragments
+derived Layout Tree
+  ↓
+derived Fragment Tree
   ↓
 display list
   ↓
@@ -64,14 +91,76 @@ compositor / raster backend
 pixels
 ```
 
+### DOM mutation boundary
+
+`rarog-dom` owns tree invariants. Callers do not directly repair parent/child relationships after a mutation.
+
+The R0 mutation surface establishes these rules:
+
+- the document root cannot be reparented or detached;
+- text nodes cannot have children;
+- a mutation that would create a cycle is rejected;
+- reparenting updates both the old and new parent relationships;
+- element/text changes advance the document generation only when state actually changes;
+- detached nodes are valid DOM objects;
+- `validate_invariants` is available for deterministic tests and debug checks.
+
+The generation counter is deliberately simple in R0. Later invalidation work will use more granular generations/dirty keys instead of rebuilding everything after every mutation.
+
+## Layout and Fragment Tree
+
+R0 now has three distinct representations:
+
+```text
+DOM NodeId
+   │ source relationship
+   ▼
+LayoutNodeId
+   │ can produce one or more fragments later
+   ▼
+FragmentId
+```
+
+The IDs are intentionally different types. Numeric equality has no semantic meaning across these domains.
+
+A `LayoutTree` is derived from DOM + computed style. It may contain anonymous layout nodes later and therefore stores its DOM source as optional metadata rather than treating DOM identity as layout identity.
+
+A `FragmentTree` is the geometry snapshot consumed by paint. Today the bootstrap mostly produces one fragment per layout node. The API does **not** depend on that assumption; later inline fragmentation, pagination, multicolumn layout and generated/anonymous boxes may produce multiple fragments for one layout node.
+
+See ADR-0007.
+
+## Box model foundation
+
+Each box fragment carries four explicit rectangles:
+
+```text
+margin box
+└─ border box
+   └─ padding box
+      └─ content box
+```
+
+R0 supports bootstrap values for:
+
+- `width` / `height`;
+- `margin` and individual margin edges;
+- `padding` and individual padding edges;
+- `border-width` and individual border-width edges;
+- `border-color`;
+- background color.
+
+This is a geometry foundation, **not** a claim of CSS box-model compliance. Margin collapsing, intrinsic sizing, min/max constraints, percentages, writing modes and formatting-context-specific behavior remain later work.
+
 ### Important separation
 
 - DOM is mutable script-visible state.
-- Layout output is derived state and must be disposable/rebuildable.
+- Layout Tree is derived state and must be disposable/rebuildable.
+- Fragment Tree is derived geometry and must be disposable/rebuildable.
 - Paint output is a display list, not direct drawing from layout code.
 - The compositor consumes snapshots; it does not mutate DOM/layout.
+- Platform code consumes engine output through adapters; core Web semantics do not depend on Windows APIs.
 
-This separation is required for later parallelism, process isolation, GPU composition and crash recovery.
+This separation is required for later invalidation, parallelism, process isolation, GPU composition and crash recovery.
 
 ## Script architecture
 
@@ -119,6 +208,8 @@ ScreenCaptureCapability(origin, target, expiry)
 
 Capabilities are origin-bound, operation-bound and revocable.
 
+On Windows, sandbox/process primitives will be implemented behind the Host/Broker platform layer rather than exposed to Web-facing crates.
+
 ## Compatibility model
 
 Two independent test tracks are mandatory:
@@ -133,12 +224,20 @@ Two independent test tracks are mandatory:
 
 `rarog-web-corpus` will maintain reproducible scenarios for popular sites and applications. Compatibility fixes must live in a separately versioned `rarog-compat` subsystem rather than site-name branches in layout/DOM code.
 
+## CI platform policy
+
+Windows is the primary CI platform lane. It must run format, compile checks, Clippy, tests and the bootstrap render.
+
+Linux remains a portability lane from R0 onward so accidental Windows-only dependencies in engine-core crates are caught early.
+
+When macOS support becomes an active target it should gain an equivalent portability lane, but absence of a macOS lane must not block Windows-first engine progress.
+
 ## Why the bootstrap renderer is deliberately small
 
 The first milestone proves the interfaces:
 
 ```text
-parse → DOM → style → layout → display list → framebuffer
+parse → DOM → style → Layout Tree → Fragment Tree → display list → framebuffer
 ```
 
 It is not a standards claim. A small end-to-end pipeline lets us change parsing/layout implementations without rewriting host, paint and test infrastructure.

@@ -2,6 +2,12 @@
 
 Rarog is measurement-driven. Marketing claims must follow measurements, never precede them.
 
+## Measurement platform
+
+Windows is the first release-quality target, so primary product measurements are taken on documented **Windows 10/11** hardware/configurations.
+
+Linux/macOS measurements remain useful for portability and engine analysis, but they must not be silently mixed with Windows numbers in product claims.
+
 ## Compatibility
 
 Track separately:
@@ -22,7 +28,7 @@ Track separately:
 
 - resident set by process/site
 - JS heap
-- DOM/style/layout retained bytes
+- DOM/style/layout/fragment retained bytes
 - decoded image cache
 - graphics cache
 - CPU time foreground/background/frozen
@@ -45,3 +51,5 @@ Comparisons with Chromium/Firefox/WebKit must use:
 - same page corpus;
 - documented versions;
 - multiple runs and distribution, not a single best number.
+
+The default comparison environment for Windows-facing Rarog/Zorya claims is Windows. Cross-OS comparisons must be labeled as such rather than presented as direct product comparisons.

@@ -30,13 +30,15 @@ pub fn parse(input: &str) -> Document {
                     let (tag, attrs) = parse_tag(inner);
                     if !tag.is_empty() {
                         let parent = *stack.last().expect("document stack is never empty");
-                        let id = doc.append(
-                            parent,
-                            NodeKind::Element(ElementData {
-                                tag_name: tag,
-                                attributes: attrs,
-                            }),
-                        );
+                        let id = doc
+                            .append_new(
+                                parent,
+                                NodeKind::Element(ElementData {
+                                    tag_name: tag,
+                                    attributes: attrs,
+                                }),
+                            )
+                            .expect("bootstrap parser only appends to valid parents");
                         if !self_closing && !matches_void(doc.node(id)) {
                             stack.push(id);
                         }
@@ -54,11 +56,14 @@ pub fn parse(input: &str) -> Document {
                 .join(" ");
             if !text.is_empty() {
                 let parent = *stack.last().expect("document stack is never empty");
-                doc.append(parent, NodeKind::Text(text));
+                doc.append_new(parent, NodeKind::Text(text))
+                    .expect("bootstrap parser only appends to valid parents");
             }
             i = next;
         }
     }
+
+    debug_assert!(doc.validate_invariants().is_ok());
     doc
 }
 
@@ -134,5 +139,17 @@ fn matches_void(node: &rarog_dom::Node) -> bool {
             "br" | "hr" | "img" | "input" | "meta" | "link"
         ),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parsed_document_preserves_dom_invariants() {
+        let doc = parse("<html><body><div id=\"x\">hello</div></body></html>");
+        assert_eq!(doc.validate_invariants(), Ok(()));
+        assert!(doc.generation() > 0);
     }
 }

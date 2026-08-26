@@ -8,10 +8,11 @@ permissions:
   contents: read
 
 jobs:
-  rust:
-    runs-on: ubuntu-latest
+  windows:
+    name: Windows primary
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -21,6 +22,19 @@ jobs:
         run: cargo check --workspace --all-targets
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Bootstrap render
+        run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
+
+  linux-portability:
+    name: Linux portability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check
+        run: cargo check --workspace --all-targets
       - name: Test
         run: cargo test --workspace
       - name: Bootstrap render
