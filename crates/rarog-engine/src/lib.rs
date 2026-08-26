@@ -462,11 +462,7 @@ mod tests {
 
         session
             .document_mut()
-            .set_attribute(
-                node,
-                "style",
-                "width:80px;height:20px;background:#445566",
-            )
+            .set_attribute(node, "style", "width:80px;height:20px;background:#445566")
             .unwrap();
         let report = session.update();
 
@@ -489,11 +485,7 @@ mod tests {
 
         session
             .document_mut()
-            .set_attribute(
-                node,
-                "style",
-                "width:96px;height:20px;background:#445566",
-            )
+            .set_attribute(node, "style", "width:96px;height:20px;background:#445566")
             .unwrap();
         let report = session.update();
 
