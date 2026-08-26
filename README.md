@@ -89,6 +89,8 @@ cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
+cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 
