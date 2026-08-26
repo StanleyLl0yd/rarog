@@ -17,6 +17,7 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] deterministic DOM/style/layout/fragment/display-list snapshot coverage
 - [x] deterministic framebuffer hash and combined render-signature hash
 - [x] explicit deterministic-render CI gate
+- [x] explicit incremental reuse/fallback CI gate
 - [ ] benchmark harness with no performance claims yet
 
 ## P0 — DOM model
