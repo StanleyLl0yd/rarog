@@ -1,0 +1,194 @@
+name: Apply R0 layout foundations
+
+on:
+  push:
+    branches:
+      - r0-hardening-layout-incremental
+    paths:
+      - .github/workflows/r0-apply-layout.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-hardening-layout-incremental
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Apply layout foundations
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"pattern not found in {path}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          path = "crates/rarog-layout/src/lib.rs"
+          patch(path, "use rarog_types::{Rect, Size};\n", "use rarog_types::{Point, Rect, Size};\n")
+          patch(
+              path,
+              "#[derive(Clone, Debug, PartialEq, Eq)]\npub enum LayoutNodeKind {\n    Root,\n    Box,\n    Text(String),\n}\n",
+              "#[derive(Clone, Copy, Debug, Default, PartialEq)]\npub struct IntrinsicSizes {\n    pub min_content: f32,\n    pub max_content: f32,\n}\n\n#[derive(Clone, Debug, PartialEq)]\npub struct TextRun {\n    pub text: String,\n    pub advance: f32,\n    pub line_height: f32,\n}\n\nimpl TextRun {\n    pub fn new(text: String) -> Self {\n        let advance = text.chars().count() as f32 * 8.0;\n        Self {\n            text,\n            advance,\n            line_height: 18.0,\n        }\n    }\n\n    pub fn intrinsic_sizes(&self) -> IntrinsicSizes {\n        let longest_word = self\n            .text\n            .split_whitespace()\n            .map(|word| word.chars().count())\n            .max()\n            .unwrap_or(0) as f32\n            * 8.0;\n        IntrinsicSizes {\n            min_content: longest_word,\n            max_content: self.advance,\n        }\n    }\n}\n\n#[derive(Clone, Copy, Debug, PartialEq)]\npub struct ContainingBlock {\n    pub origin: Point,\n    pub available: Size,\n}\n\n#[derive(Clone, Debug, PartialEq)]\npub enum LayoutNodeKind {\n    Root,\n    Box,\n    Text(TextRun),\n}\n",
+          )
+          patch(
+              path,
+              "    pub style: ComputedStyle,\n    pub children: Vec<LayoutNode>,\n",
+              "    pub style: ComputedStyle,\n    pub intrinsic: IntrinsicSizes,\n    pub children: Vec<LayoutNode>,\n",
+          )
+          patch(
+              path,
+              "    let mut fragment_builder = FragmentBuilder::default();\n    let fragments = fragment_builder.build(&tree, viewport);\n\n    LayoutOutput { tree, fragments }\n}\n",
+              "    let fragments = relayout_tree(&tree, viewport);\n\n    LayoutOutput { tree, fragments }\n}\n\npub fn relayout_tree(tree: &LayoutTree, viewport: Size) -> FragmentTree {\n    let mut fragment_builder = FragmentBuilder::default();\n    fragment_builder.build(tree, viewport)\n}\n",
+          )
+          patch(
+              path,
+              "            NodeKind::Text(text) => (LayoutNodeKind::Text(text.clone()), ComputedStyle::default()),\n",
+              "            NodeKind::Text(text) => (\n                LayoutNodeKind::Text(TextRun::new(text.clone())),\n                ComputedStyle::default(),\n            ),\n",
+          )
+          patch(
+              path,
+              "        Some(LayoutNode {\n            id,\n            dom_node: Some(node),\n            kind,\n            style,\n            children,\n        })\n",
+              "        let intrinsic = intrinsic_sizes_for_node(&kind, style, &children);\n\n        Some(LayoutNode {\n            id,\n            dom_node: Some(node),\n            kind,\n            style,\n            intrinsic,\n            children,\n        })\n",
+          )
+          marker = "#[derive(Default)]\nstruct FragmentBuilder {"
+          insert = "fn intrinsic_sizes_for_node(\n    kind: &LayoutNodeKind,\n    style: ComputedStyle,\n    children: &[LayoutNode],\n) -> IntrinsicSizes {\n    match kind {\n        LayoutNodeKind::Text(run) => run.intrinsic_sizes(),\n        LayoutNodeKind::Root => IntrinsicSizes {\n            min_content: children\n                .iter()\n                .map(|child| child.intrinsic.min_content)\n                .fold(0.0, f32::max),\n            max_content: children\n                .iter()\n                .map(|child| child.intrinsic.max_content)\n                .fold(0.0, f32::max),\n        },\n        LayoutNodeKind::Box => {\n            let horizontal_edges = style.padding.horizontal() + style.border_width.horizontal();\n            let child_min = children\n                .iter()\n                .map(|child| child.intrinsic.min_content)\n                .fold(0.0, f32::max);\n            let child_max = children\n                .iter()\n                .map(|child| child.intrinsic.max_content)\n                .fold(0.0, f32::max);\n            if let Some(width) = style.width {\n                let outer = width.max(0.0) + horizontal_edges;\n                IntrinsicSizes {\n                    min_content: outer,\n                    max_content: outer,\n                }\n            } else {\n                IntrinsicSizes {\n                    min_content: child_min + horizontal_edges,\n                    max_content: child_max + horizontal_edges,\n                }\n            }\n        }\n    }\n}\n\n"
+          p = Path(path)
+          text = p.read_text()
+          if marker not in text:
+              raise SystemExit("fragment marker not found")
+          p.write_text(text.replace(marker, insert + marker, 1))
+          patch(
+              path,
+              "        let mut cursor_y = 0.0;\n        let mut children = Vec::new();\n\n        for child in &tree.root.children {\n            children.push(self.layout_node(child, 0.0, &mut cursor_y, viewport.width.max(0.0)));\n        }\n",
+              "        let containing_block = ContainingBlock {\n            origin: Point { x: 0.0, y: 0.0 },\n            available: Size {\n                width: viewport.width.max(0.0),\n                height: viewport.height.max(0.0),\n            },\n        };\n        let mut cursor_y = containing_block.origin.y;\n        let mut children = Vec::new();\n\n        for child in &tree.root.children {\n            children.push(self.layout_node(child, containing_block, &mut cursor_y));\n        }\n",
+          )
+          patch(
+              path,
+              "    fn layout_node(\n        &mut self,\n        node: &LayoutNode,\n        x: f32,\n        cursor_y: &mut f32,\n        available_width: f32,\n    ) -> Fragment {\n        match &node.kind {\n            LayoutNodeKind::Root => unreachable!(\"only the layout root may have Root kind\"),\n            LayoutNodeKind::Text(text) => {\n                self.layout_text(node, text, x, cursor_y, available_width)\n            }\n            LayoutNodeKind::Box => self.layout_box(node, x, cursor_y, available_width),\n        }\n    }\n",
+              "    fn layout_node(\n        &mut self,\n        node: &LayoutNode,\n        containing_block: ContainingBlock,\n        cursor_y: &mut f32,\n    ) -> Fragment {\n        match &node.kind {\n            LayoutNodeKind::Root => unreachable!(\"only the layout root may have Root kind\"),\n            LayoutNodeKind::Text(run) => {\n                self.layout_text(node, run, containing_block, cursor_y)\n            }\n            LayoutNodeKind::Box => self.layout_box(node, containing_block, cursor_y),\n        }\n    }\n",
+          )
+          patch(
+              path,
+              "    fn layout_text(\n        &mut self,\n        node: &LayoutNode,\n        text: &str,\n        x: f32,\n        cursor_y: &mut f32,\n        available_width: f32,\n    ) -> Fragment {\n        let height = 18.0;\n        let width = (text.chars().count() as f32 * 8.0).min(available_width.max(0.0));\n        let rect = Rect::new(x, *cursor_y, width, height);\n        *cursor_y += height;\n",
+              "    fn layout_text(\n        &mut self,\n        node: &LayoutNode,\n        run: &TextRun,\n        containing_block: ContainingBlock,\n        cursor_y: &mut f32,\n    ) -> Fragment {\n        let width = run.advance.min(containing_block.available.width.max(0.0));\n        let rect = Rect::new(\n            containing_block.origin.x,\n            *cursor_y,\n            width,\n            run.line_height,\n        );\n        *cursor_y += run.line_height;\n",
+          )
+          patch(
+              path,
+              "    fn layout_box(\n        &mut self,\n        node: &LayoutNode,\n        x: f32,\n        cursor_y: &mut f32,\n        available_width: f32,\n    ) -> Fragment {\n        let style = node.style;\n",
+              "    fn layout_box(\n        &mut self,\n        node: &LayoutNode,\n        containing_block: ContainingBlock,\n        cursor_y: &mut f32,\n    ) -> Fragment {\n        let style = node.style;\n        let x = containing_block.origin.x;\n        let available_width = containing_block.available.width;\n",
+          )
+          patch(
+              path,
+              "        let mut child_y = content_y;\n        let mut children = Vec::new();\n        for child in &node.children {\n            children.push(self.layout_node(child, content_x, &mut child_y, content_width));\n        }\n",
+              "        let child_containing_block = ContainingBlock {\n            origin: Point {\n                x: content_x,\n                y: content_y,\n            },\n            available: Size {\n                width: content_width,\n                height: containing_block.available.height,\n            },\n        };\n        let mut child_y = child_containing_block.origin.y;\n        let mut children = Vec::new();\n        for child in &node.children {\n            children.push(self.layout_node(child, child_containing_block, &mut child_y));\n        }\n",
+          )
+          patch(
+              path,
+              "        LayoutNodeKind::Text(text) => format!(\"text:{text}\"),\n",
+              "        LayoutNodeKind::Text(run) => format!(\"text:{}\", run.text),\n",
+          )
+          patch(
+              path,
+              "    fn snapshots_are_deterministic() {",
+              "    fn text_runs_expose_intrinsic_sizes() {\n        let run = TextRun::new(\"small verylongword\".into());\n        assert_eq!(\n            run.intrinsic_sizes(),\n            IntrinsicSizes {\n                min_content: 96.0,\n                max_content: 144.0,\n            }\n        );\n    }\n\n    #[test]\n    fn nested_boxes_use_parent_content_as_containing_block() {\n        let mut doc = Document::new();\n        let parent = doc\n            .append_new(\n                doc.root(),\n                element(\"div\", Some(\"width:100px;padding:10px\")),\n            )\n            .unwrap();\n        doc.append_new(parent, element(\"div\", None)).unwrap();\n\n        let output = layout_document(\n            &doc,\n            Size {\n                width: 320.0,\n                height: 200.0,\n            },\n        );\n        let parent_fragment = &output.fragments.root.children[0];\n        let child = &parent_fragment.children[0];\n        assert_eq!(child.boxes.content_box.origin.x, 10.0);\n        assert_eq!(child.boxes.content_box.size.width, 100.0);\n    }\n\n    #[test]\n    fn snapshots_are_deterministic() {",
+          )
+
+          path = "crates/rarog-engine/src/lib.rs"
+          patch(
+              path,
+              "use rarog_layout::{Fragment, LayoutNode, LayoutOutput, layout_document_with_styles};\n",
+              "use rarog_layout::{\n    Fragment, LayoutNode, LayoutOutput, layout_document_with_styles, relayout_tree,\n};\n",
+          )
+          patch(
+              path,
+              "    PaintOnlyReuse,\n    FullRebuild,\n",
+              "    PaintOnlyReuse,\n    GeometryRelayout,\n    FullRebuild,\n",
+          )
+          old = "        let new_styles = StyleSet::for_document(&self.document);\n        let mut paint_updates = Vec::new();\n\n        if !requires_full_rebuild {\n            for node in style_candidates {\n                let Some(old_style) = layout_style_for_dom(&self.layout.tree.root, node) else {\n                    requires_full_rebuild = true;\n                    break;\n                };\n                let new_style = computed_style(&self.document, node, &new_styles);\n                if layout_style_changed(old_style, new_style) {\n                    requires_full_rebuild = true;\n                    break;\n                }\n                if paint_style_changed(old_style, new_style) {\n                    paint_updates.push((node, new_style));\n                }\n            }\n        }\n\n        let mode;\n        let patched_nodes;\n        if requires_full_rebuild {\n            self.full_rebuild(new_styles);\n            mode = IncrementalMode::FullRebuild;\n            patched_nodes = 0;\n        } else if paint_updates.is_empty() {\n            self.styles = new_styles;\n            self.damage = DamageRegion::default();\n            mode = IncrementalMode::Unchanged;\n            patched_nodes = 0;\n        } else {\n            let previous_display_list = self.display_list.clone();\n            patched_nodes = paint_updates.len();\n            for (node, style) in paint_updates {\n                patch_layout_style(&mut self.layout.tree.root, node, style);\n                patch_fragment_style(&mut self.layout.fragments.root, node, style);\n            }\n            self.styles = new_styles;\n            self.display_list = build_display_list(&self.layout.fragments);\n            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);\n            self.framebuffer = Framebuffer::new(self.options.viewport, self.options.background);\n            self.framebuffer.rasterize(&self.display_list);\n            mode = IncrementalMode::PaintOnlyReuse;\n        }\n"
+          new = "        let new_styles = StyleSet::for_document(&self.document);\n        let mut style_updates = Vec::new();\n        let mut geometry_changed = false;\n\n        if !requires_full_rebuild {\n            for node in style_candidates {\n                let Some(old_style) = layout_style_for_dom(&self.layout.tree.root, node) else {\n                    requires_full_rebuild = true;\n                    break;\n                };\n                let new_style = computed_style(&self.document, node, &new_styles);\n                if old_style.display_none != new_style.display_none {\n                    requires_full_rebuild = true;\n                    break;\n                }\n                if old_style != new_style {\n                    geometry_changed |= layout_style_changed(old_style, new_style);\n                    style_updates.push((node, new_style));\n                }\n            }\n        }\n\n        let mode;\n        let patched_nodes;\n        if requires_full_rebuild {\n            self.full_rebuild(new_styles);\n            mode = IncrementalMode::FullRebuild;\n            patched_nodes = 0;\n        } else if style_updates.is_empty() {\n            self.styles = new_styles;\n            self.damage = DamageRegion::default();\n            mode = IncrementalMode::Unchanged;\n            patched_nodes = 0;\n        } else if geometry_changed {\n            let previous_display_list = self.display_list.clone();\n            patched_nodes = style_updates.len();\n            for (node, style) in style_updates {\n                patch_layout_style(&mut self.layout.tree.root, node, style);\n            }\n            self.styles = new_styles;\n            self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);\n            self.display_list = build_display_list(&self.layout.fragments);\n            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);\n            self.framebuffer = Framebuffer::new(self.options.viewport, self.options.background);\n            self.framebuffer.rasterize(&self.display_list);\n            mode = IncrementalMode::GeometryRelayout;\n        } else {\n            let previous_display_list = self.display_list.clone();\n            patched_nodes = style_updates.len();\n            for (node, style) in style_updates {\n                patch_layout_style(&mut self.layout.tree.root, node, style);\n                patch_fragment_style(&mut self.layout.fragments.root, node, style);\n            }\n            self.styles = new_styles;\n            self.display_list = build_display_list(&self.layout.fragments);\n            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);\n            self.framebuffer = Framebuffer::new(self.options.viewport, self.options.background);\n            self.framebuffer.rasterize(&self.display_list);\n            mode = IncrementalMode::PaintOnlyReuse;\n        }\n"
+          patch(path, old, new)
+          patch(
+              path,
+              "    fn geometry_change_falls_back_to_full_rebuild() {",
+              "    fn geometry_change_relayouts_without_rebuilding_layout_tree() {",
+          )
+          patch(
+              path,
+              "        let node = first_element(session.document());\n\n        session\n            .document_mut()\n            .set_attribute(node, \"style\", \"width:96px;height:20px;background:#445566\")\n            .unwrap();\n        let report = session.update();\n\n        assert_eq!(report.mode, IncrementalMode::FullRebuild);\n",
+              "        let node = first_element(session.document());\n        let layout_before = session.layout().tree.snapshot();\n\n        session\n            .document_mut()\n            .set_attribute(node, \"style\", \"width:96px;height:20px;background:#445566\")\n            .unwrap();\n        let report = session.update();\n\n        assert_eq!(report.mode, IncrementalMode::GeometryRelayout);\n        assert_eq!(session.layout().tree.snapshot(), layout_before);\n",
+          )
+          patch(
+              path,
+              "    fn unrelated_attribute_change_does_not_rebuild_render_state() {",
+              "    fn structural_change_still_falls_back_to_full_rebuild() {\n        let mut session = RenderSession::new(\n            \"<div style=\\\"width:80px;height:20px\\\">Rarog</div>\",\n            deterministic_options(),\n        );\n        let parent = first_element(session.document());\n        session\n            .document_mut()\n            .append_new(parent, NodeKind::Text(\"!\".into()))\n            .unwrap();\n\n        let report = session.update();\n        assert_eq!(report.mode, IncrementalMode::FullRebuild);\n    }\n\n    #[test]\n    fn unrelated_attribute_change_does_not_rebuild_render_state() {",
+          )
+
+          patch(
+              "README.md",
+              "   ├─ paint-only style change → reuse Layout/Fragment geometry\n   └─ structural/geometry change → deterministic full rebuild\n",
+              "   ├─ paint-only style change → reuse Layout/Fragment geometry\n   ├─ geometry-only style change → retain Layout Tree + rebuild fragments\n   └─ structural/text/display-membership change → deterministic full rebuild\n",
+          )
+          patch(
+              "README.md",
+              "- a stateful `RenderSession` that performs a real paint-only incremental reuse path when geometry is unchanged and falls back conservatively to a full derived-tree rebuild otherwise;\n",
+              "- a stateful `RenderSession` with paint-only reuse, geometry relayout from a retained Layout Tree, and conservative full-rebuild fallback for structural/text/display-membership changes;\n- explicit containing-block, intrinsic-size and text-run abstractions in the bootstrap layout path;\n",
+          )
+          patch(
+              "README.md",
+              "The first incremental experiment is intentionally narrow. It proves that dirty state can survive across frames and that existing Layout Tree / Fragment Tree geometry can be reused safely for paint-only computed-style changes. It does **not** yet claim incremental relayout, retained display-list updates, standards-complete invalidation or performance gains.\n",
+              "The incremental experiment is intentionally narrow. It proves that dirty state can survive across frames, paint-only changes can reuse Layout/Fragment geometry, and geometry-only style changes can retain the Layout Tree while rebuilding Fragment geometry. It does **not** yet claim subtree-local relayout, retained display-list updates, standards-complete invalidation or performance gains.\n",
+          )
+          patch(
+              "docs/R0-BACKLOG.md",
+              "- [ ] containing-block model beyond the bootstrap available-width input\n- [ ] intrinsic sizing interface\n- [ ] text run abstraction (without committing to a shaping backend)\n- [ ] incremental relayout application for geometry-affecting dirty nodes\n",
+              "- [x] containing-block model foundation beyond a raw available-width argument\n- [x] intrinsic sizing interface\n- [x] text run abstraction (without committing to a shaping backend)\n- [x] first geometry-affecting incremental relayout from a retained Layout Tree\n- [ ] subtree-local incremental relayout for geometry-affecting dirty nodes\n",
+          )
+          patch(
+              "docs/ARCHITECTURE.md",
+              "  ├─ paint-only computed-style change → reuse Layout/Fragment geometry\n  └─ structure/text/geometry change → deterministic full rebuild\n",
+              "  ├─ paint-only computed-style change → reuse Layout/Fragment geometry\n  ├─ geometry-only computed-style change → retain Layout Tree + rebuild fragments\n  └─ structure/text/display-membership change → deterministic full rebuild\n",
+          )
+          patch(
+              "docs/ARCHITECTURE.md",
+              "Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid always fall back to a full rebuild.\n\nThe current experiment still regenerates the display list and rerasterizes the full software framebuffer after a paint-only style patch. Therefore it proves persistent state and safe derived-tree reuse, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and geometry-affecting incremental relayout remain later work.\n",
+              "Geometry-affecting style changes that preserve layout-tree membership now patch computed style on the retained Layout Tree and rebuild Fragment geometry through the explicit containing-block path. Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid still fall back to a full rebuild.\n\nThe current experiment still regenerates the display list and rerasterizes the full software framebuffer after both paint-only updates and geometry relayout. The geometry relayout also rebuilds the whole Fragment Tree rather than only the affected subtree. Therefore this proves safe retained Layout Tree reuse and a relayout boundary, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and subtree-local relayout remain later work.\n",
+          )
+          marker = "## Box model foundation\n"
+          insert = "## Containing blocks, intrinsic sizing and text runs\n\nR0 now passes an explicit `ContainingBlock` through fragment construction instead of coupling layout to raw x/available-width arguments. A containing block carries an origin and available size, and nested block content becomes the containing block for descendants. This is a bootstrap foundation for later formatting-context-specific containing-block rules, not CSS containing-block compliance.\n\nLayout nodes also expose `IntrinsicSizes { min_content, max_content }`. Text is represented as a backend-neutral `TextRun` carrying bootstrap advance and line-height metrics; its intrinsic sizes distinguish the longest unbreakable word from the full run advance. No shaping backend, font selection or Unicode line-breaking contract is implied yet.\n\n"
+          p = Path("docs/ARCHITECTURE.md")
+          text = p.read_text()
+          if marker not in text:
+              raise SystemExit("architecture box model marker not found")
+          p.write_text(text.replace(marker, insert + marker, 1))
+
+          Path('.github/workflows/r0-apply-layout.yml').unlink()
+          PY
+      - name: Format
+        run: cargo fmt --all
+      - name: Validate
+        run: |
+          cargo check --workspace --all-targets
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+          cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+          cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
+          cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_tree
+          cargo test -p rarog-engine structural_change_still_falls_back_to_full_rebuild
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add R0 intrinsic layout and geometry relayout foundations"
+          git push origin HEAD:r0-hardening-layout-incremental
