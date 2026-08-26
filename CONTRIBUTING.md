@@ -15,9 +15,12 @@ Before adding a subsystem:
 5. prefer a narrow adapter over leaking a third-party or OS API across crates;
 6. keep Windows-specific APIs behind platform adapters;
 7. keep mutation → invalidation → layout → paint dependencies explicit rather than using hidden cross-crate side effects;
-8. preserve deterministic output for committed R0 fixtures unless the intentional change is reviewed and the regression fingerprint is updated.
+8. preserve deterministic output for committed R0 fixtures unless the intentional change is reviewed and the regression fingerprint is updated;
+9. treat incremental rendering as an optimization with a deterministic full-rebuild fallback, never as a reason to weaken correctness boundaries.
 
 Changes that knowingly reduce site isolation, origin isolation or capability boundaries for performance are not accepted as normal optimizations.
+
+When changing invalidation or incremental rendering, add tests for both the reuse path and the conservative fallback. A paint-only mutation should prove which derived state was reused; a geometry/structure mutation should prove that the fallback still produces correct deterministic output.
 
 Before opening a PR, run:
 
@@ -27,6 +30,8 @@ cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
+cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 

@@ -8,7 +8,7 @@ The engine core remains portable by design. Linux is kept as an early portabilit
 
 ## R0 — Ember (current bootstrap)
 
-Goal: deterministic `HTML → DOM → style/cascade → Layout Tree → Fragment Tree → display list/damage → pixels` path.
+Goal: deterministic `HTML → DOM → style/cascade → Layout Tree → Fragment Tree → display list/damage → pixels` path with the first stateful invalidation/reuse experiment.
 
 Current foundation:
 
@@ -20,6 +20,10 @@ Current foundation:
 - typed bootstrap property/value representation;
 - user-agent, author `<style>` and inline style participation;
 - selector invalidation keys and mutation-derived dirty primitives;
+- persistent engine-owned dirty state across updates;
+- stateful `RenderSession` orchestration;
+- first real incremental path: paint-only computed-style changes reuse existing Layout Tree / Fragment Tree geometry;
+- conservative deterministic full-rebuild fallback for structural, text or geometry-affecting changes;
 - separate DOM, layout-node and fragment identities;
 - explicit content/padding/border/margin boxes;
 - stable display-item IDs and display-list damage comparison;
@@ -34,7 +38,8 @@ Remaining R0 exit work:
 - clearer containing-block and intrinsic-sizing interfaces;
 - element namespace representation and atom/string strategy decision;
 - streaming/parser error boundaries;
-- first persistent dirty-state/incremental rebuild experiment.
+- first geometry-affecting incremental relayout slice;
+- retained display-list and damage-scoped raster experiments.
 
 ## R1 — Flame
 
@@ -45,8 +50,8 @@ Remaining R0 exit work:
 - block/inline formatting contexts;
 - image resource abstraction;
 - text shaping abstraction;
-- invalidation graph prototype that consumes the R0 dirty primitives incrementally;
-- first retained/damage-aware paint experiment;
+- invalidation graph that expands the R0 persistent dirty-state experiment into incremental style/layout work;
+- retained/damage-aware paint path;
 - first Windows text/font platform adapter.
 
 ## R2 — Flight

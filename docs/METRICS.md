@@ -50,14 +50,26 @@ A changed fingerprint is evidence to investigate, not automatically a regression
 
 ## Incremental rendering
 
-As the R0/R1 invalidation path becomes incremental, measure:
+R0 now has a first stateful incremental experiment. Each `RenderSession` update reports whether it used:
+
+- `Unchanged` — no render-relevant dirty state remained;
+- `PaintOnlyReuse` — computed paint values changed while existing Layout Tree / Fragment Tree geometry was reused;
+- `FullRebuild` — structure, text or geometry required a conservative rebuild.
+
+Track:
 
 - nodes marked style/layout/paint dirty per mutation;
+- dirty nodes accumulated between renders;
+- nodes whose computed style was patched without relayout;
+- incremental mode counts and full-rebuild fallback rate;
 - style rules reconsidered per mutation;
 - layout nodes/fragments rebuilt per frame;
 - display items changed per frame;
 - damaged pixel area versus viewport area;
-- unnecessary full-document/full-viewport rebuild count.
+- unnecessary full-document/full-viewport rebuild count;
+- time spent in dirty capture, style comparison, relayout, display-list generation and raster separately.
+
+The current paint-only experiment still rebuilds the display list and rerasterizes the framebuffer. It therefore proves state reuse and correctness boundaries, not a performance win. Retained display-list updates, damage-scoped rasterization and geometry-affecting incremental relayout must be measured separately when implemented.
 
 These numbers are diagnostic until the incremental architecture is mature enough for product targets.
 

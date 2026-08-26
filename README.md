@@ -28,6 +28,10 @@ stylesheet sources → selectors → cascade/specificity
    ↓
 computed style + invalidation keys
    ↓
+persistent dirty state
+   ├─ paint-only style change → reuse Layout/Fragment geometry
+   └─ structural/geometry change → deterministic full rebuild
+   ↓
 layout tree
    ↓
 fragment tree + box model
@@ -44,11 +48,15 @@ The current R0 foundation includes:
 - simple type, class and ID selector matching for the bootstrap path;
 - user-agent, author `<style>` and inline style origins with deterministic source order/specificity handling;
 - selector invalidation keys plus DOM-mutation-to-style/layout/paint dirty primitives;
+- persistent engine-owned dirty state across mutations and renders;
+- a stateful `RenderSession` that performs a real paint-only incremental reuse path when geometry is unchanged and falls back conservatively to a full derived-tree rebuild otherwise;
 - separate DOM, layout-node and fragment identities;
 - a derived/disposable Fragment Tree and explicit content/padding/border/margin boxes;
 - stable display-item IDs and damage rectangles between display lists;
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
 - CI with Windows as the primary platform lane and Linux as a portability lane.
+
+The first incremental experiment is intentionally narrow. It proves that dirty state can survive across frames and that existing Layout Tree / Fragment Tree geometry can be reused safely for paint-only computed-style changes. It does **not** yet claim incremental relayout, retained display-list updates, standards-complete invalidation or performance gains.
 
 ## Platform strategy
 
@@ -66,7 +74,7 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-css` — bootstrap stylesheet sources, selectors, cascade, computed style and invalidation primitives
 - `rarog-layout` — derived Layout Tree, Fragment Tree, box model and deterministic snapshots
 - `rarog-paint` — stable display-item IDs, damage tracking, display list and software rasterizer
-- `rarog-engine` — public orchestration API and deterministic render signature
+- `rarog-engine` — stateless rendering plus persistent dirty-state / incremental-session orchestration
 - `rarog-shell` — minimal CLI test shell
 
 See `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/R0-BACKLOG.md` and `docs/adr/`.
@@ -81,6 +89,8 @@ cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test -p rarog-engine deterministic_render_snapshot_and_hash
+cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
+cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 
