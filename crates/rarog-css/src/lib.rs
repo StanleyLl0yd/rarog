@@ -176,9 +176,7 @@ fn parse_edge_sizes(value: &str) -> Option<EdgeSizes> {
             *vertical,
             *horizontal,
         )),
-        [top, horizontal, bottom] => {
-            Some(EdgeSizes::new(*top, *horizontal, *bottom, *horizontal))
-        }
+        [top, horizontal, bottom] => Some(EdgeSizes::new(*top, *horizontal, *bottom, *horizontal)),
         [top, right, bottom, left] => Some(EdgeSizes::new(*top, *right, *bottom, *left)),
         _ => None,
     }
@@ -210,10 +208,7 @@ mod tests {
 
     #[test]
     fn parses_hex_color() {
-        assert_eq!(
-            parse_color("#112233"),
-            Some(Color::rgb(0x11, 0x22, 0x33))
-        );
+        assert_eq!(parse_color("#112233"), Some(Color::rgb(0x11, 0x22, 0x33)));
     }
 
     #[test]

@@ -42,14 +42,19 @@ impl fmt::Display for MutationError {
             Self::CannotCreateDocumentNode => {
                 formatter.write_str("the document node can only be created by Document::new")
             }
-            Self::CannotReparentRoot => formatter.write_str("the document root cannot be reparented"),
+            Self::CannotReparentRoot => {
+                formatter.write_str("the document root cannot be reparented")
+            }
             Self::CannotAppendToText(node) => {
                 write!(formatter, "text node {node} cannot have children")
             }
             Self::NotElement(node) => write!(formatter, "node {node} is not an element"),
             Self::NotText(node) => write!(formatter, "node {node} is not a text node"),
             Self::WouldCreateCycle { parent, child } => {
-                write!(formatter, "appending node {child} to {parent} would create a cycle")
+                write!(
+                    formatter,
+                    "appending node {child} to {parent} would create a cycle"
+                )
             }
         }
     }
@@ -62,15 +67,27 @@ pub enum InvariantError {
     RootHasParent,
     RootIsNotDocument,
     NonRootDocument(NodeId),
-    InvalidParent { node: NodeId, parent: NodeId },
-    MissingChildLink { node: NodeId, parent: NodeId },
-    InvalidChild { parent: NodeId, child: NodeId },
+    InvalidParent {
+        node: NodeId,
+        parent: NodeId,
+    },
+    MissingChildLink {
+        node: NodeId,
+        parent: NodeId,
+    },
+    InvalidChild {
+        parent: NodeId,
+        child: NodeId,
+    },
     WrongParent {
         parent: NodeId,
         child: NodeId,
         actual: Option<NodeId>,
     },
-    DuplicateChild { parent: NodeId, child: NodeId },
+    DuplicateChild {
+        parent: NodeId,
+        child: NodeId,
+    },
     Cycle(NodeId),
 }
 
@@ -126,11 +143,7 @@ impl Document {
         Ok(id)
     }
 
-    pub fn append_new(
-        &mut self,
-        parent: NodeId,
-        kind: NodeKind,
-    ) -> Result<NodeId, MutationError> {
+    pub fn append_new(&mut self, parent: NodeId, kind: NodeKind) -> Result<NodeId, MutationError> {
         self.ensure_can_have_children(parent)?;
         self.ensure_creatable_kind(&kind)?;
 
@@ -152,8 +165,7 @@ impl Document {
             return Err(MutationError::WouldCreateCycle { parent, child });
         }
 
-        if self.nodes[child].parent == Some(parent)
-            && self.nodes[parent].children.contains(&child)
+        if self.nodes[child].parent == Some(parent) && self.nodes[parent].children.contains(&child)
         {
             return Ok(());
         }

@@ -111,10 +111,7 @@ impl LayoutTreeBuilder {
     fn build_node(&mut self, doc: &Document, node: NodeId) -> Option<LayoutNode> {
         let (kind, style) = match &doc.node(node).kind {
             NodeKind::Document => (LayoutNodeKind::Root, ComputedStyle::default()),
-            NodeKind::Text(text) => (
-                LayoutNodeKind::Text(text.clone()),
-                ComputedStyle::default(),
-            ),
+            NodeKind::Text(text) => (LayoutNodeKind::Text(text.clone()), ComputedStyle::default()),
             NodeKind::Element(_) => {
                 let style = computed_style(doc, node);
                 if style.display_none {
@@ -160,12 +157,7 @@ impl FragmentBuilder {
         let mut children = Vec::new();
 
         for child in &tree.root.children {
-            children.push(self.layout_node(
-                child,
-                0.0,
-                &mut cursor_y,
-                viewport.width.max(0.0),
-            ));
+            children.push(self.layout_node(child, 0.0, &mut cursor_y, viewport.width.max(0.0)));
         }
 
         FragmentTree {
@@ -229,8 +221,9 @@ impl FragmentBuilder {
         available_width: f32,
     ) -> Fragment {
         let style = node.style;
-        let horizontal_edges =
-            style.margin.horizontal() + style.border_width.horizontal() + style.padding.horizontal();
+        let horizontal_edges = style.margin.horizontal()
+            + style.border_width.horizontal()
+            + style.padding.horizontal();
 
         let content_width = style
             .width
@@ -361,18 +354,9 @@ mod tests {
         );
         let fragment = &output.fragments.root.children[0];
 
-        assert_eq!(
-            fragment.boxes.margin_box,
-            Rect::new(0.0, 0.0, 134.0, 54.0)
-        );
-        assert_eq!(
-            fragment.boxes.border_box,
-            Rect::new(5.0, 5.0, 124.0, 44.0)
-        );
-        assert_eq!(
-            fragment.boxes.padding_box,
-            Rect::new(7.0, 7.0, 120.0, 40.0)
-        );
+        assert_eq!(fragment.boxes.margin_box, Rect::new(0.0, 0.0, 134.0, 54.0));
+        assert_eq!(fragment.boxes.border_box, Rect::new(5.0, 5.0, 124.0, 44.0));
+        assert_eq!(fragment.boxes.padding_box, Rect::new(7.0, 7.0, 120.0, 40.0));
         assert_eq!(
             fragment.boxes.content_box,
             Rect::new(17.0, 17.0, 100.0, 20.0)
@@ -382,11 +366,8 @@ mod tests {
     #[test]
     fn display_none_nodes_do_not_enter_the_layout_or_fragment_trees() {
         let mut doc = Document::new();
-        doc.append_new(
-            doc.root(),
-            element("div", Some("display:none")),
-        )
-        .unwrap();
+        doc.append_new(doc.root(), element("div", Some("display:none")))
+            .unwrap();
 
         let output = layout_document(
             &doc,
