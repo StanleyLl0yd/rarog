@@ -17,6 +17,20 @@ Track separately:
 - real-Web corpus scenario pass rate
 - visual/layout regression count
 
+## Deterministic correctness
+
+R0 tracks deterministic regression fingerprints before performance claims are allowed. For committed fixtures record/compare:
+
+- DOM snapshot changes;
+- stylesheet/cascade/computed-style snapshot changes;
+- Layout Tree and Fragment Tree snapshot changes;
+- display-item ID / display-list changes;
+- damage-region changes where a previous frame exists;
+- framebuffer stable hash;
+- combined deterministic render-signature hash.
+
+A changed fingerprint is evidence to investigate, not automatically a regression: intentional rendering changes may update the expected fingerprint after review.
+
 ## Responsiveness
 
 - cold/warm engine initialization
@@ -33,6 +47,19 @@ Track separately:
 - graphics cache
 - CPU time foreground/background/frozen
 - energy where platform instrumentation exists
+
+## Incremental rendering
+
+As the R0/R1 invalidation path becomes incremental, measure:
+
+- nodes marked style/layout/paint dirty per mutation;
+- style rules reconsidered per mutation;
+- layout nodes/fragments rebuilt per frame;
+- display items changed per frame;
+- damaged pixel area versus viewport area;
+- unnecessary full-document/full-viewport rebuild count.
+
+These numbers are diagnostic until the incremental architecture is mature enough for product targets.
 
 ## Safety/reliability
 

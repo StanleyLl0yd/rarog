@@ -25,6 +25,35 @@ pub struct Node {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MutationKind {
+    NodeCreated {
+        node: NodeId,
+    },
+    ChildAdded {
+        parent: NodeId,
+        child: NodeId,
+    },
+    Reparented {
+        child: NodeId,
+        old_parent: Option<NodeId>,
+        new_parent: Option<NodeId>,
+    },
+    Attribute {
+        node: NodeId,
+        name: String,
+    },
+    CharacterData {
+        node: NodeId,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MutationRecord {
+    pub generation: u64,
+    pub kind: MutationKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MutationError {
     InvalidNode(NodeId),
     CannotCreateDocumentNode,
@@ -96,6 +125,7 @@ pub struct Document {
     nodes: Vec<Node>,
     root: NodeId,
     generation: u64,
+    mutations: Vec<MutationRecord>,
 }
 
 impl Document {
@@ -109,6 +139,7 @@ impl Document {
             nodes: vec![root],
             root: 0,
             generation: 0,
+            mutations: Vec::new(),
         }
     }
 
@@ -136,10 +167,16 @@ impl Document {
         &self.nodes[id].children
     }
 
+    pub fn mutation_records_since(&self, generation: u64) -> impl Iterator<Item = &MutationRecord> {
+        self.mutations
+            .iter()
+            .filter(move |record| record.generation > generation)
+    }
+
     pub fn create_node(&mut self, kind: NodeKind) -> Result<NodeId, MutationError> {
         self.ensure_creatable_kind(&kind)?;
         let id = self.allocate_node(kind, None);
-        self.bump_generation();
+        self.record_mutation(MutationKind::NodeCreated { node: id });
         Ok(id)
     }
 
@@ -149,7 +186,7 @@ impl Document {
 
         let id = self.allocate_node(kind, Some(parent));
         self.nodes[parent].children.push(id);
-        self.bump_generation();
+        self.record_mutation(MutationKind::ChildAdded { parent, child: id });
         Ok(id)
     }
 
@@ -170,7 +207,8 @@ impl Document {
             return Ok(());
         }
 
-        if let Some(old_parent) = self.nodes[child].parent {
+        let old_parent = self.nodes[child].parent;
+        if let Some(old_parent) = old_parent {
             self.nodes[old_parent]
                 .children
                 .retain(|candidate| *candidate != child);
@@ -180,7 +218,11 @@ impl Document {
         if !self.nodes[parent].children.contains(&child) {
             self.nodes[parent].children.push(child);
         }
-        self.bump_generation();
+        self.record_mutation(MutationKind::Reparented {
+            child,
+            old_parent,
+            new_parent: Some(parent),
+        });
         Ok(())
     }
 
@@ -198,7 +240,11 @@ impl Document {
             .children
             .retain(|candidate| *candidate != child);
         self.nodes[child].parent = None;
-        self.bump_generation();
+        self.record_mutation(MutationKind::Reparented {
+            child,
+            old_parent: Some(parent),
+            new_parent: None,
+        });
         Ok(())
     }
 
@@ -220,8 +266,8 @@ impl Document {
             return Ok(());
         }
 
-        element.attributes.insert(name, value);
-        self.bump_generation();
+        element.attributes.insert(name.clone(), value);
+        self.record_mutation(MutationKind::Attribute { node, name });
         Ok(())
     }
 
@@ -237,7 +283,10 @@ impl Document {
 
         let removed = element.attributes.remove(name);
         if removed.is_some() {
-            self.bump_generation();
+            self.record_mutation(MutationKind::Attribute {
+                node,
+                name: name.to_string(),
+            });
         }
         Ok(removed)
     }
@@ -258,8 +307,47 @@ impl Document {
         }
 
         *text = value;
-        self.bump_generation();
+        self.record_mutation(MutationKind::CharacterData { node });
         Ok(())
+    }
+
+    pub fn snapshot(&self) -> String {
+        let mut output = String::new();
+        for (id, node) in self.nodes.iter().enumerate() {
+            let parent = node
+                .parent
+                .map(|parent| parent.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            let children = node
+                .children
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let kind = match &node.kind {
+                NodeKind::Document => "document".to_string(),
+                NodeKind::Text(text) => format!("text:{}", escape_snapshot(text)),
+                NodeKind::Element(element) => {
+                    let attributes = element
+                        .attributes
+                        .iter()
+                        .map(|(name, value)| {
+                            format!("{}={}", escape_snapshot(name), escape_snapshot(value))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(";");
+                    format!(
+                        "element:{}[{}]",
+                        escape_snapshot(&element.tag_name),
+                        attributes
+                    )
+                }
+            };
+            output.push_str(&format!(
+                "{id}|{kind}|parent={parent}|children={children}\n"
+            ));
+        }
+        output
     }
 
     pub fn validate_invariants(&self) -> Result<(), InvariantError> {
@@ -366,11 +454,15 @@ impl Document {
         false
     }
 
-    fn bump_generation(&mut self) {
+    fn record_mutation(&mut self, kind: MutationKind) {
         self.generation = self
             .generation
             .checked_add(1)
             .expect("DOM generation counter overflow");
+        self.mutations.push(MutationRecord {
+            generation: self.generation,
+            kind,
+        });
     }
 }
 
@@ -378,6 +470,13 @@ impl Default for Document {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn escape_snapshot(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace('\n', "\\n")
 }
 
 #[cfg(test)]
@@ -472,6 +571,42 @@ mod tests {
         assert_eq!(after_changes, before + 2);
         assert_eq!(doc.generation(), after_changes);
         assert_eq!(doc.validate_invariants(), Ok(()));
+    }
+
+    #[test]
+    fn mutation_log_is_generation_ordered_and_queryable() {
+        let mut doc = Document::new();
+        let element = doc.append_new(doc.root(), element("div")).unwrap();
+        let generation = doc.generation();
+        doc.set_attribute(element, "class", "card").unwrap();
+        doc.set_attribute(element, "id", "hero").unwrap();
+
+        let records = doc
+            .mutation_records_since(generation)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert_eq!(records.len(), 2);
+        assert!(records[0].generation < records[1].generation);
+        assert_eq!(
+            records[0].kind,
+            MutationKind::Attribute {
+                node: element,
+                name: "class".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn snapshot_is_stable_for_the_same_arena() {
+        let mut doc = Document::new();
+        let element = doc.append_new(doc.root(), element("div")).unwrap();
+        doc.set_attribute(element, "id", "hero").unwrap();
+        doc.append_new(element, NodeKind::Text("hello".into()))
+            .unwrap();
+
+        assert_eq!(doc.snapshot(), doc.snapshot());
+        assert!(doc.snapshot().contains("element:div[id=hero]"));
     }
 
     #[test]

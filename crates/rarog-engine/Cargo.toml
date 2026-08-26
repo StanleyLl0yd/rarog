@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rarog-css = { path = "../rarog-css" }
+rarog-dom = { path = "../rarog-dom" }
 rarog-html = { path = "../rarog-html" }
 rarog-layout = { path = "../rarog-layout" }
 rarog-paint = { path = "../rarog-paint" }

@@ -8,38 +8,45 @@ The engine core remains portable by design. Linux is kept as an early portabilit
 
 ## R0 — Ember (current bootstrap)
 
-Goal: deterministic `HTML → DOM → style → Layout Tree → Fragment Tree → display list → pixels` path.
+Goal: deterministic `HTML → DOM → style/cascade → Layout Tree → Fragment Tree → display list/damage → pixels` path.
 
 Current foundation:
 
 - workspace crate boundaries established;
-- checked DOM mutation API and invariant validation;
+- checked DOM mutation API, mutation records and invariant validation;
 - document generation tracking;
+- stylesheet/source model with bootstrap selector representation;
+- cascade priority data for origin, layer, specificity and source order;
+- typed bootstrap property/value representation;
+- user-agent, author `<style>` and inline style participation;
+- selector invalidation keys and mutation-derived dirty primitives;
 - separate DOM, layout-node and fragment identities;
 - explicit content/padding/border/margin boxes;
-- display list independent of direct layout drawing;
+- stable display-item IDs and display-list damage comparison;
+- deterministic DOM/style/layout/fragment/display-list snapshots;
+- deterministic framebuffer and combined render-signature hashes;
 - headless shell renders a fixture to an image;
 - Windows-primary CI plus Linux portability CI.
 
 Remaining R0 exit work:
 
-- stylesheet/source model and selector/cascade foundations;
-- invalidation primitives;
-- damage tracking primitives;
-- deterministic DOM/style/layout/fragment/display-list snapshots;
-- deterministic framebuffer hash;
 - benchmark harness with no performance claims;
-- clearer containing-block/intrinsic-sizing interfaces.
+- clearer containing-block and intrinsic-sizing interfaces;
+- element namespace representation and atom/string strategy decision;
+- streaming/parser error boundaries;
+- first persistent dirty-state/incremental rebuild experiment.
 
 ## R1 — Flame
 
 - replace bootstrap HTML parsing with a standards-oriented tokenizer/tree-builder adapter;
-- real CSS tokenizer/parser and cascade foundations;
-- selector matching architecture;
+- replace bootstrap CSS parsing with a standards-oriented tokenizer/parser adapter;
+- expand selector matching to combinators, attributes and pseudo-classes in measured slices;
+- real cascade details including importance, inheritance and CSS-wide values;
 - block/inline formatting contexts;
 - image resource abstraction;
 - text shaping abstraction;
-- invalidation graph prototype;
+- invalidation graph prototype that consumes the R0 dirty primitives incrementally;
+- first retained/damage-aware paint experiment;
 - first Windows text/font platform adapter.
 
 ## R2 — Flight
@@ -48,7 +55,7 @@ Remaining R0 exit work:
 - replaceable script runtime abstraction;
 - SpiderMonkey integration;
 - events/event loop;
-- DOM mutation invalidation;
+- script-driven DOM mutation invalidation;
 - Fetch foundation;
 - URL/origin/security primitives;
 - Windows input/IME and clipboard host adapters.

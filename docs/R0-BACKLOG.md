@@ -14,8 +14,9 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] architectural decision records
 - [x] unit tests for DOM arena invariants
 - [x] parser fixture/invariant test
-- [ ] golden DOM/style/layout/fragment/display-list snapshot tests
-- [ ] deterministic framebuffer hash test
+- [x] deterministic DOM/style/layout/fragment/display-list snapshot coverage
+- [x] deterministic framebuffer hash and combined render-signature hash
+- [x] explicit deterministic-render CI gate
 - [ ] benchmark harness with no performance claims yet
 
 ## P0 — DOM model
@@ -26,9 +27,9 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] reparent/detach operations
 - [x] element attribute and text mutation primitives
 - [x] explicit document generation ID
+- [x] generation-ordered mutation records for invalidation consumers
 - [ ] element namespace representation
 - [ ] interned atom/string strategy ADR
-- [ ] granular mutation/invalidation generations
 
 ### Exit condition
 
@@ -47,12 +48,16 @@ DOM ownership must not assume that renderer, networking or host live in the same
 
 - [x] `ComputedStyle` exists independently of layout
 - [x] bootstrap margin/padding/border edge values
-- [ ] stylesheet/source model
-- [ ] selector representation
-- [ ] cascade origin/layer/specificity data structures
-- [ ] property ID/value representation
+- [x] stylesheet/source model
+- [x] selector representation for bootstrap type/class/ID selectors
+- [x] cascade origin/layer/specificity/source-order data structures
+- [x] typed bootstrap property ID/value representation
+- [x] user-agent + author `<style>` + inline style origins
+- [x] selector invalidation key prototype
+- [x] DOM-mutation-to-style/layout/paint invalidation primitives
 - [ ] style sharing/cache design note
-- [ ] invalidation key prototype
+- [ ] descendant/sibling selector invalidation dependencies
+- [ ] standards-oriented CSS tokenizer/parser adapter
 
 ## P0 — layout
 
@@ -62,10 +67,11 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] derived `LayoutTree`
 - [x] derived `FragmentTree`
 - [x] explicit content/padding/border/margin boxes
+- [x] deterministic Layout Tree / computed-style / Fragment Tree snapshots
 - [ ] containing-block model beyond the bootstrap available-width input
 - [ ] intrinsic sizing interface
 - [ ] text run abstraction (without committing to a shaping backend)
-- [ ] dirty/invalidation flags
+- [ ] persistent dirty flags / incremental relayout application
 - [ ] fragmentation cases that produce multiple fragments per layout node
 
 ### Required invariant
@@ -78,8 +84,10 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] software framebuffer rasterizer
 - [x] paint consumes Fragment Tree rather than drawing from layout code
 - [x] bootstrap background and border painting
-- [ ] stable command IDs / paint chunks
-- [ ] damage rectangles
+- [x] stable deterministic display-item IDs for current fragment commands
+- [x] damage rectangles by comparing previous/current display lists
+- [x] deterministic display-list snapshot
+- [x] stable framebuffer hash
 - [ ] clip commands
 - [ ] stacking-context representation
 - [ ] transforms/opacity representation
@@ -105,6 +113,7 @@ Win32, WinRT, Direct3D and other Windows-specific APIs must not leak into DOM, H
 ## P1 — engine/embedder API
 
 - [x] `render_html` orchestration bootstrap
+- [x] previous-display-list input and damage output for bootstrap rendering
 - [ ] `Engine` object
 - [ ] `View` object
 - [ ] navigation/request interfaces without networking implementation
@@ -140,13 +149,14 @@ R0 may use wall-clock timers; later milestones replace these with a structured t
 
 ## R0 exit test
 
-Given a committed HTML fixture, two runs on the same architecture/toolchain must produce:
+Given a committed HTML fixture, repeated runs on the same architecture/toolchain must produce:
 
 1. an equivalent DOM snapshot;
-2. an equivalent computed-style snapshot;
+2. an equivalent stylesheet/computed-style snapshot;
 3. an equivalent Layout Tree snapshot;
 4. an equivalent Fragment Tree + box-model snapshot;
-5. an identical display list;
-6. an identical framebuffer hash.
+5. an identical display list with identical display-item IDs;
+6. an identical framebuffer hash;
+7. an identical combined deterministic render-signature hash.
 
-Only after this pipeline is deterministic do we start R1 standards work.
+The same deterministic test must pass in the Windows-primary CI lane. Only after the R0 pipeline and remaining bootstrap interfaces are stable do we start R1 standards work.

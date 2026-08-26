@@ -24,6 +24,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Determinism gate
+        run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -37,5 +39,7 @@ jobs:
         run: cargo check --workspace --all-targets
       - name: Test
         run: cargo test --workspace
+      - name: Determinism gate
+        run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
