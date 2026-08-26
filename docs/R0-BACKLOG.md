@@ -78,7 +78,8 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] intrinsic sizing interface
 - [x] text run abstraction (without committing to a shaping backend)
 - [x] first geometry-affecting incremental relayout from a retained Layout Tree
-- [ ] subtree-local incremental relayout for geometry-affecting dirty nodes
+- [x] first subtree-local incremental relayout for geometry changes that preserve vertical flow footprint
+- [ ] ancestor/sibling-aware local reflow for vertical-footprint changes
 - [ ] fragmentation cases that produce multiple fragments per layout node
 
 ### Required invariant
@@ -100,8 +101,9 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [ ] clip commands
 - [ ] stacking-context representation
 - [ ] transforms/opacity representation
-- [ ] retained display-list experiment
-- [ ] damage-scoped raster update instead of full framebuffer rerasterization
+- [x] retained display-list replacement experiment for affected fragment subtrees
+- [x] damage-scoped software raster update instead of full framebuffer rerasterization
+- [ ] fragmentation/stacking/clip-aware retained display-list updates
 
 ## P0 — platform boundary
 
@@ -156,7 +158,7 @@ peak temporary memory
 persistent document memory
 ```
 
-Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `full rebuild`) and how many nodes were dirtied/patched.
+Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `subtree relayout`, `geometry relayout`, `full rebuild`) and how many nodes were dirtied/patched.
 
 R0 may use wall-clock timers; later milestones replace these with a structured tracing system.
 
@@ -172,6 +174,6 @@ Given a committed HTML fixture, repeated runs on the same architecture/toolchain
 6. an identical framebuffer hash;
 7. an identical combined deterministic render-signature hash.
 
-The stateful R0 path must also prove that a paint-only computed-style mutation can reuse existing Layout/Fragment geometry, while a geometry-affecting or structural mutation falls back to a deterministic full rebuild.
+The stateful R0 path must also prove paint-only reuse, footprint-safe subtree relayout, deterministic whole-Fragment-Tree fallback for geometry that can move siblings, and a deterministic full rebuild for structural changes.
 
 The same deterministic test must pass in the Windows-primary CI lane. Only after the R0 pipeline and remaining bootstrap interfaces are stable do we start R1 standards work.

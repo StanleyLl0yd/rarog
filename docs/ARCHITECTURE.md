@@ -86,8 +86,9 @@ stylesheet sources / selector matching / cascade
 computed style + invalidation keys
   ↓
 persistent engine dirty state
-  ├─ paint-only computed-style change → reuse Layout/Fragment geometry
-  ├─ geometry-only computed-style change → retain Layout Tree + rebuild fragments
+  ├─ paint-only computed-style change → reuse geometry + retained paint update
+  ├─ footprint-safe geometry change → subtree Fragment relayout
+  ├─ vertical-footprint geometry change → retain Layout Tree + rebuild Fragment Tree
   └─ structure/text/display-membership change → deterministic full rebuild
   ↓
 derived Layout Tree
@@ -174,20 +175,20 @@ These flags are deliberately conservative. `rarog-engine` persists them in `Dirt
 
 R0 now has a stateful `RenderSession` that owns the current document, styles, Layout Tree, Fragment Tree, display list, framebuffer and persistent dirty state.
 
-The first reuse path is intentionally narrow:
+The current reuse path is intentionally conservative:
 
-1. collect DOM mutations since the last consumed generation;
-2. accumulate the corresponding dirty entries;
-3. for `id`, `class` and inline `style` mutations, recompute the affected element style;
-4. compare geometry/visibility fields with the style stored on the current Layout Tree;
-5. if only paint values changed, patch style on the existing Layout Tree and Fragment Tree nodes while preserving their geometry and identities;
-6. otherwise rebuild derived layout/fragment state deterministically.
+1. collect DOM mutations since the last consumed generation and accumulate dirty entries;
+2. recompute affected element styles for `id`, `class` and inline `style` mutations;
+3. patch paint-only changes onto retained Layout/Fragment state;
+4. for geometry changes that preserve vertical flow footprint, rebuild only the affected Fragment subtree from its parent's content-box containing block;
+5. if height or vertical margin/padding/border can move following siblings, retain the Layout Tree but rebuild the whole Fragment Tree;
+6. structural mutations, text changes, display-membership changes or unprovable cases use the deterministic full-rebuild fallback.
 
-The geometry-affecting comparison currently includes width, height, margin, border width, padding and `display`. Background and border color are treated as paint-only values.
+The geometry-affecting comparison includes width, height, margin, border width, padding and `display`. Background and border color remain paint-only values. The current subtree-safety rule deliberately treats only vertical footprint as the hard flow boundary because the bootstrap text path does not wrap yet. This rule must become formatting-context-aware before it can represent general CSS incremental reflow.
 
-Geometry-affecting style changes that preserve layout-tree membership now patch computed style on the retained Layout Tree and rebuild Fragment geometry through the explicit containing-block path. Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid still fall back to a full rebuild.
+Paint now retains unaffected display-list ranges when an affected fragment subtree already has a stable command range. If that range cannot be patched safely, the engine regenerates the display list. Damage is still derived by stable display-item identity. The persistent software framebuffer is then cleared and rerasterized only inside the resulting damage rectangles, with commands clipped to each damaged rectangle.
 
-The current experiment still regenerates the display list and rerasterizes the full software framebuffer after both paint-only updates and geometry relayout. The geometry relayout also rebuilds the whole Fragment Tree rather than only the affected subtree. Therefore this proves safe retained Layout Tree reuse and a relayout boundary, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and subtree-local relayout remain later work.
+This proves narrower retained work boundaries and pixel-equivalent damage rasterization, **not a measured end-to-end performance win**. General ancestor/sibling reflow, fragmentation-aware retained painting, stacking/clip/transform-aware damage and compositor integration remain later work.
 
 See ADR-0009.
 
@@ -255,7 +256,7 @@ Damage is computed by comparing previous and current display lists by item ID:
 - removed item → old bounds are damaged;
 - new item → new bounds are damaged.
 
-The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. Retained display lists, clip/transform-aware damage, occlusion, damage-scoped raster and compositor damage are later work.
+The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. R0 can replace the stable command range belonging to an affected fragment subtree and preserve unrelated commands; if a stable previous range does not exist, it falls back to display-list regeneration. The software framebuffer clears damaged rectangles to the frame background and replays only command portions intersecting those rectangles. Clip/transform-aware damage, occlusion, stacking-aware retained updates and compositor damage remain later work.
 
 See ADR-0008.
 
@@ -274,7 +275,7 @@ The software framebuffer enforces a checked R0 pixel budget before allocation an
 
 This is not a cryptographic hash and must never be used for security decisions. It is a small deterministic regression fingerprint for R0.
 
-The stateful incremental tests add another invariant: a paint-only style mutation must preserve Layout Tree / Fragment Tree geometry snapshots, while a geometry-affecting mutation must select the full-rebuild fallback.
+The stateful incremental tests add invariants for paint-only geometry preservation, footprint-safe subtree relayout, whole-Fragment-Tree fallback when vertical flow can move siblings, retained display-list replacement, and damage-scoped raster output equivalence with a full reraster.
 
 ## Important separation
 
