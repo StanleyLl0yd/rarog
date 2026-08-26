@@ -4,6 +4,8 @@ Rarog is architecture-first and measurement-driven.
 
 The primary product target is **Windows 10/11**. Engine-core changes must still preserve platform boundaries so later Linux/macOS ports do not require rewriting Web semantics.
 
+Use short-lived topic branches and merge through pull requests. Do not use `main` as a working branch. A PR should be merged only after the required CI jobs pass, and its topic branch should be deleted after merge.
+
 Before adding a subsystem:
 
 1. identify its trust boundary;
@@ -30,4 +32,4 @@ cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
 If a change intentionally alters the deterministic R0 render signature, explain which DOM/style/layout/fragment/display-list behavior changed and why. Do not update a golden hash only to silence CI without understanding the pipeline difference.
 
-GitHub Actions runs the full quality path on Windows and a portability path on Linux.
+GitHub Actions runs the full quality path on Windows and a portability path on Linux. Push CI runs only for `main`; pull requests run the same gates before merge.
