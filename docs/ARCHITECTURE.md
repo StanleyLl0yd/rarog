@@ -49,6 +49,7 @@ See ADR-0006.
 10. **Layout never paints directly.** Paint consumes derived fragments and emits a display list.
 11. **Cascade and invalidation are explicit data flows.** DOM/style mutations produce dirty information; they do not silently mutate layout or paint state behind subsystem boundaries.
 12. **Determinism is an R0 correctness requirement.** Equivalent input on the same architecture/toolchain must produce equivalent snapshots, display items and framebuffer hashes.
+13. **Incremental rendering is an optimization with a full-rebuild fallback.** Reuse is allowed only when the engine can prove that the affected derived state remains valid.
 
 ## Long-term process topology
 
@@ -84,6 +85,10 @@ stylesheet sources / selector matching / cascade
   ↓
 computed style + invalidation keys
   ↓
+persistent engine dirty state
+  ├─ paint-only computed-style change → reuse Layout/Fragment geometry
+  └─ structure/text/geometry change → deterministic full rebuild
+  ↓
 derived Layout Tree
   ↓
 derived Fragment Tree
@@ -118,14 +123,16 @@ DOM mutation record
       ↓
 style/layout invalidation policy
       ↓
-future incremental rebuild scheduler
+persistent dirty state
+      ↓
+incremental reuse or deterministic rebuild
 ```
 
 The DOM does not know which selectors, layout nodes or paint items depend on a mutation.
 
 ## Style source, selector and cascade boundary
 
-R0 now has explicit bootstrap representations for:
+R0 has explicit bootstrap representations for:
 
 - `StyleSourceId` and source labels;
 - cascade origin (`UserAgent`, `Author`, `Inline`);
@@ -145,7 +152,7 @@ The bootstrap document style set contains a tiny Rarog user-agent sheet, author 
 
 ### Invalidation primitives
 
-Selectors expose an `SelectorInvalidationKey` containing the tag/ID/class keys that can make the selector relevant. `InvalidationSet::from_document_since` converts DOM mutation records into conservative dirty flags:
+Selectors expose a `SelectorInvalidationKey` containing the tag/ID/class keys that can make the selector relevant. `InvalidationSet::from_document_since` converts DOM mutation records into conservative dirty flags:
 
 ```text
 style dirty
@@ -160,9 +167,28 @@ For the current simple-selector bootstrap:
 - child insertion/reparenting invalidates the moved/inserted node and ancestor geometry;
 - a stylesheet-source change can invalidate the connected document subtree.
 
-These flags are primitives for a later incremental invalidation graph. R0 still rebuilds derived trees; it does not claim incremental style/layout execution yet.
+These flags are deliberately conservative. `rarog-engine` persists them in `DirtyState` across DOM generations until a render update consumes them.
 
-See ADR-0008.
+## First incremental reuse experiment
+
+R0 now has a stateful `RenderSession` that owns the current document, styles, Layout Tree, Fragment Tree, display list, framebuffer and persistent dirty state.
+
+The first reuse path is intentionally narrow:
+
+1. collect DOM mutations since the last consumed generation;
+2. accumulate the corresponding dirty entries;
+3. for `id`, `class` and inline `style` mutations, recompute the affected element style;
+4. compare geometry/visibility fields with the style stored on the current Layout Tree;
+5. if only paint values changed, patch style on the existing Layout Tree and Fragment Tree nodes while preserving their geometry and identities;
+6. otherwise rebuild derived layout/fragment state deterministically.
+
+The geometry-affecting comparison currently includes width, height, margin, border width, padding and `display`. Background and border color are treated as paint-only values.
+
+Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid always fall back to a full rebuild.
+
+The current experiment still regenerates the display list and rerasterizes the full software framebuffer after a paint-only style patch. Therefore it proves persistent state and safe derived-tree reuse, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and geometry-affecting incremental relayout remain later work.
+
+See ADR-0009.
 
 ## Layout and Fragment Tree
 
@@ -183,6 +209,8 @@ The IDs are intentionally different types. Numeric equality has no semantic mean
 A `LayoutTree` is derived from DOM + computed style. It may contain anonymous layout nodes later and therefore stores its DOM source as optional metadata rather than treating DOM identity as layout identity.
 
 A `FragmentTree` is the geometry snapshot consumed by paint. Today the bootstrap mostly produces one fragment per layout node. The API does **not** depend on that assumption; later inline fragmentation, pagination, multicolumn layout and generated/anonymous boxes may produce multiple fragments for one layout node.
+
+Derived does not mean that every frame must rebuild these structures. ADR-0009 allows an existing derived snapshot to be reused when the engine proves that its geometry remains valid; otherwise it remains freely disposable/rebuildable.
 
 See ADR-0007.
 
@@ -220,7 +248,7 @@ Damage is computed by comparing previous and current display lists by item ID:
 - removed item → old bounds are damaged;
 - new item → new bounds are damaged.
 
-The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. Retained display lists, clip/transform-aware damage, occlusion and compositor damage are later work.
+The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. Retained display lists, clip/transform-aware damage, occlusion, damage-scoped raster and compositor damage are later work.
 
 See ADR-0008.
 
@@ -239,12 +267,15 @@ The software framebuffer exposes a stable 64-bit FNV-1a hash over dimensions and
 
 This is not a cryptographic hash and must never be used for security decisions. It is a small deterministic regression fingerprint for R0.
 
+The stateful incremental tests add another invariant: a paint-only style mutation must preserve Layout Tree / Fragment Tree geometry snapshots, while a geometry-affecting mutation must select the full-rebuild fallback.
+
 ## Important separation
 
 - DOM is mutable script-visible state.
 - Stylesheets/selectors/cascade produce computed style; they do not own layout objects.
-- Layout Tree is derived state and must be disposable/rebuildable.
-- Fragment Tree is derived geometry and must be disposable/rebuildable.
+- Dirty state belongs to engine orchestration and is derived from DOM generations/invalidation policy.
+- Layout Tree is derived state and must remain safely disposable/rebuildable even when a valid snapshot is reused.
+- Fragment Tree is derived geometry and must remain safely disposable/rebuildable even when a valid snapshot is reused.
 - Paint output is a display list, not direct drawing from layout code.
 - Damage is derived from display-list differences, not from layout drawing side effects.
 - The compositor consumes snapshots; it does not mutate DOM/layout.
@@ -327,7 +358,7 @@ When macOS support becomes an active target it should gain an equivalent portabi
 The first milestone proves the interfaces:
 
 ```text
-parse → DOM → style/cascade → Layout Tree → Fragment Tree → display list/damage → framebuffer
+parse → DOM → style/cascade → dirty state → Layout Tree → Fragment Tree → display list/damage → framebuffer
 ```
 
 It is not a standards claim. A small end-to-end pipeline lets us replace parsing, selector, cascade, layout and raster implementations without rewriting host and test infrastructure.
