@@ -176,7 +176,10 @@ mod tests {
             second.deterministic_signature_hash()
         );
 
-        assert_eq!(first.framebuffer.stable_hash64(), 0);
+        assert_eq!(
+            first.framebuffer.stable_hash64(),
+            13_219_555_538_035_458_927
+        );
         assert_eq!(first.deterministic_signature_hash(), 0);
     }
 }
