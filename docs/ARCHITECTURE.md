@@ -87,7 +87,8 @@ computed style + invalidation keys
   ↓
 persistent engine dirty state
   ├─ paint-only computed-style change → reuse Layout/Fragment geometry
-  └─ structure/text/geometry change → deterministic full rebuild
+  ├─ geometry-only computed-style change → retain Layout Tree + rebuild fragments
+  └─ structure/text/display-membership change → deterministic full rebuild
   ↓
 derived Layout Tree
   ↓
@@ -114,7 +115,7 @@ The R0 mutation surface establishes these rules:
 - detached nodes are valid DOM objects;
 - `validate_invariants` is available for deterministic tests and debug checks.
 
-Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary.
+Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary. `Document` also tracks a mutation-history floor; once the active engine consumer has advanced through a generation, older records are pruned so a long-lived document does not retain an unbounded journal. Requests older than the retained floor fail loudly instead of silently producing incomplete invalidation input.
 
 This keeps the direction of dependency clear:
 
@@ -184,9 +185,9 @@ The first reuse path is intentionally narrow:
 
 The geometry-affecting comparison currently includes width, height, margin, border width, padding and `display`. Background and border color are treated as paint-only values.
 
-Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid always fall back to a full rebuild.
+Geometry-affecting style changes that preserve layout-tree membership now patch computed style on the retained Layout Tree and rebuild Fragment geometry through the explicit containing-block path. Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid still fall back to a full rebuild.
 
-The current experiment still regenerates the display list and rerasterizes the full software framebuffer after a paint-only style patch. Therefore it proves persistent state and safe derived-tree reuse, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and geometry-affecting incremental relayout remain later work.
+The current experiment still regenerates the display list and rerasterizes the full software framebuffer after both paint-only updates and geometry relayout. The geometry relayout also rebuilds the whole Fragment Tree rather than only the affected subtree. Therefore this proves safe retained Layout Tree reuse and a relayout boundary, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and subtree-local relayout remain later work.
 
 See ADR-0009.
 
@@ -214,6 +215,12 @@ Derived does not mean that every frame must rebuild these structures. ADR-0009 a
 
 See ADR-0007.
 
+## Containing blocks, intrinsic sizing and text runs
+
+R0 now passes an explicit `ContainingBlock` through fragment construction instead of coupling layout to raw x/available-width arguments. A containing block carries an origin and available size, and nested block content becomes the containing block for descendants. This is a bootstrap foundation for later formatting-context-specific containing-block rules, not CSS containing-block compliance.
+
+Layout nodes also expose `IntrinsicSizes { min_content, max_content }`. Text is represented as a backend-neutral `TextRun` carrying bootstrap advance and line-height metrics; its intrinsic sizes distinguish the longest unbreakable word from the full run advance. No shaping backend, font selection or Unicode line-breaking contract is implied yet.
+
 ## Box model foundation
 
 Each box fragment carries four explicit rectangles:
@@ -239,7 +246,7 @@ This is a geometry foundation, **not** a claim of CSS box-model compliance. Marg
 
 ## Paint identity and damage tracking
 
-The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. IDs are derived from fragment identity plus a command slot, so an unchanged bootstrap fragment emits the same item IDs on repeated deterministic builds.
+The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. For the current one-fragment-per-DOM-node bootstrap path, IDs are anchored to stable DOM source identity plus a command slot; anonymous/future sources fall back to layout identity. This avoids unrelated fragment renumbering churning display IDs while keeping the representation replaceable before general fragmentation.
 
 Damage is computed by comparing previous and current display lists by item ID:
 
@@ -263,7 +270,7 @@ The R0 pipeline exposes deterministic textual snapshots for:
 - Fragment Tree geometry;
 - display-item IDs and commands.
 
-The software framebuffer exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels. `rarog-engine` combines the textual snapshots and framebuffer hash into a deterministic render-signature hash used as a regression gate.
+The software framebuffer enforces a checked R0 pixel budget before allocation and exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels. `rarog-engine` combines the textual snapshots and framebuffer hash into a deterministic render-signature hash used as a regression gate.
 
 This is not a cryptographic hash and must never be used for security decisions. It is a small deterministic regression fingerprint for R0.
 

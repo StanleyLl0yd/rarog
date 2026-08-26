@@ -30,7 +30,8 @@ computed style + invalidation keys
    ↓
 persistent dirty state
    ├─ paint-only style change → reuse Layout/Fragment geometry
-   └─ structural/geometry change → deterministic full rebuild
+   ├─ geometry-only style change → retain Layout Tree + rebuild fragments
+   └─ structural/text/display-membership change → deterministic full rebuild
    ↓
 layout tree
    ↓
@@ -49,14 +50,17 @@ The current R0 foundation includes:
 - user-agent, author `<style>` and inline style origins with deterministic source order/specificity handling;
 - selector invalidation keys plus DOM-mutation-to-style/layout/paint dirty primitives;
 - persistent engine-owned dirty state across mutations and renders;
-- a stateful `RenderSession` that performs a real paint-only incremental reuse path when geometry is unchanged and falls back conservatively to a full derived-tree rebuild otherwise;
+- a stateful `RenderSession` with paint-only reuse, geometry relayout from a retained Layout Tree, and conservative full-rebuild fallback for structural/text/display-membership changes;
+- explicit containing-block, intrinsic-size and text-run abstractions in the bootstrap layout path;
 - separate DOM, layout-node and fragment identities;
 - a derived/disposable Fragment Tree and explicit content/padding/border/margin boxes;
-- stable display-item IDs and damage rectangles between display lists;
+- display-item IDs anchored to stable DOM source identity for current one-fragment-per-node paths, plus damage rectangles between display lists;
+- bounded framebuffer allocation with checked pixel counts;
+- mutation-journal pruning after the engine consumes a DOM generation;
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
-- CI with Windows as the primary platform lane and Linux as a portability lane.
+- CI with Windows as the primary platform lane, Linux as a portability lane and an explicit Rust 1.85 MSRV check; CI actions are pinned to immutable revisions.
 
-The first incremental experiment is intentionally narrow. It proves that dirty state can survive across frames and that existing Layout Tree / Fragment Tree geometry can be reused safely for paint-only computed-style changes. It does **not** yet claim incremental relayout, retained display-list updates, standards-complete invalidation or performance gains.
+The incremental experiment is intentionally narrow. It proves that dirty state can survive across frames, paint-only changes can reuse Layout/Fragment geometry, and geometry-only style changes can retain the Layout Tree while rebuilding Fragment geometry. It does **not** yet claim subtree-local relayout, retained display-list updates, standards-complete invalidation or performance gains.
 
 ## Platform strategy
 

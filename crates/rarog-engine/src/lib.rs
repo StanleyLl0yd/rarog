@@ -1,6 +1,8 @@
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationKind, NodeId};
-use rarog_layout::{Fragment, LayoutNode, LayoutOutput, layout_document_with_styles};
+use rarog_layout::{
+    Fragment, LayoutNode, LayoutOutput, layout_document_with_styles, relayout_tree,
+};
 use rarog_paint::{DamageRegion, DisplayList, Framebuffer, build_display_list};
 use rarog_types::{Color, Size};
 use std::collections::{BTreeMap, BTreeSet};
@@ -91,6 +93,7 @@ impl DirtyState {
 pub enum IncrementalMode {
     Unchanged,
     PaintOnlyReuse,
+    GeometryRelayout,
     FullRebuild,
 }
 
@@ -116,8 +119,9 @@ pub struct RenderSession {
 
 impl RenderSession {
     pub fn new(source: &str, options: RenderOptions) -> Self {
-        let output = render_html(source, options);
+        let mut output = render_html(source, options);
         let generation = output.document.generation();
+        output.document.prune_mutations_through(generation);
         Self {
             options,
             document: output.document,
@@ -176,6 +180,7 @@ impl RenderSession {
         if mutations.is_empty() || dirty_nodes == 0 {
             self.damage = DamageRegion::default();
             self.dirty.clear();
+            self.document.prune_mutations_through(through_generation);
             return IncrementalReport {
                 mode: IncrementalMode::Unchanged,
                 from_generation,
@@ -205,7 +210,8 @@ impl RenderSession {
         }
 
         let new_styles = StyleSet::for_document(&self.document);
-        let mut paint_updates = Vec::new();
+        let mut style_updates = Vec::new();
+        let mut geometry_changed = false;
 
         if !requires_full_rebuild {
             for node in style_candidates {
@@ -214,12 +220,13 @@ impl RenderSession {
                     break;
                 };
                 let new_style = computed_style(&self.document, node, &new_styles);
-                if layout_style_changed(old_style, new_style) {
+                if old_style.display_none != new_style.display_none {
                     requires_full_rebuild = true;
                     break;
                 }
-                if paint_style_changed(old_style, new_style) {
-                    paint_updates.push((node, new_style));
+                if old_style != new_style {
+                    geometry_changed |= layout_style_changed(old_style, new_style);
+                    style_updates.push((node, new_style));
                 }
             }
         }
@@ -230,15 +237,28 @@ impl RenderSession {
             self.full_rebuild(new_styles);
             mode = IncrementalMode::FullRebuild;
             patched_nodes = 0;
-        } else if paint_updates.is_empty() {
+        } else if style_updates.is_empty() {
             self.styles = new_styles;
             self.damage = DamageRegion::default();
             mode = IncrementalMode::Unchanged;
             patched_nodes = 0;
+        } else if geometry_changed {
+            let previous_display_list = self.display_list.clone();
+            patched_nodes = style_updates.len();
+            for (node, style) in style_updates {
+                patch_layout_style(&mut self.layout.tree.root, node, style);
+            }
+            self.styles = new_styles;
+            self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
+            self.display_list = build_display_list(&self.layout.fragments);
+            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
+            self.framebuffer = Framebuffer::new(self.options.viewport, self.options.background);
+            self.framebuffer.rasterize(&self.display_list);
+            mode = IncrementalMode::GeometryRelayout;
         } else {
             let previous_display_list = self.display_list.clone();
-            patched_nodes = paint_updates.len();
-            for (node, style) in paint_updates {
+            patched_nodes = style_updates.len();
+            for (node, style) in style_updates {
                 patch_layout_style(&mut self.layout.tree.root, node, style);
                 patch_fragment_style(&mut self.layout.fragments.root, node, style);
             }
@@ -251,6 +271,7 @@ impl RenderSession {
         }
 
         self.dirty.clear();
+        self.document.prune_mutations_through(through_generation);
         IncrementalReport {
             mode,
             from_generation,
@@ -337,10 +358,6 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
         || before.border_width != after.border_width
         || before.padding != after.padding
         || before.display_none != after.display_none
-}
-
-fn paint_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
-    before.background != after.background || before.border_color != after.border_color
 }
 
 fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -450,6 +467,29 @@ mod tests {
     }
 
     #[test]
+    fn render_session_prunes_consumed_mutation_history() {
+        let mut session = RenderSession::new(
+            "<div style=\"width:80px;height:20px\">Rarog</div>",
+            deterministic_options(),
+        );
+        let node = first_element(session.document());
+        assert_eq!(session.document().mutation_record_count(), 0);
+
+        session
+            .document_mut()
+            .set_attribute(node, "title", "metadata")
+            .unwrap();
+        assert_eq!(session.document().mutation_record_count(), 1);
+        session.update();
+
+        assert_eq!(session.document().mutation_record_count(), 0);
+        assert_eq!(
+            session.document().mutation_history_floor(),
+            session.document().generation()
+        );
+    }
+
+    #[test]
     fn paint_only_update_reuses_layout_and_fragment_geometry() {
         let mut session = RenderSession::new(
             "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div>",
@@ -476,12 +516,13 @@ mod tests {
     }
 
     #[test]
-    fn geometry_change_falls_back_to_full_rebuild() {
+    fn geometry_change_relayouts_without_rebuilding_layout_tree() {
         let mut session = RenderSession::new(
             "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div>",
             deterministic_options(),
         );
         let node = first_element(session.document());
+        let layout_before = session.layout().tree.snapshot();
 
         session
             .document_mut()
@@ -489,7 +530,8 @@ mod tests {
             .unwrap();
         let report = session.update();
 
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(report.mode, IncrementalMode::GeometryRelayout);
+        assert_eq!(session.layout().tree.snapshot(), layout_before);
         assert_eq!(
             session.layout().fragments.root.children[0]
                 .boxes
@@ -499,6 +541,22 @@ mod tests {
             96.0
         );
         assert!(session.dirty_state().is_clean());
+    }
+
+    #[test]
+    fn structural_change_still_falls_back_to_full_rebuild() {
+        let mut session = RenderSession::new(
+            "<div style=\"width:80px;height:20px\">Rarog</div>",
+            deterministic_options(),
+        );
+        let parent = first_element(session.document());
+        session
+            .document_mut()
+            .append_new(parent, NodeKind::Text("!".into()))
+            .unwrap();
+
+        let report = session.update();
+        assert_eq!(report.mode, IncrementalMode::FullRebuild);
     }
 
     #[test]
@@ -556,7 +614,7 @@ mod tests {
         );
         assert_eq!(
             first.deterministic_signature_hash(),
-            12_885_545_535_776_656_151
+            13_019_471_889_845_055_156
         );
     }
 }

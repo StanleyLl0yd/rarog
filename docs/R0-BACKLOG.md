@@ -18,6 +18,8 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] deterministic framebuffer hash and combined render-signature hash
 - [x] explicit deterministic-render CI gate
 - [x] explicit incremental reuse/fallback CI gate
+- [x] explicit Rust 1.85 MSRV check
+- [x] immutable CI action pinning
 - [ ] benchmark harness with no performance claims yet
 
 ## P0 — DOM model
@@ -29,6 +31,7 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] element attribute and text mutation primitives
 - [x] explicit document generation ID
 - [x] generation-ordered mutation records for invalidation consumers
+- [x] mutation-history pruning/checkpoint after the active engine consumer advances
 - [ ] element namespace representation
 - [ ] interned atom/string strategy ADR
 
@@ -71,10 +74,11 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] explicit content/padding/border/margin boxes
 - [x] deterministic Layout Tree / computed-style / Fragment Tree snapshots
 - [x] first paint-only incremental reuse experiment with persistent Layout/Fragment geometry
-- [ ] containing-block model beyond the bootstrap available-width input
-- [ ] intrinsic sizing interface
-- [ ] text run abstraction (without committing to a shaping backend)
-- [ ] incremental relayout application for geometry-affecting dirty nodes
+- [x] containing-block model foundation beyond a raw available-width argument
+- [x] intrinsic sizing interface
+- [x] text run abstraction (without committing to a shaping backend)
+- [x] first geometry-affecting incremental relayout from a retained Layout Tree
+- [ ] subtree-local incremental relayout for geometry-affecting dirty nodes
 - [ ] fragmentation cases that produce multiple fragments per layout node
 
 ### Required invariant
@@ -88,7 +92,9 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] paint consumes Fragment Tree rather than drawing from layout code
 - [x] bootstrap background and border painting
 - [x] stable deterministic display-item IDs for current fragment commands
+- [x] current display-item identity anchored to DOM source identity so unrelated fragment renumbering does not churn retained IDs
 - [x] damage rectangles by comparing previous/current display lists
+- [x] checked framebuffer allocation with an explicit R0 pixel budget
 - [x] deterministic display-list snapshot
 - [x] stable framebuffer hash
 - [ ] clip commands
