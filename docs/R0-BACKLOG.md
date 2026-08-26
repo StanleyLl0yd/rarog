@@ -74,10 +74,11 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] explicit content/padding/border/margin boxes
 - [x] deterministic Layout Tree / computed-style / Fragment Tree snapshots
 - [x] first paint-only incremental reuse experiment with persistent Layout/Fragment geometry
-- [ ] containing-block model beyond the bootstrap available-width input
-- [ ] intrinsic sizing interface
-- [ ] text run abstraction (without committing to a shaping backend)
-- [ ] incremental relayout application for geometry-affecting dirty nodes
+- [x] containing-block model foundation beyond a raw available-width argument
+- [x] intrinsic sizing interface
+- [x] text run abstraction (without committing to a shaping backend)
+- [x] first geometry-affecting incremental relayout from a retained Layout Tree
+- [ ] subtree-local incremental relayout for geometry-affecting dirty nodes
 - [ ] fragmentation cases that produce multiple fragments per layout node
 
 ### Required invariant

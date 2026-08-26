@@ -87,7 +87,8 @@ computed style + invalidation keys
   ↓
 persistent engine dirty state
   ├─ paint-only computed-style change → reuse Layout/Fragment geometry
-  └─ structure/text/geometry change → deterministic full rebuild
+  ├─ geometry-only computed-style change → retain Layout Tree + rebuild fragments
+  └─ structure/text/display-membership change → deterministic full rebuild
   ↓
 derived Layout Tree
   ↓
@@ -184,9 +185,9 @@ The first reuse path is intentionally narrow:
 
 The geometry-affecting comparison currently includes width, height, margin, border width, padding and `display`. Background and border color are treated as paint-only values.
 
-Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid always fall back to a full rebuild.
+Geometry-affecting style changes that preserve layout-tree membership now patch computed style on the retained Layout Tree and rebuild Fragment geometry through the explicit containing-block path. Structural mutations, text changes, hidden/visible transitions and cases where the old layout source cannot be proven valid still fall back to a full rebuild.
 
-The current experiment still regenerates the display list and rerasterizes the full software framebuffer after a paint-only style patch. Therefore it proves persistent state and safe derived-tree reuse, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and geometry-affecting incremental relayout remain later work.
+The current experiment still regenerates the display list and rerasterizes the full software framebuffer after both paint-only updates and geometry relayout. The geometry relayout also rebuilds the whole Fragment Tree rather than only the affected subtree. Therefore this proves safe retained Layout Tree reuse and a relayout boundary, **not an end-to-end incremental performance win**. Retained display-list updates, damage-scoped raster and subtree-local relayout remain later work.
 
 See ADR-0009.
 
@@ -213,6 +214,12 @@ A `FragmentTree` is the geometry snapshot consumed by paint. Today the bootstrap
 Derived does not mean that every frame must rebuild these structures. ADR-0009 allows an existing derived snapshot to be reused when the engine proves that its geometry remains valid; otherwise it remains freely disposable/rebuildable.
 
 See ADR-0007.
+
+## Containing blocks, intrinsic sizing and text runs
+
+R0 now passes an explicit `ContainingBlock` through fragment construction instead of coupling layout to raw x/available-width arguments. A containing block carries an origin and available size, and nested block content becomes the containing block for descendants. This is a bootstrap foundation for later formatting-context-specific containing-block rules, not CSS containing-block compliance.
+
+Layout nodes also expose `IntrinsicSizes { min_content, max_content }`. Text is represented as a backend-neutral `TextRun` carrying bootstrap advance and line-height metrics; its intrinsic sizes distinguish the longest unbreakable word from the full run advance. No shaping backend, font selection or Unicode line-breaking contract is implied yet.
 
 ## Box model foundation
 

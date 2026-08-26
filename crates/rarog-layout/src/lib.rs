@@ -1,6 +1,6 @@
 use rarog_css::{ComputedStyle, StyleSet, computed_style};
 use rarog_dom::{Document, NodeId, NodeKind};
-use rarog_types::{Rect, Size};
+use rarog_types::{Point, Rect, Size};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LayoutNodeId(usize);
@@ -20,11 +20,55 @@ impl FragmentId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct IntrinsicSizes {
+    pub min_content: f32,
+    pub max_content: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextRun {
+    pub text: String,
+    pub advance: f32,
+    pub line_height: f32,
+}
+
+impl TextRun {
+    pub fn new(text: String) -> Self {
+        let advance = text.chars().count() as f32 * 8.0;
+        Self {
+            text,
+            advance,
+            line_height: 18.0,
+        }
+    }
+
+    pub fn intrinsic_sizes(&self) -> IntrinsicSizes {
+        let longest_word = self
+            .text
+            .split_whitespace()
+            .map(|word| word.chars().count())
+            .max()
+            .unwrap_or(0) as f32
+            * 8.0;
+        IntrinsicSizes {
+            min_content: longest_word,
+            max_content: self.advance,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContainingBlock {
+    pub origin: Point,
+    pub available: Size,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum LayoutNodeKind {
     Root,
     Box,
-    Text(String),
+    Text(TextRun),
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +77,7 @@ pub struct LayoutNode {
     pub dom_node: Option<NodeId>,
     pub kind: LayoutNodeKind,
     pub style: ComputedStyle,
+    pub intrinsic: IntrinsicSizes,
     pub children: Vec<LayoutNode>,
 }
 
@@ -127,10 +172,14 @@ pub fn layout_document_with_styles(
         .expect("document root always creates a layout root");
     let tree = LayoutTree { root };
 
-    let mut fragment_builder = FragmentBuilder::default();
-    let fragments = fragment_builder.build(&tree, viewport);
+    let fragments = relayout_tree(&tree, viewport);
 
     LayoutOutput { tree, fragments }
+}
+
+pub fn relayout_tree(tree: &LayoutTree, viewport: Size) -> FragmentTree {
+    let mut fragment_builder = FragmentBuilder::default();
+    fragment_builder.build(tree, viewport)
 }
 
 struct LayoutTreeBuilder<'a> {
@@ -146,7 +195,10 @@ impl<'a> LayoutTreeBuilder<'a> {
     fn build_node(&mut self, doc: &Document, node: NodeId) -> Option<LayoutNode> {
         let (kind, style) = match &doc.node(node).kind {
             NodeKind::Document => (LayoutNodeKind::Root, ComputedStyle::default()),
-            NodeKind::Text(text) => (LayoutNodeKind::Text(text.clone()), ComputedStyle::default()),
+            NodeKind::Text(text) => (
+                LayoutNodeKind::Text(TextRun::new(text.clone())),
+                ComputedStyle::default(),
+            ),
             NodeKind::Element(_) => {
                 let style = computed_style(doc, node, self.styles);
                 if style.display_none {
@@ -164,11 +216,14 @@ impl<'a> LayoutTreeBuilder<'a> {
             }
         }
 
+        let intrinsic = intrinsic_sizes_for_node(&kind, style, &children);
+
         Some(LayoutNode {
             id,
             dom_node: Some(node),
             kind,
             style,
+            intrinsic,
             children,
         })
     }
@@ -180,6 +235,49 @@ impl<'a> LayoutTreeBuilder<'a> {
     }
 }
 
+fn intrinsic_sizes_for_node(
+    kind: &LayoutNodeKind,
+    style: ComputedStyle,
+    children: &[LayoutNode],
+) -> IntrinsicSizes {
+    match kind {
+        LayoutNodeKind::Text(run) => run.intrinsic_sizes(),
+        LayoutNodeKind::Root => IntrinsicSizes {
+            min_content: children
+                .iter()
+                .map(|child| child.intrinsic.min_content)
+                .fold(0.0, f32::max),
+            max_content: children
+                .iter()
+                .map(|child| child.intrinsic.max_content)
+                .fold(0.0, f32::max),
+        },
+        LayoutNodeKind::Box => {
+            let horizontal_edges = style.padding.horizontal() + style.border_width.horizontal();
+            let child_min = children
+                .iter()
+                .map(|child| child.intrinsic.min_content)
+                .fold(0.0, f32::max);
+            let child_max = children
+                .iter()
+                .map(|child| child.intrinsic.max_content)
+                .fold(0.0, f32::max);
+            if let Some(width) = style.width {
+                let outer = width.max(0.0) + horizontal_edges;
+                IntrinsicSizes {
+                    min_content: outer,
+                    max_content: outer,
+                }
+            } else {
+                IntrinsicSizes {
+                    min_content: child_min + horizontal_edges,
+                    max_content: child_max + horizontal_edges,
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct FragmentBuilder {
     next_id: usize,
@@ -188,11 +286,18 @@ struct FragmentBuilder {
 impl FragmentBuilder {
     fn build(&mut self, tree: &LayoutTree, viewport: Size) -> FragmentTree {
         let viewport_rect = Rect::new(0.0, 0.0, viewport.width, viewport.height);
-        let mut cursor_y = 0.0;
+        let containing_block = ContainingBlock {
+            origin: Point { x: 0.0, y: 0.0 },
+            available: Size {
+                width: viewport.width.max(0.0),
+                height: viewport.height.max(0.0),
+            },
+        };
+        let mut cursor_y = containing_block.origin.y;
         let mut children = Vec::new();
 
         for child in &tree.root.children {
-            children.push(self.layout_node(child, 0.0, &mut cursor_y, viewport.width.max(0.0)));
+            children.push(self.layout_node(child, containing_block, &mut cursor_y));
         }
 
         FragmentTree {
@@ -211,31 +316,26 @@ impl FragmentBuilder {
     fn layout_node(
         &mut self,
         node: &LayoutNode,
-        x: f32,
+        containing_block: ContainingBlock,
         cursor_y: &mut f32,
-        available_width: f32,
     ) -> Fragment {
         match &node.kind {
             LayoutNodeKind::Root => unreachable!("only the layout root may have Root kind"),
-            LayoutNodeKind::Text(text) => {
-                self.layout_text(node, text, x, cursor_y, available_width)
-            }
-            LayoutNodeKind::Box => self.layout_box(node, x, cursor_y, available_width),
+            LayoutNodeKind::Text(run) => self.layout_text(node, run, containing_block, cursor_y),
+            LayoutNodeKind::Box => self.layout_box(node, containing_block, cursor_y),
         }
     }
 
     fn layout_text(
         &mut self,
         node: &LayoutNode,
-        text: &str,
-        x: f32,
+        run: &TextRun,
+        containing_block: ContainingBlock,
         cursor_y: &mut f32,
-        available_width: f32,
     ) -> Fragment {
-        let height = 18.0;
-        let width = (text.chars().count() as f32 * 8.0).min(available_width.max(0.0));
-        let rect = Rect::new(x, *cursor_y, width, height);
-        *cursor_y += height;
+        let width = run.advance.min(containing_block.available.width.max(0.0));
+        let rect = Rect::new(containing_block.origin.x, *cursor_y, width, run.line_height);
+        *cursor_y += run.line_height;
 
         Fragment {
             id: self.allocate_id(),
@@ -251,11 +351,12 @@ impl FragmentBuilder {
     fn layout_box(
         &mut self,
         node: &LayoutNode,
-        x: f32,
+        containing_block: ContainingBlock,
         cursor_y: &mut f32,
-        available_width: f32,
     ) -> Fragment {
         let style = node.style;
+        let x = containing_block.origin.x;
+        let available_width = containing_block.available.width;
         let horizontal_edges = style.margin.horizontal()
             + style.border_width.horizontal()
             + style.padding.horizontal();
@@ -273,10 +374,20 @@ impl FragmentBuilder {
         let content_x = padding_x + style.padding.left;
         let content_y = padding_y + style.padding.top;
 
-        let mut child_y = content_y;
+        let child_containing_block = ContainingBlock {
+            origin: Point {
+                x: content_x,
+                y: content_y,
+            },
+            available: Size {
+                width: content_width,
+                height: containing_block.available.height,
+            },
+        };
+        let mut child_y = child_containing_block.origin.y;
         let mut children = Vec::new();
         for child in &node.children {
-            children.push(self.layout_node(child, content_x, &mut child_y, content_width));
+            children.push(self.layout_node(child, child_containing_block, &mut child_y));
         }
 
         let natural_content_height = (child_y - content_y).max(0.0);
@@ -335,7 +446,7 @@ fn snapshot_layout_node(node: &LayoutNode, depth: usize, output: &mut String) {
     let kind = match &node.kind {
         LayoutNodeKind::Root => "root".to_string(),
         LayoutNodeKind::Box => "box".to_string(),
-        LayoutNodeKind::Text(text) => format!("text:{text}"),
+        LayoutNodeKind::Text(run) => format!("text:{}", run.text),
     };
     output.push_str(&format!(
         "{}layout={}|dom={dom}|kind={kind}|children={}\n",
@@ -532,6 +643,39 @@ mod tests {
 
         assert!(output.tree.root.children.is_empty());
         assert!(output.fragments.root.children.is_empty());
+    }
+
+    #[test]
+    fn text_runs_expose_intrinsic_sizes() {
+        let run = TextRun::new("small verylongword".into());
+        assert_eq!(
+            run.intrinsic_sizes(),
+            IntrinsicSizes {
+                min_content: 96.0,
+                max_content: 144.0,
+            }
+        );
+    }
+
+    #[test]
+    fn nested_boxes_use_parent_content_as_containing_block() {
+        let mut doc = Document::new();
+        let parent = doc
+            .append_new(doc.root(), element("div", Some("width:100px;padding:10px")))
+            .unwrap();
+        doc.append_new(parent, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let parent_fragment = &output.fragments.root.children[0];
+        let child = &parent_fragment.children[0];
+        assert_eq!(child.boxes.content_box.origin.x, 10.0);
+        assert_eq!(child.boxes.content_box.size.width, 100.0);
     }
 
     #[test]
