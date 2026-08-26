@@ -29,8 +29,9 @@ stylesheet sources → selectors → cascade/specificity
 computed style + invalidation keys
    ↓
 persistent dirty state
-   ├─ paint-only style change → reuse Layout/Fragment geometry
-   ├─ geometry-only style change → retain Layout Tree + rebuild fragments
+   ├─ paint-only style change → reuse Layout/Fragment geometry + retained paint update
+   ├─ footprint-safe geometry change → subtree Fragment relayout
+   ├─ vertical-footprint geometry change → retain Layout Tree + rebuild Fragment Tree
    └─ structural/text/display-membership change → deterministic full rebuild
    ↓
 layout tree
@@ -50,17 +51,18 @@ The current R0 foundation includes:
 - user-agent, author `<style>` and inline style origins with deterministic source order/specificity handling;
 - selector invalidation keys plus DOM-mutation-to-style/layout/paint dirty primitives;
 - persistent engine-owned dirty state across mutations and renders;
-- a stateful `RenderSession` with paint-only reuse, geometry relayout from a retained Layout Tree, and conservative full-rebuild fallback for structural/text/display-membership changes;
+- a stateful `RenderSession` with paint-only reuse, footprint-safe subtree Fragment relayout, whole-Fragment-Tree geometry fallback from a retained Layout Tree, and conservative full rebuild for structural/text/display-membership changes;
 - explicit containing-block, intrinsic-size and text-run abstractions in the bootstrap layout path;
 - separate DOM, layout-node and fragment identities;
 - a derived/disposable Fragment Tree and explicit content/padding/border/margin boxes;
-- display-item IDs anchored to stable DOM source identity for current one-fragment-per-node paths, plus damage rectangles between display lists;
+- display-item IDs anchored to stable DOM source identity, retained replacement of affected display-list ranges when safe, and damage rectangles between display lists;
+- damage-scoped software framebuffer updates that clear and rerasterize only damaged rectangles;
 - bounded framebuffer allocation with checked pixel counts;
 - mutation-journal pruning after the engine consumes a DOM generation;
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
 - CI with Windows as the primary platform lane, Linux as a portability lane and an explicit Rust 1.85 MSRV check; CI actions are pinned to immutable revisions.
 
-The incremental experiment is intentionally narrow. It proves that dirty state can survive across frames, paint-only changes can reuse Layout/Fragment geometry, and geometry-only style changes can retain the Layout Tree while rebuilding Fragment geometry. It does **not** yet claim subtree-local relayout, retained display-list updates, standards-complete invalidation or performance gains.
+The incremental experiment is intentionally narrow. It now proves paint-only retained updates, subtree-local Fragment relayout for geometry changes that preserve vertical flow footprint, whole-Fragment-Tree relayout when vertical flow may move siblings, and damage-scoped software raster updates. It does **not** yet claim general CSS incremental reflow, fragmentation-aware retained painting, standards-complete invalidation or measured performance gains.
 
 ## Platform strategy
 
@@ -94,7 +96,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test -p rarog-engine deterministic_render_snapshot_and_hash
 cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
-cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild
+cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_tree
+cargo test -p rarog-engine vertical_geometry_change_uses_full_fragment_relayout
+cargo test -p rarog-paint retained_display_patch_preserves_unrelated_items
+cargo test -p rarog-paint damage_raster_matches_full_raster
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 

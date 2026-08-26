@@ -1,9 +1,12 @@
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationKind, NodeId};
 use rarog_layout::{
-    Fragment, LayoutNode, LayoutOutput, layout_document_with_styles, relayout_tree,
+    Fragment, LayoutNode, LayoutOutput, fragment_for_dom, layout_document_with_styles,
+    relayout_fragment_subtree, relayout_tree,
 };
-use rarog_paint::{DamageRegion, DisplayList, Framebuffer, build_display_list};
+use rarog_paint::{
+    DamageRegion, DisplayList, Framebuffer, build_display_list, replace_display_items_for_fragment,
+};
 use rarog_types::{Color, Size};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -93,6 +96,7 @@ impl DirtyState {
 pub enum IncrementalMode {
     Unchanged,
     PaintOnlyReuse,
+    SubtreeRelayout,
     GeometryRelayout,
     FullRebuild,
 }
@@ -212,6 +216,7 @@ impl RenderSession {
         let new_styles = StyleSet::for_document(&self.document);
         let mut style_updates = Vec::new();
         let mut geometry_changed = false;
+        let mut subtree_relayout_safe = true;
 
         if !requires_full_rebuild {
             for node in style_candidates {
@@ -225,7 +230,11 @@ impl RenderSession {
                     break;
                 }
                 if old_style != new_style {
-                    geometry_changed |= layout_style_changed(old_style, new_style);
+                    let layout_changed = layout_style_changed(old_style, new_style);
+                    geometry_changed |= layout_changed;
+                    if layout_changed && vertical_footprint_changed(old_style, new_style) {
+                        subtree_relayout_safe = false;
+                    }
                     style_updates.push((node, new_style));
                 }
             }
@@ -242,31 +251,104 @@ impl RenderSession {
             self.damage = DamageRegion::default();
             mode = IncrementalMode::Unchanged;
             patched_nodes = 0;
+        } else if geometry_changed && subtree_relayout_safe {
+            let previous_display_list = self.display_list.clone();
+            patched_nodes = style_updates.len();
+            for &(node, style) in &style_updates {
+                patch_layout_style(&mut self.layout.tree.root, node, style);
+            }
+            self.styles = new_styles;
+
+            let mut subtree_applied = true;
+            let mut retained_display = true;
+            for &(node, _) in &style_updates {
+                let previous_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
+                if previous_fragment.is_none()
+                    || !relayout_fragment_subtree(
+                        &self.layout.tree,
+                        &mut self.layout.fragments,
+                        node,
+                    )
+                {
+                    subtree_applied = false;
+                    break;
+                }
+                let current_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
+                let (Some(previous_fragment), Some(current_fragment)) =
+                    (previous_fragment, current_fragment)
+                else {
+                    subtree_applied = false;
+                    break;
+                };
+                retained_display &= replace_display_items_for_fragment(
+                    &mut self.display_list,
+                    &previous_fragment,
+                    &current_fragment,
+                );
+            }
+
+            if subtree_applied {
+                if !retained_display {
+                    self.display_list = build_display_list(&self.layout.fragments);
+                }
+                mode = IncrementalMode::SubtreeRelayout;
+            } else {
+                self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
+                self.display_list = build_display_list(&self.layout.fragments);
+                mode = IncrementalMode::GeometryRelayout;
+            }
+            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
+            self.framebuffer.rasterize_damage(
+                &self.display_list,
+                &self.damage,
+                self.options.background,
+            );
         } else if geometry_changed {
             let previous_display_list = self.display_list.clone();
             patched_nodes = style_updates.len();
-            for (node, style) in style_updates {
+            for &(node, style) in &style_updates {
                 patch_layout_style(&mut self.layout.tree.root, node, style);
             }
             self.styles = new_styles;
             self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
             self.display_list = build_display_list(&self.layout.fragments);
             self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
-            self.framebuffer = Framebuffer::new(self.options.viewport, self.options.background);
-            self.framebuffer.rasterize(&self.display_list);
+            self.framebuffer.rasterize_damage(
+                &self.display_list,
+                &self.damage,
+                self.options.background,
+            );
             mode = IncrementalMode::GeometryRelayout;
         } else {
             let previous_display_list = self.display_list.clone();
             patched_nodes = style_updates.len();
-            for (node, style) in style_updates {
+            let mut retained_display = true;
+            for &(node, style) in &style_updates {
+                let previous_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
                 patch_layout_style(&mut self.layout.tree.root, node, style);
                 patch_fragment_style(&mut self.layout.fragments.root, node, style);
+                let current_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
+                match (previous_fragment, current_fragment) {
+                    (Some(previous_fragment), Some(current_fragment)) => {
+                        retained_display &= replace_display_items_for_fragment(
+                            &mut self.display_list,
+                            &previous_fragment,
+                            &current_fragment,
+                        );
+                    }
+                    _ => retained_display = false,
+                }
             }
             self.styles = new_styles;
-            self.display_list = build_display_list(&self.layout.fragments);
+            if !retained_display {
+                self.display_list = build_display_list(&self.layout.fragments);
+            }
             self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
-            self.framebuffer = Framebuffer::new(self.options.viewport, self.options.background);
-            self.framebuffer.rasterize(&self.display_list);
+            self.framebuffer.rasterize_damage(
+                &self.display_list,
+                &self.damage,
+                self.options.background,
+            );
             mode = IncrementalMode::PaintOnlyReuse;
         }
 
@@ -286,14 +368,13 @@ impl RenderSession {
         let layout = layout_document_with_styles(&self.document, &styles, self.options.viewport);
         let display_list = build_display_list(&layout.fragments);
         let damage = DamageRegion::between(Some(&previous_display_list), &display_list);
-        let mut framebuffer = Framebuffer::new(self.options.viewport, self.options.background);
-        framebuffer.rasterize(&display_list);
+        self.framebuffer
+            .rasterize_damage(&display_list, &damage, self.options.background);
 
         self.styles = styles;
         self.layout = layout;
         self.display_list = display_list;
         self.damage = damage;
-        self.framebuffer = framebuffer;
     }
 }
 
@@ -358,6 +439,16 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
         || before.border_width != after.border_width
         || before.padding != after.padding
         || before.display_none != after.display_none
+}
+
+fn vertical_footprint_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
+    before.height != after.height
+        || before.margin.top != after.margin.top
+        || before.margin.bottom != after.margin.bottom
+        || before.border_width.top != after.border_width.top
+        || before.border_width.bottom != after.border_width.bottom
+        || before.padding.top != after.padding.top
+        || before.padding.bottom != after.padding.bottom
 }
 
 fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -530,7 +621,7 @@ mod tests {
             .unwrap();
         let report = session.update();
 
-        assert_eq!(report.mode, IncrementalMode::GeometryRelayout);
+        assert_eq!(report.mode, IncrementalMode::SubtreeRelayout);
         assert_eq!(session.layout().tree.snapshot(), layout_before);
         assert_eq!(
             session.layout().fragments.root.children[0]
@@ -541,6 +632,30 @@ mod tests {
             96.0
         );
         assert!(session.dirty_state().is_clean());
+    }
+
+    #[test]
+    fn vertical_geometry_change_uses_full_fragment_relayout() {
+        let mut session = RenderSession::new(
+            "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div><div style=\"height:10px\">next</div>",
+            deterministic_options(),
+        );
+        let node = first_element(session.document());
+        session
+            .document_mut()
+            .set_attribute(node, "style", "width:80px;height:32px;background:#112233")
+            .unwrap();
+
+        let report = session.update();
+        assert_eq!(report.mode, IncrementalMode::GeometryRelayout);
+        assert_eq!(
+            session.layout().fragments.root.children[1]
+                .boxes
+                .margin_box
+                .origin
+                .y,
+            32.0
+        );
     }
 
     #[test]

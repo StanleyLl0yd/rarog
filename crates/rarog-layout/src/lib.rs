@@ -182,6 +182,74 @@ pub fn relayout_tree(tree: &LayoutTree, viewport: Size) -> FragmentTree {
     fragment_builder.build(tree, viewport)
 }
 
+pub fn fragment_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Option<&Fragment> {
+    find_fragment(&tree.root, dom_node)
+}
+
+pub fn relayout_fragment_subtree(
+    tree: &LayoutTree,
+    fragments: &mut FragmentTree,
+    dom_node: NodeId,
+) -> bool {
+    let Some(layout_node) = find_layout_node(&tree.root, dom_node) else {
+        return false;
+    };
+    let next_id = max_fragment_id(&fragments.root).saturating_add(1);
+    let mut builder = FragmentBuilder { next_id };
+    relayout_fragment_child(&mut fragments.root, layout_node, dom_node, &mut builder)
+}
+
+fn find_layout_node(node: &LayoutNode, dom_node: NodeId) -> Option<&LayoutNode> {
+    if node.dom_node == Some(dom_node) {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_layout_node(child, dom_node))
+}
+
+fn find_fragment(fragment: &Fragment, dom_node: NodeId) -> Option<&Fragment> {
+    if fragment.dom_node == Some(dom_node) {
+        return Some(fragment);
+    }
+    fragment
+        .children
+        .iter()
+        .find_map(|child| find_fragment(child, dom_node))
+}
+
+fn max_fragment_id(fragment: &Fragment) -> usize {
+    fragment
+        .children
+        .iter()
+        .map(max_fragment_id)
+        .fold(fragment.id.index(), usize::max)
+}
+
+fn relayout_fragment_child(
+    parent: &mut Fragment,
+    layout_node: &LayoutNode,
+    dom_node: NodeId,
+    builder: &mut FragmentBuilder,
+) -> bool {
+    let containing_block = ContainingBlock {
+        origin: parent.boxes.content_box.origin,
+        available: parent.boxes.content_box.size,
+    };
+
+    for child in &mut parent.children {
+        if child.dom_node == Some(dom_node) {
+            let mut cursor_y = child.boxes.margin_box.origin.y;
+            *child = builder.layout_node(layout_node, containing_block, &mut cursor_y);
+            return true;
+        }
+        if relayout_fragment_child(child, layout_node, dom_node, builder) {
+            return true;
+        }
+    }
+    false
+}
+
 struct LayoutTreeBuilder<'a> {
     next_id: usize,
     styles: &'a StyleSet,

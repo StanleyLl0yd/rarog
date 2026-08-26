@@ -63,9 +63,74 @@ impl DisplayList {
 }
 
 pub fn build_display_list(tree: &FragmentTree) -> DisplayList {
+    build_display_list_for_fragment(&tree.root)
+}
+
+pub fn build_display_list_for_fragment(fragment: &Fragment) -> DisplayList {
     let mut list = DisplayList::default();
-    collect(&tree.root, &mut list);
+    collect(fragment, &mut list);
     list
+}
+
+pub fn replace_display_items_for_fragment(
+    list: &mut DisplayList,
+    previous: &Fragment,
+    current: &Fragment,
+) -> bool {
+    let previous_items = build_display_list_for_fragment(previous);
+    let current_items = build_display_list_for_fragment(current);
+    replace_display_items(list, &previous_items, &current_items)
+}
+
+fn replace_display_items(
+    list: &mut DisplayList,
+    previous: &DisplayList,
+    current: &DisplayList,
+) -> bool {
+    if previous.command_ids.is_empty() {
+        return current.command_ids.is_empty();
+    }
+
+    let removed = previous
+        .command_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if !list.command_ids.iter().any(|id| removed.contains(id)) {
+        return false;
+    }
+
+    let mut command_ids = Vec::with_capacity(
+        list.command_ids.len() - previous.command_ids.len().min(list.command_ids.len())
+            + current.command_ids.len(),
+    );
+    let mut commands = Vec::with_capacity(command_ids.capacity());
+    let mut inserted = false;
+
+    for (id, command) in list
+        .command_ids
+        .iter()
+        .copied()
+        .zip(list.commands.iter().copied())
+    {
+        if removed.contains(&id) {
+            if !inserted {
+                command_ids.extend_from_slice(&current.command_ids);
+                commands.extend_from_slice(&current.commands);
+                inserted = true;
+            }
+            continue;
+        }
+        command_ids.push(id);
+        commands.push(command);
+    }
+
+    if !inserted {
+        return false;
+    }
+    list.command_ids = command_ids;
+    list.commands = commands;
+    true
 }
 
 fn collect(fragment: &Fragment, list: &mut DisplayList) {
@@ -306,6 +371,26 @@ impl Framebuffer {
         }
     }
 
+    pub fn rasterize_damage(
+        &mut self,
+        list: &DisplayList,
+        damage: &DamageRegion,
+        background: Color,
+    ) {
+        for damaged in &damage.rects {
+            self.fill_rect(*damaged, background);
+            for command in &list.commands {
+                let (rect, color) = match *command {
+                    DisplayCommand::FillRect { rect, color }
+                    | DisplayCommand::TextPlaceholder { rect, color } => (rect, color),
+                };
+                if let Some(clipped) = intersection(rect, *damaged) {
+                    self.fill_rect(clipped, color);
+                }
+            }
+        }
+    }
+
     fn fill_rect(&mut self, rect: Rect, color: Color) {
         let x0 = rect.origin.x.floor().max(0.0) as u32;
         let y0 = rect.origin.y.floor().max(0.0) as u32;
@@ -338,6 +423,18 @@ impl Framebuffer {
             out.extend_from_slice(&[pixel.r, pixel.g, pixel.b]);
         }
         out
+    }
+}
+
+fn intersection(a: Rect, b: Rect) -> Option<Rect> {
+    let x0 = a.origin.x.max(b.origin.x);
+    let y0 = a.origin.y.max(b.origin.y);
+    let x1 = (a.origin.x + a.size.width).min(b.origin.x + b.size.width);
+    let y1 = (a.origin.y + a.size.height).min(b.origin.y + b.size.height);
+    if x1 <= x0 || y1 <= y0 {
+        None
+    } else {
+        Some(Rect::new(x0, y0, x1 - x0, y1 - y0))
     }
 }
 
@@ -382,6 +479,70 @@ mod tests {
     fn unchanged_display_list_has_no_damage() {
         let list = single_fill(1, Rect::new(0.0, 0.0, 10.0, 10.0), Color::BLACK);
         assert!(DamageRegion::between(Some(&list), &list).rects.is_empty());
+    }
+
+    #[test]
+    fn retained_display_patch_preserves_unrelated_items() {
+        let first = single_fill(1, Rect::new(0.0, 0.0, 4.0, 4.0), Color::BLACK);
+        let middle = single_fill(2, Rect::new(4.0, 0.0, 4.0, 4.0), Color::BLACK);
+        let last = single_fill(3, Rect::new(8.0, 0.0, 4.0, 4.0), Color::BLACK);
+        let mut list = DisplayList {
+            command_ids: vec![
+                first.command_ids[0],
+                middle.command_ids[0],
+                last.command_ids[0],
+            ],
+            commands: vec![first.commands[0], middle.commands[0], last.commands[0]],
+        };
+        let replacement = single_fill(2, Rect::new(5.0, 0.0, 4.0, 4.0), Color::BLACK);
+
+        assert!(replace_display_items(&mut list, &middle, &replacement));
+        assert_eq!(
+            list.command_ids,
+            vec![DisplayItemId(1), DisplayItemId(2), DisplayItemId(3)]
+        );
+        assert_eq!(list.commands[0], first.commands[0]);
+        assert_eq!(list.commands[2], last.commands[0]);
+        assert_eq!(list.commands[1], replacement.commands[0]);
+    }
+
+    #[test]
+    fn damage_raster_matches_full_raster() {
+        let before = DisplayList {
+            command_ids: vec![DisplayItemId(1), DisplayItemId(2)],
+            commands: vec![
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 4.0, 4.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(4.0, 0.0, 4.0, 4.0),
+                    color: Color::rgb(10, 20, 30),
+                },
+            ],
+        };
+        let after = DisplayList {
+            command_ids: before.command_ids.clone(),
+            commands: vec![
+                before.commands[0],
+                DisplayCommand::FillRect {
+                    rect: Rect::new(5.0, 0.0, 3.0, 4.0),
+                    color: Color::rgb(30, 20, 10),
+                },
+            ],
+        };
+        let damage = DamageRegion::between(Some(&before), &after);
+        let size = Size {
+            width: 8.0,
+            height: 4.0,
+        };
+        let mut incremental = Framebuffer::new(size, Color::WHITE);
+        incremental.rasterize(&before);
+        incremental.rasterize_damage(&after, &damage, Color::WHITE);
+        let mut full = Framebuffer::new(size, Color::WHITE);
+        full.rasterize(&after);
+
+        assert_eq!(incremental.stable_hash64(), full.stable_hash64());
     }
 
     #[test]
