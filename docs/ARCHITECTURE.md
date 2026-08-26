@@ -47,6 +47,8 @@ See ADR-0006.
 8. **Dependencies are replaceable behind adapters.** SpiderMonkey, networking backends, graphics APIs and platform integrations must not leak throughout the Web platform implementation.
 9. **DOM, layout and fragments have different identities and lifetimes.** DOM is mutable source state; layout nodes and fragments are derived snapshots and may be discarded or rebuilt at any time.
 10. **Layout never paints directly.** Paint consumes derived fragments and emits a display list.
+11. **Cascade and invalidation are explicit data flows.** DOM/style mutations produce dirty information; they do not silently mutate layout or paint state behind subsystem boundaries.
+12. **Determinism is an R0 correctness requirement.** Equivalent input on the same architecture/toolchain must produce equivalent snapshots, display items and framebuffer hashes.
 
 ## Long-term process topology
 
@@ -76,22 +78,24 @@ bytes
   ↓
 HTML tokenizer/tree builder
   ↓
-mutable DOM
+mutable DOM + generation-ordered mutation records
   ↓
-style matching + cascade
+stylesheet sources / selector matching / cascade
+  ↓
+computed style + invalidation keys
   ↓
 derived Layout Tree
   ↓
 derived Fragment Tree
   ↓
-display list
+stable display-item IDs + damage comparison
   ↓
 compositor / raster backend
   ↓
-pixels
+pixels + deterministic hash
 ```
 
-### DOM mutation boundary
+## DOM mutation boundary
 
 `rarog-dom` owns tree invariants. Callers do not directly repair parent/child relationships after a mutation.
 
@@ -105,11 +109,64 @@ The R0 mutation surface establishes these rules:
 - detached nodes are valid DOM objects;
 - `validate_invariants` is available for deterministic tests and debug checks.
 
-The generation counter is deliberately simple in R0. Later invalidation work will use more granular generations/dirty keys instead of rebuilding everything after every mutation.
+Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary.
+
+This keeps the direction of dependency clear:
+
+```text
+DOM mutation record
+      ↓
+style/layout invalidation policy
+      ↓
+future incremental rebuild scheduler
+```
+
+The DOM does not know which selectors, layout nodes or paint items depend on a mutation.
+
+## Style source, selector and cascade boundary
+
+R0 now has explicit bootstrap representations for:
+
+- `StyleSourceId` and source labels;
+- cascade origin (`UserAgent`, `Author`, `Inline`);
+- `CascadeLayer` data even though `@layer` parsing is not implemented yet;
+- simple selector components: type, ID and class;
+- selector specificity;
+- typed bootstrap `PropertyId` / `PropertyValue` pairs;
+- stylesheet rule source order.
+
+The current cascade priority is deterministic and compares:
+
+```text
+origin → layer → specificity → sheet order → rule order → declaration order
+```
+
+The bootstrap document style set contains a tiny Rarog user-agent sheet, author `<style>` elements in document order and inline `style` declarations. This is an architectural foundation, **not CSS Cascade compliance**. Importance, inheritance, CSS-wide values, selector combinators, pseudo-classes, namespaces and standards parsing remain later work.
+
+### Invalidation primitives
+
+Selectors expose an `SelectorInvalidationKey` containing the tag/ID/class keys that can make the selector relevant. `InvalidationSet::from_document_since` converts DOM mutation records into conservative dirty flags:
+
+```text
+style dirty
+layout dirty
+paint dirty
+```
+
+For the current simple-selector bootstrap:
+
+- `id`, `class` and `style` attribute changes invalidate style and downstream layout/paint for the changed element;
+- character-data changes invalidate layout/paint and affected ancestors;
+- child insertion/reparenting invalidates the moved/inserted node and ancestor geometry;
+- a stylesheet-source change can invalidate the connected document subtree.
+
+These flags are primitives for a later incremental invalidation graph. R0 still rebuilds derived trees; it does not claim incremental style/layout execution yet.
+
+See ADR-0008.
 
 ## Layout and Fragment Tree
 
-R0 now has three distinct representations:
+R0 has three distinct representations:
 
 ```text
 DOM NodeId
@@ -147,20 +204,53 @@ R0 supports bootstrap values for:
 - `padding` and individual padding edges;
 - `border-width` and individual border-width edges;
 - `border-color`;
-- background color.
+- background color;
+- `display: none` / `display: block` for bootstrap cascade decisions.
 
 This is a geometry foundation, **not** a claim of CSS box-model compliance. Margin collapsing, intrinsic sizing, min/max constraints, percentages, writing modes and formatting-context-specific behavior remain later work.
 
-### Important separation
+## Paint identity and damage tracking
+
+The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. IDs are derived from fragment identity plus a command slot, so an unchanged bootstrap fragment emits the same item IDs on repeated deterministic builds.
+
+Damage is computed by comparing previous and current display lists by item ID:
+
+- unchanged item and command → no damage;
+- changed item → old and new command bounds are damaged;
+- removed item → old bounds are damaged;
+- new item → new bounds are damaged.
+
+The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. Retained display lists, clip/transform-aware damage, occlusion and compositor damage are later work.
+
+See ADR-0008.
+
+## Deterministic R0 snapshots
+
+The R0 pipeline exposes deterministic textual snapshots for:
+
+- DOM arena state;
+- stylesheet/source/rule structure;
+- computed styles carried by the Layout Tree;
+- Layout Tree identity/shape;
+- Fragment Tree geometry;
+- display-item IDs and commands.
+
+The software framebuffer exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels. `rarog-engine` combines the textual snapshots and framebuffer hash into a deterministic render-signature hash used as a regression gate.
+
+This is not a cryptographic hash and must never be used for security decisions. It is a small deterministic regression fingerprint for R0.
+
+## Important separation
 
 - DOM is mutable script-visible state.
+- Stylesheets/selectors/cascade produce computed style; they do not own layout objects.
 - Layout Tree is derived state and must be disposable/rebuildable.
 - Fragment Tree is derived geometry and must be disposable/rebuildable.
 - Paint output is a display list, not direct drawing from layout code.
+- Damage is derived from display-list differences, not from layout drawing side effects.
 - The compositor consumes snapshots; it does not mutate DOM/layout.
 - Platform code consumes engine output through adapters; core Web semantics do not depend on Windows APIs.
 
-This separation is required for later invalidation, parallelism, process isolation, GPU composition and crash recovery.
+This separation is required for later incremental invalidation, parallelism, process isolation, GPU composition and crash recovery.
 
 ## Script architecture
 
@@ -226,9 +316,9 @@ Two independent test tracks are mandatory:
 
 ## CI platform policy
 
-Windows is the primary CI platform lane. It must run format, compile checks, Clippy, tests and the bootstrap render.
+Windows is the primary CI platform lane. It must run format, compile checks, Clippy, workspace tests, the deterministic-render gate and the bootstrap render.
 
-Linux remains a portability lane from R0 onward so accidental Windows-only dependencies in engine-core crates are caught early.
+Linux remains a portability lane from R0 onward so accidental Windows-only dependencies in engine-core crates are caught early. It also runs the workspace tests and bootstrap render; deterministic behavior is therefore exercised on both lanes even though Windows is the product-priority gate.
 
 When macOS support becomes an active target it should gain an equivalent portability lane, but absence of a macOS lane must not block Windows-first engine progress.
 
@@ -237,7 +327,7 @@ When macOS support becomes an active target it should gain an equivalent portabi
 The first milestone proves the interfaces:
 
 ```text
-parse → DOM → style → Layout Tree → Fragment Tree → display list → framebuffer
+parse → DOM → style/cascade → Layout Tree → Fragment Tree → display list/damage → framebuffer
 ```
 
-It is not a standards claim. A small end-to-end pipeline lets us change parsing/layout implementations without rewriting host, paint and test infrastructure.
+It is not a standards claim. A small end-to-end pipeline lets us replace parsing, selector, cascade, layout and raster implementations without rewriting host and test infrastructure.

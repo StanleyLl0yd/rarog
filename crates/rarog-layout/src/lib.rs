@@ -1,4 +1,4 @@
-use rarog_css::{ComputedStyle, computed_style};
+use rarog_css::{ComputedStyle, StyleSet, computed_style};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Rect, Size};
 
@@ -39,6 +39,20 @@ pub struct LayoutNode {
 #[derive(Clone, Debug)]
 pub struct LayoutTree {
     pub root: LayoutNode,
+}
+
+impl LayoutTree {
+    pub fn snapshot(&self) -> String {
+        let mut output = String::new();
+        snapshot_layout_node(&self.root, 0, &mut output);
+        output
+    }
+
+    pub fn style_snapshot(&self) -> String {
+        let mut output = String::new();
+        snapshot_style_node(&self.root, &mut output);
+        output
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,6 +97,14 @@ pub struct FragmentTree {
     pub root: Fragment,
 }
 
+impl FragmentTree {
+    pub fn snapshot(&self) -> String {
+        let mut output = String::new();
+        snapshot_fragment(&self.root, 0, &mut output);
+        output
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LayoutOutput {
     pub tree: LayoutTree,
@@ -90,7 +112,16 @@ pub struct LayoutOutput {
 }
 
 pub fn layout_document(doc: &Document, viewport: Size) -> LayoutOutput {
-    let mut tree_builder = LayoutTreeBuilder::default();
+    let styles = StyleSet::for_document(doc);
+    layout_document_with_styles(doc, &styles, viewport)
+}
+
+pub fn layout_document_with_styles(
+    doc: &Document,
+    styles: &StyleSet,
+    viewport: Size,
+) -> LayoutOutput {
+    let mut tree_builder = LayoutTreeBuilder::new(styles);
     let root = tree_builder
         .build_node(doc, doc.root())
         .expect("document root always creates a layout root");
@@ -102,18 +133,22 @@ pub fn layout_document(doc: &Document, viewport: Size) -> LayoutOutput {
     LayoutOutput { tree, fragments }
 }
 
-#[derive(Default)]
-struct LayoutTreeBuilder {
+struct LayoutTreeBuilder<'a> {
     next_id: usize,
+    styles: &'a StyleSet,
 }
 
-impl LayoutTreeBuilder {
+impl<'a> LayoutTreeBuilder<'a> {
+    fn new(styles: &'a StyleSet) -> Self {
+        Self { next_id: 0, styles }
+    }
+
     fn build_node(&mut self, doc: &Document, node: NodeId) -> Option<LayoutNode> {
         let (kind, style) = match &doc.node(node).kind {
             NodeKind::Document => (LayoutNodeKind::Root, ComputedStyle::default()),
             NodeKind::Text(text) => (LayoutNodeKind::Text(text.clone()), ComputedStyle::default()),
             NodeKind::Element(_) => {
-                let style = computed_style(doc, node);
+                let style = computed_style(doc, node, self.styles);
                 if style.display_none {
                     return None;
                 }
@@ -292,6 +327,90 @@ impl FragmentBuilder {
     }
 }
 
+fn snapshot_layout_node(node: &LayoutNode, depth: usize, output: &mut String) {
+    let dom = node
+        .dom_node
+        .map(|node| node.to_string())
+        .unwrap_or_else(|| "-".into());
+    let kind = match &node.kind {
+        LayoutNodeKind::Root => "root".to_string(),
+        LayoutNodeKind::Box => "box".to_string(),
+        LayoutNodeKind::Text(text) => format!("text:{text}"),
+    };
+    output.push_str(&format!(
+        "{}layout={}|dom={dom}|kind={kind}|children={}\n",
+        " ".repeat(depth),
+        node.id.index(),
+        node.children.len()
+    ));
+    for child in &node.children {
+        snapshot_layout_node(child, depth + 1, output);
+    }
+}
+
+fn snapshot_style_node(node: &LayoutNode, output: &mut String) {
+    if let Some(dom) = node.dom_node {
+        let style = node.style;
+        output.push_str(&format!(
+            "dom={dom}|w={:?}|h={:?}|m={:.1},{:.1},{:.1},{:.1}|b={:.1},{:.1},{:.1},{:.1}|p={:.1},{:.1},{:.1},{:.1}|bg={:02x}{:02x}{:02x}{:02x}|bc={:02x}{:02x}{:02x}{:02x}|none={}\n",
+            style.width,
+            style.height,
+            style.margin.top,
+            style.margin.right,
+            style.margin.bottom,
+            style.margin.left,
+            style.border_width.top,
+            style.border_width.right,
+            style.border_width.bottom,
+            style.border_width.left,
+            style.padding.top,
+            style.padding.right,
+            style.padding.bottom,
+            style.padding.left,
+            style.background.r,
+            style.background.g,
+            style.background.b,
+            style.background.a,
+            style.border_color.r,
+            style.border_color.g,
+            style.border_color.b,
+            style.border_color.a,
+            style.display_none,
+        ));
+    }
+    for child in &node.children {
+        snapshot_style_node(child, output);
+    }
+}
+
+fn snapshot_fragment(fragment: &Fragment, depth: usize, output: &mut String) {
+    let dom = fragment
+        .dom_node
+        .map(|node| node.to_string())
+        .unwrap_or_else(|| "-".into());
+    output.push_str(&format!(
+        "{}fragment={}|layout={}|dom={dom}|kind={:?}|margin={}|border={}|padding={}|content={}\n",
+        " ".repeat(depth),
+        fragment.id.index(),
+        fragment.layout_node.index(),
+        fragment.kind,
+        rect_snapshot(fragment.boxes.margin_box),
+        rect_snapshot(fragment.boxes.border_box),
+        rect_snapshot(fragment.boxes.padding_box),
+        rect_snapshot(fragment.boxes.content_box),
+    ));
+    for child in &fragment.children {
+        snapshot_fragment(child, depth + 1, output);
+    }
+}
+
+fn rect_snapshot(rect: Rect) -> String {
+    format!(
+        "{:.1},{:.1},{:.1},{:.1}",
+        rect.origin.x, rect.origin.y, rect.size.width, rect.size.height
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +447,35 @@ mod tests {
         assert_eq!(layout_node.dom_node, Some(element));
         assert_eq!(fragment.dom_node, Some(element));
         assert_eq!(fragment.layout_node, layout_node.id);
+    }
+
+    #[test]
+    fn author_stylesheet_participates_in_layout() {
+        let mut doc = Document::new();
+        let style = doc
+            .append_new(doc.root(), element("style", None))
+            .unwrap();
+        doc.append_new(style, NodeKind::Text(".card { width:42px; }".into()))
+            .unwrap();
+        let mut attributes = BTreeMap::new();
+        attributes.insert("class".into(), "card".into());
+        doc.append_new(
+            doc.root(),
+            NodeKind::Element(ElementData {
+                tag_name: "div".into(),
+                attributes,
+            }),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        assert_eq!(output.fragments.root.children[0].boxes.content_box.size.width, 42.0);
     }
 
     #[test]
@@ -379,5 +527,23 @@ mod tests {
 
         assert!(output.tree.root.children.is_empty());
         assert!(output.fragments.root.children.is_empty());
+    }
+
+    #[test]
+    fn snapshots_are_deterministic() {
+        let mut doc = Document::new();
+        doc.append_new(doc.root(), element("div", Some("width:20px")))
+            .unwrap();
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+
+        assert_eq!(output.tree.snapshot(), output.tree.snapshot());
+        assert_eq!(output.tree.style_snapshot(), output.tree.style_snapshot());
+        assert_eq!(output.fragments.snapshot(), output.fragments.snapshot());
     }
 }
