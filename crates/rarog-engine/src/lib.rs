@@ -2,7 +2,7 @@ use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_s
 use rarog_dom::{Document, MutationKind, NodeId};
 use rarog_layout::{
     Fragment, LayoutNode, LayoutOutput, fragment_for_dom, layout_document_with_styles,
-    relayout_fragment_subtree, relayout_tree,
+    relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, build_display_list, replace_display_items_for_fragment,
@@ -97,6 +97,7 @@ pub enum IncrementalMode {
     Unchanged,
     PaintOnlyReuse,
     SubtreeRelayout,
+    FlowRelayout,
     GeometryRelayout,
     FullRebuild,
 }
@@ -217,6 +218,7 @@ impl RenderSession {
         let mut style_updates = Vec::new();
         let mut geometry_changed = false;
         let mut subtree_relayout_safe = true;
+        let mut flow_relayout_nodes = BTreeSet::new();
 
         if !requires_full_rebuild {
             for node in style_candidates {
@@ -234,6 +236,7 @@ impl RenderSession {
                     geometry_changed |= layout_changed;
                     if layout_changed && vertical_footprint_changed(old_style, new_style) {
                         subtree_relayout_safe = false;
+                        flow_relayout_nodes.insert(node);
                     }
                     style_updates.push((node, new_style));
                 }
@@ -310,7 +313,13 @@ impl RenderSession {
                 patch_layout_style(&mut self.layout.tree.root, node, style);
             }
             self.styles = new_styles;
-            self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
+            let flow_nodes = flow_relayout_nodes.into_iter().collect::<Vec<_>>();
+            if relayout_fragment_flow(&self.layout.tree, &mut self.layout.fragments, &flow_nodes) {
+                mode = IncrementalMode::FlowRelayout;
+            } else {
+                self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
+                mode = IncrementalMode::GeometryRelayout;
+            }
             self.display_list = build_display_list(&self.layout.fragments);
             self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
             self.framebuffer.rasterize_damage(
@@ -318,7 +327,6 @@ impl RenderSession {
                 &self.damage,
                 self.options.background,
             );
-            mode = IncrementalMode::GeometryRelayout;
         } else {
             let previous_display_list = self.display_list.clone();
             patched_nodes = style_updates.len();
@@ -484,6 +492,22 @@ mod tests {
             .expect("fixture contains an element")
     }
 
+    fn element_with_id(document: &Document, id: &str) -> NodeId {
+        fn find(document: &Document, node: NodeId, id: &str) -> Option<NodeId> {
+            if let NodeKind::Element(element) = &document.node(node).kind
+                && element.attributes.get("id").map(String::as_str) == Some(id)
+            {
+                return Some(node);
+            }
+            document
+                .children(node)
+                .iter()
+                .find_map(|child| find(document, *child, id))
+        }
+
+        find(document, document.root(), id).expect("fixture contains requested id")
+    }
+
     #[test]
     fn bootstrap_pipeline_produces_commands_and_fragments() {
         let output = render_html(
@@ -635,27 +659,48 @@ mod tests {
     }
 
     #[test]
-    fn vertical_geometry_change_uses_full_fragment_relayout() {
-        let mut session = RenderSession::new(
-            "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div><div style=\"height:10px\">next</div>",
-            deterministic_options(),
-        );
-        let node = first_element(session.document());
+    fn vertical_geometry_change_reflows_ancestors_and_following_siblings() {
+        let source = "<div id=\"before\" style=\"height:5px\"></div><div id=\"outer\" style=\"padding:2px\"><div id=\"target\" style=\"height:20px\"></div></div><div id=\"after\" style=\"height:10px\"></div>";
+        let expected_source = "<div id=\"before\" style=\"height:5px\"></div><div id=\"outer\" style=\"padding:2px\"><div id=\"target\" style=\"height:32px\"></div></div><div id=\"after\" style=\"height:10px\"></div>";
+        let mut session = RenderSession::new(source, deterministic_options());
+        let target = element_with_id(session.document(), "target");
+        let before = element_with_id(session.document(), "before");
+        let after = element_with_id(session.document(), "after");
+        let layout_before = session.layout().tree.snapshot();
+        let before_fragment_id = fragment_for_dom(&session.layout().fragments, before)
+            .expect("before fragment exists")
+            .id;
+
         session
             .document_mut()
-            .set_attribute(node, "style", "width:80px;height:32px;background:#112233")
+            .set_attribute(target, "style", "height:32px")
             .unwrap();
 
         let report = session.update();
-        assert_eq!(report.mode, IncrementalMode::GeometryRelayout);
+        let expected = render_html(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert_eq!(session.layout().tree.snapshot(), layout_before);
         assert_eq!(
-            session.layout().fragments.root.children[1]
+            fragment_for_dom(&session.layout().fragments, before)
+                .expect("before fragment remains")
+                .id,
+            before_fragment_id
+        );
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, after)
+                .expect("after fragment exists")
                 .boxes
                 .margin_box
                 .origin
                 .y,
-            32.0
+            41.0
         );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert!(!session.damage().rects.is_empty());
     }
 
     #[test]
