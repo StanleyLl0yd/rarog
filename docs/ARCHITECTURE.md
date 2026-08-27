@@ -399,3 +399,7 @@ R0 now models font selection explicitly through `FontFaceId`, `FontFamily`, `Fon
 
 R0 now derives scalar-indexed `ShapingRun` segments by intersecting logical bidi runs with grapheme-safe font fallback runs. Every shaping segment has exactly one source range, one `FontFaceId`, and one `BidiLevel`/direction, and adjacent segments with identical shaping state are coalesced. This is the handoff boundary for a future OpenType shaper: a real backend can shape each segment independently without changing DOM, source ranges, line breaking, fragment identity, or retained paint.
 
+### Shaping backend boundary
+
+R0 now separates shaping segmentation from shaping execution. `ShapingBackend` receives one `ShapingRun` plus its selected `FontFace` and returns a `ShapedRun` containing positioned glyph IDs, per-glyph advances/offsets, and scalar-indexed source-cluster mapping. The deterministic `FixedTextShaper` implements this contract as the bootstrap backend while the existing aggregate `ShapedText` remains the line-breaking input. A future OpenType backend can therefore replace glyph generation without owning bidi, font fallback, source identity, fragmentation, or retained-paint policy.
+
