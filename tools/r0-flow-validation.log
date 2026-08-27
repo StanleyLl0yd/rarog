@@ -1,1 +1,43 @@
-engine geometry branch marker not found
+[1m[92m    Checking[0m rarog-dom v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-dom)
+[1m[92m    Checking[0m rarog-types v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-types)
+[1m[92m    Checking[0m rarog-css v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-css)
+[1m[92m    Checking[0m rarog-html v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-html)
+[1m[92m    Checking[0m rarog-layout v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-layout)
+[1m[91merror[E0428][0m[1m: the name `relayout_fragment_flow` is defined multiple times[0m
+   [1m[94m--> [0mcrates/rarog-layout/src/lib.rs:258:1
+    [1m[94m|[0m
+[1m[94m202[0m [1m[94m|[0m [1m[94m/[0m pub fn relayout_fragment_flow(
+[1m[94m203[0m [1m[94m|[0m [1m[94m|[0m     tree: &LayoutTree,
+[1m[94m204[0m [1m[94m|[0m [1m[94m|[0m     fragments: &mut FragmentTree,
+[1m[94m205[0m [1m[94m|[0m [1m[94m|[0m     dirty_nodes: &[NodeId],
+[1m[94m...[0m   [1m[94m|[0m
+[1m[94m247[0m [1m[94m|[0m [1m[94m|[0m     true
+[1m[94m248[0m [1m[94m|[0m [1m[94m|[0m }
+    [1m[94m|[0m [1m[94m|_-[0m [1m[94mprevious definition of the value `relayout_fragment_flow` here[0m
+[1m[94m...[0m
+[1m[94m258[0m [1m[94m|[0m [1m[91m/[0m pub fn relayout_fragment_flow(
+[1m[94m259[0m [1m[94m|[0m [1m[91m|[0m     tree: &LayoutTree,
+[1m[94m260[0m [1m[94m|[0m [1m[91m|[0m     fragments: &mut FragmentTree,
+[1m[94m261[0m [1m[94m|[0m [1m[91m|[0m     dirty_nodes: &[NodeId],
+[1m[94m...[0m   [1m[91m|[0m
+[1m[94m303[0m [1m[94m|[0m [1m[91m|[0m     true
+[1m[94m304[0m [1m[94m|[0m [1m[91m|[0m }
+    [1m[94m|[0m [1m[91m|_^[0m [1m[91m`relayout_fragment_flow` redefined here[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `relayout_fragment_flow` must be defined only once in the value namespace of this module
+
+[1m[91merror[E0428][0m[1m: the name `layout_node_contains` is defined multiple times[0m
+   [1m[94m--> [0mcrates/rarog-layout/src/lib.rs:306:1
+    [1m[94m|[0m
+[1m[94m250[0m [1m[94m|[0m fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
+    [1m[94m|[0m [1m[94m--------------------------------------------------------------------[0m [1m[94mprevious definition of the value `layout_node_contains` here[0m
+[1m[94m...[0m
+[1m[94m306[0m [1m[94m|[0m fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
+    [1m[94m|[0m [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91m`layout_node_contains` redefined here[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `layout_node_contains` must be defined only once in the value namespace of this module
+
+[1mFor more information about this error, try `rustc --explain E0428`.[0m
+[1m[91merror[0m: could not compile `rarog-layout` (lib test) due to 2 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `rarog-layout` (lib) due to 2 previous errors

@@ -660,8 +660,8 @@ mod tests {
 
     #[test]
     fn vertical_geometry_change_reflows_ancestors_and_following_siblings() {
-        let source = "<div id=\"before\" style=\"height:5px\"></div><div id=\"outer\" style=\"padding:2px\"><div id=\"target\" style=\"height:20px\"></div></div><div id=\"after\" style=\"height:10px\"></div>";
-        let expected_source = "<div id=\"before\" style=\"height:5px\"></div><div id=\"outer\" style=\"padding:2px\"><div id=\"target\" style=\"height:32px\"></div></div><div id=\"after\" style=\"height:10px\"></div>";
+        let source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"outer\" style=\"padding:2px;background:#112233\"><div id=\"target\" style=\"height:20px\"></div></div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+        let expected_source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"outer\" style=\"padding:2px;background:#112233\"><div id=\"target\" style=\"height:32px\"></div></div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
         let mut session = RenderSession::new(source, deterministic_options());
         let target = element_with_id(session.document(), "target");
         let before = element_with_id(session.document(), "before");
