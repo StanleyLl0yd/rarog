@@ -20,6 +20,15 @@ impl FragmentId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FragmentOrdinal(u32);
+
+impl FragmentOrdinal {
+    pub const fn index(self) -> u32 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct IntrinsicSizes {
     pub min_content: f32,
@@ -129,6 +138,7 @@ pub enum FragmentKind {
 #[derive(Clone, Debug)]
 pub struct Fragment {
     pub id: FragmentId,
+    pub ordinal: FragmentOrdinal,
     pub layout_node: LayoutNodeId,
     pub dom_node: Option<NodeId>,
     pub kind: FragmentKind,
@@ -186,6 +196,12 @@ pub fn fragment_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Option<&Fragme
     find_fragment(&tree.root, dom_node)
 }
 
+pub fn fragments_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Vec<&Fragment> {
+    let mut fragments = Vec::new();
+    collect_fragments(&tree.root, dom_node, &mut fragments);
+    fragments
+}
+
 pub fn relayout_fragment_subtree(
     tree: &LayoutTree,
     fragments: &mut FragmentTree,
@@ -239,7 +255,7 @@ pub fn relayout_fragment_flow(
     let mut rebuilt = Vec::with_capacity(tree.root.children.len() - start_index);
 
     for child in &tree.root.children[start_index..] {
-        rebuilt.push(builder.layout_node(child, containing_block, &mut cursor_y));
+        rebuilt.extend(builder.layout_node(child, containing_block, &mut cursor_y));
     }
 
     fragments.root.children.truncate(start_index);
@@ -274,6 +290,15 @@ fn find_fragment(fragment: &Fragment, dom_node: NodeId) -> Option<&Fragment> {
         .find_map(|child| find_fragment(child, dom_node))
 }
 
+fn collect_fragments<'a>(fragment: &'a Fragment, dom_node: NodeId, output: &mut Vec<&'a Fragment>) {
+    if fragment.dom_node == Some(dom_node) {
+        output.push(fragment);
+    }
+    for child in &fragment.children {
+        collect_fragments(child, dom_node, output);
+    }
+}
+
 fn max_fragment_id(fragment: &Fragment) -> usize {
     fragment
         .children
@@ -296,7 +321,11 @@ fn relayout_fragment_child(
     for child in &mut parent.children {
         if child.dom_node == Some(dom_node) {
             let mut cursor_y = child.boxes.margin_box.origin.y;
-            *child = builder.layout_node(layout_node, containing_block, &mut cursor_y);
+            let mut replacement = builder.layout_node(layout_node, containing_block, &mut cursor_y);
+            if replacement.len() != 1 {
+                return false;
+            }
+            *child = replacement.remove(0);
             return true;
         }
         if relayout_fragment_child(child, layout_node, dom_node, builder) {
@@ -421,12 +450,13 @@ impl FragmentBuilder {
         let mut children = Vec::new();
 
         for child in &tree.root.children {
-            children.push(self.layout_node(child, containing_block, &mut cursor_y));
+            children.extend(self.layout_node(child, containing_block, &mut cursor_y));
         }
 
         FragmentTree {
             root: Fragment {
                 id: self.allocate_id(),
+                ordinal: FragmentOrdinal(0),
                 layout_node: tree.root.id,
                 dom_node: tree.root.dom_node,
                 kind: FragmentKind::Root,
@@ -442,11 +472,11 @@ impl FragmentBuilder {
         node: &LayoutNode,
         containing_block: ContainingBlock,
         cursor_y: &mut f32,
-    ) -> Fragment {
+    ) -> Vec<Fragment> {
         match &node.kind {
             LayoutNodeKind::Root => unreachable!("only the layout root may have Root kind"),
             LayoutNodeKind::Text(run) => self.layout_text(node, run, containing_block, cursor_y),
-            LayoutNodeKind::Box => self.layout_box(node, containing_block, cursor_y),
+            LayoutNodeKind::Box => vec![self.layout_box(node, containing_block, cursor_y)],
         }
     }
 
@@ -456,20 +486,36 @@ impl FragmentBuilder {
         run: &TextRun,
         containing_block: ContainingBlock,
         cursor_y: &mut f32,
-    ) -> Fragment {
-        let width = run.advance.min(containing_block.available.width.max(0.0));
-        let rect = Rect::new(containing_block.origin.x, *cursor_y, width, run.line_height);
-        *cursor_y += run.line_height;
-
-        Fragment {
-            id: self.allocate_id(),
-            layout_node: node.id,
-            dom_node: node.dom_node,
-            kind: FragmentKind::Text,
-            boxes: BoxModel::single(rect),
-            style: node.style,
-            children: Vec::new(),
+    ) -> Vec<Fragment> {
+        const BOOTSTRAP_ADVANCE: f32 = 8.0;
+        let available_width = containing_block.available.width.max(0.0);
+        let character_count = run.text.chars().count();
+        let characters_per_fragment = if available_width >= BOOTSTRAP_ADVANCE {
+            (available_width / BOOTSTRAP_ADVANCE).floor().max(1.0) as usize
+        } else {
+            character_count.max(1)
+        };
+        let fragment_count = character_count.max(1).div_ceil(characters_per_fragment);
+        let mut fragments = Vec::with_capacity(fragment_count);
+        let mut remaining = character_count;
+        for ordinal in 0..fragment_count {
+            let characters = remaining.min(characters_per_fragment);
+            let width = (characters as f32 * BOOTSTRAP_ADVANCE).min(available_width);
+            let rect = Rect::new(containing_block.origin.x, *cursor_y, width, run.line_height);
+            *cursor_y += run.line_height;
+            remaining = remaining.saturating_sub(characters);
+            fragments.push(Fragment {
+                id: self.allocate_id(),
+                ordinal: FragmentOrdinal(ordinal as u32),
+                layout_node: node.id,
+                dom_node: node.dom_node,
+                kind: FragmentKind::Text,
+                boxes: BoxModel::single(rect),
+                style: node.style,
+                children: Vec::new(),
+            });
         }
+        fragments
     }
 
     fn layout_box(
@@ -511,7 +557,7 @@ impl FragmentBuilder {
         let mut child_y = child_containing_block.origin.y;
         let mut children = Vec::new();
         for child in &node.children {
-            children.push(self.layout_node(child, child_containing_block, &mut child_y));
+            children.extend(self.layout_node(child, child_containing_block, &mut child_y));
         }
 
         let natural_content_height = (child_y - content_y).max(0.0);
@@ -541,6 +587,7 @@ impl FragmentBuilder {
 
         Fragment {
             id: self.allocate_id(),
+            ordinal: FragmentOrdinal(0),
             layout_node: node.id,
             dom_node: node.dom_node,
             kind: FragmentKind::Box,
@@ -624,9 +671,10 @@ fn snapshot_fragment(fragment: &Fragment, depth: usize, output: &mut String) {
         .map(|node| node.to_string())
         .unwrap_or_else(|| "-".into());
     output.push_str(&format!(
-        "{}fragment={}|layout={}|dom={dom}|kind={:?}|margin={}|border={}|padding={}|content={}\n",
+        "{}fragment={}|ordinal={}|layout={}|dom={dom}|kind={:?}|margin={}|border={}|padding={}|content={}\n",
         " ".repeat(depth),
         fragment.id.index(),
+        fragment.ordinal.index(),
         fragment.layout_node.index(),
         fragment.kind,
         rect_snapshot(fragment.boxes.margin_box),
@@ -818,5 +866,37 @@ mod tests {
         assert_eq!(output.tree.snapshot(), output.tree.snapshot());
         assert_eq!(output.tree.style_snapshot(), output.tree.style_snapshot());
         assert_eq!(output.fragments.snapshot(), output.fragments.snapshot());
+    }
+
+    #[test]
+    fn narrow_text_produces_multiple_fragments_for_one_layout_node() {
+        let mut doc = Document::new();
+        let text_node = doc
+            .append_new(doc.root(), NodeKind::Text("abcdefghij".into()))
+            .unwrap();
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 24.0,
+                height: 200.0,
+            },
+        );
+        let layout_node = &output.tree.root.children[0];
+        let fragments = fragments_for_dom(&output.fragments, text_node);
+        assert_eq!(fragments.len(), 4);
+        assert!(
+            fragments
+                .iter()
+                .all(|fragment| fragment.layout_node == layout_node.id)
+        );
+        assert_eq!(
+            fragments
+                .iter()
+                .map(|fragment| fragment.ordinal.index())
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(fragments[0].boxes.content_box.size.width, 24.0);
+        assert_eq!(fragments[3].boxes.content_box.size.width, 8.0);
     }
 }

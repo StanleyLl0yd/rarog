@@ -335,7 +335,7 @@ fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {
         .unwrap_or_else(|| (1_u64 << 63) | fragment.layout_node.index() as u64);
     DisplayItemId {
         source,
-        fragment: fragment.id.index() as u64,
+        fragment: u64::from(fragment.ordinal.index()),
         slot,
     }
 }
