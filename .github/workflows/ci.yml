@@ -40,6 +40,13 @@ jobs:
           cargo test -p rarog-engine structural_change_still_falls_back_to_full_rebuild
           cargo test -p rarog-paint retained_display_patch_preserves_unrelated_items
           cargo test -p rarog-paint damage_raster_matches_full_raster
+      - name: Correctness hardening gate
+        run: |
+          cargo test -p rarog-css non_finite_lengths_are_rejected
+          cargo test -p rarog-dom deterministic_mutation_sequences_preserve_dom_invariants
+          cargo test -p rarog-engine invalid_viewport_is_reported_instead_of_panicking
+          cargo test -p rarog-paint fragment_component_prevents_multi_fragment_collisions
+          cargo test -p rarog-paint damage_rejects_duplicate_display_ids
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -74,5 +81,12 @@ jobs:
           cargo test -p rarog-engine structural_change_still_falls_back_to_full_rebuild
           cargo test -p rarog-paint retained_display_patch_preserves_unrelated_items
           cargo test -p rarog-paint damage_raster_matches_full_raster
+      - name: Correctness hardening gate
+        run: |
+          cargo test -p rarog-css non_finite_lengths_are_rejected
+          cargo test -p rarog-dom deterministic_mutation_sequences_preserve_dom_invariants
+          cargo test -p rarog-engine invalid_viewport_is_reported_instead_of_panicking
+          cargo test -p rarog-paint fragment_component_prevents_multi_fragment_collisions
+          cargo test -p rarog-paint damage_rejects_duplicate_display_ids
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
