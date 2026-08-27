@@ -116,7 +116,7 @@ The R0 mutation surface establishes these rules:
 - detached nodes are valid DOM objects;
 - `validate_invariants` is available for deterministic tests and debug checks.
 
-Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary. `Document` also tracks a mutation-history floor; once the active engine consumer has advanced through a generation, older records are pruned so a long-lived document does not retain an unbounded journal. Requests older than the retained floor fail loudly instead of silently producing incomplete invalidation input.
+Each accepted mutation also records a generation-ordered `MutationRecord`. The record describes the minimum semantic change — node creation, child insertion/reparenting, attribute change or character-data change — without importing CSS/layout types into the DOM crate. Downstream invalidation code consumes these records through a generation boundary. `Document` also tracks a mutation-history floor; once the active engine consumer has advanced through a generation, older records are pruned so a long-lived document does not retain an unbounded journal. Requests older than the retained floor fail loudly instead of silently producing incomplete invalidation input. `RenderSession` owns that checkpoint: its public mutation surface is a `DocumentEditor` that exposes DOM mutations but not journal pruning, so an embedder cannot invalidate the session's dirty-generation contract behind the engine.
 
 This keeps the direction of dependency clear:
 
@@ -247,7 +247,7 @@ This is a geometry foundation, **not** a claim of CSS box-model compliance. Marg
 
 ## Paint identity and damage tracking
 
-The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. For the current one-fragment-per-DOM-node bootstrap path, IDs are anchored to stable DOM source identity plus a command slot; anonymous/future sources fall back to layout identity. This avoids unrelated fragment renumbering churning display IDs while keeping the representation replaceable before general fragmentation.
+The display list remains backend-neutral. R0 `DisplayItemId` values now contain three explicit components: source identity, Fragment identity and paint-command slot. This prevents two fragments produced from the same DOM/layout source from colliding once fragmentation begins. Generated display lists assert ID uniqueness, and damage comparison rejects duplicate IDs instead of silently overwriting them in its index. Fragment identity is still snapshot-oriented in R0; retained/stable fragment ordinals remain a later fragmentation concern.
 
 Damage is computed by comparing previous and current display lists by item ID:
 
@@ -271,7 +271,7 @@ The R0 pipeline exposes deterministic textual snapshots for:
 - Fragment Tree geometry;
 - display-item IDs and commands.
 
-The software framebuffer enforces a checked R0 pixel budget before allocation and exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels. `rarog-engine` combines the textual snapshots and framebuffer hash into a deterministic render-signature hash used as a regression gate.
+CSS bootstrap length parsing rejects non-finite values before they enter computed geometry. The software framebuffer enforces a checked R0 pixel budget before allocation, and the public render/session construction boundary returns a `RenderError` rather than panicking for invalid or oversized viewports. The framebuffer exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels. `rarog-engine` combines the textual snapshots and framebuffer hash into a deterministic render-signature hash used as a regression gate.
 
 This is not a cryptographic hash and must never be used for security decisions. It is a small deterministic regression fingerprint for R0.
 

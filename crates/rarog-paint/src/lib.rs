@@ -273,6 +273,17 @@ pub struct DamageRegion {
 
 impl DamageRegion {
     pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
+        assert!(
+            current.has_unique_ids(),
+            "current display list contains duplicate display item IDs"
+        );
+        if let Some(previous) = previous {
+            assert!(
+                previous.has_unique_ids(),
+                "previous display list contains duplicate display item IDs"
+            );
+        }
+
         let Some(previous) = previous else {
             let mut damage = Self::default();
             for command in &current.commands {
@@ -653,5 +664,28 @@ mod display_identity_hardening_tests {
             ],
         };
         assert!(!list.has_unique_ids());
+    }
+    #[test]
+    #[should_panic(expected = "current display list contains duplicate display item IDs")]
+    fn damage_rejects_duplicate_display_ids() {
+        let id = DisplayItemId {
+            source: 1,
+            fragment: 2,
+            slot: 0,
+        };
+        let list = DisplayList {
+            command_ids: vec![id, id],
+            commands: vec![
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(1.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+            ],
+        };
+        let _ = DamageRegion::between(None, &list);
     }
 }
