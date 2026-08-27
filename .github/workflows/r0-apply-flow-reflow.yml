@@ -18,135 +18,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           components: rustfmt, clippy
-      - name: Apply flow-aware reflow
-        shell: bash
+      - name: Apply patch
+        run: python tools/r0_apply_flow.py
+      - name: Validate
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          layout = Path('crates/rarog-layout/src/lib.rs')
-          text = layout.read_text()
-          marker = '''pub fn relayout_fragment_subtree(
-              tree: &LayoutTree,
-              fragments: &mut FragmentTree,
-              dom_node: NodeId,
-          ) -> bool {
-              let Some(layout_node) = find_layout_node(&tree.root, dom_node) else {
-                  return false;
-              };
-              let next_id = max_fragment_id(&fragments.root).saturating_add(1);
-              let mut builder = FragmentBuilder { next_id };
-              relayout_fragment_child(&mut fragments.root, layout_node, dom_node, &mut builder)
-          }
-
-'''
-          addition = marker + '''pub fn relayout_fragment_flow(
-              tree: &LayoutTree,
-              fragments: &mut FragmentTree,
-              dirty_nodes: &[NodeId],
-          ) -> bool {
-              if dirty_nodes.is_empty() || tree.root.children.len() != fragments.root.children.len() {
-                  return false;
-              }
-
-              let Some(start_index) = tree
-                  .root
-                  .children
-                  .iter()
-                  .enumerate()
-                  .filter(|(_, child)| {
-                      dirty_nodes
-                          .iter()
-                          .any(|dirty| layout_node_contains(child, *dirty))
-                  })
-                  .map(|(index, _)| index)
-                  .min()
-              else {
-                  return false;
-              };
-
-              let containing_block = ContainingBlock {
-                  origin: fragments.root.boxes.content_box.origin,
-                  available: fragments.root.boxes.content_box.size,
-              };
-              let mut cursor_y = if start_index == 0 {
-                  containing_block.origin.y
-              } else {
-                  let previous = &fragments.root.children[start_index - 1];
-                  previous.boxes.margin_box.origin.y + previous.boxes.margin_box.size.height
-              };
-              let next_id = max_fragment_id(&fragments.root).saturating_add(1);
-              let mut builder = FragmentBuilder { next_id };
-              let mut rebuilt = Vec::with_capacity(tree.root.children.len() - start_index);
-
-              for child in &tree.root.children[start_index..] {
-                  rebuilt.push(builder.layout_node(child, containing_block, &mut cursor_y));
-              }
-
-              fragments.root.children.truncate(start_index);
-              fragments.root.children.extend(rebuilt);
-              true
-          }
-
-          fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
-              node.dom_node == Some(dom_node)
-                  || node
-                      .children
-                      .iter()
-                      .any(|child| layout_node_contains(child, dom_node))
-          }
-
-'''
-          if marker not in text:
-              raise SystemExit('layout insertion marker not found')
-          layout.write_text(text.replace(marker, addition, 1))
-
-          engine = Path('crates/rarog-engine/src/lib.rs')
-          text = engine.read_text()
-          text = text.replace(
-              '''    Fragment, LayoutNode, LayoutOutput, fragment_for_dom, layout_document_with_styles,\n    relayout_fragment_subtree, relayout_tree,\n''',
-              '''    Fragment, LayoutNode, LayoutOutput, fragment_for_dom, layout_document_with_styles,\n    relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,\n''',
-              1,
-          )
-          text = text.replace(
-              '''    PaintOnlyReuse,\n    SubtreeRelayout,\n    GeometryRelayout,\n''',
-              '''    PaintOnlyReuse,\n    SubtreeRelayout,\n    FlowRelayout,\n    GeometryRelayout,\n''',
-              1,
-          )
-          text = text.replace(
-              '''        let mut geometry_changed = false;\n        let mut subtree_relayout_safe = true;\n''',
-              '''        let mut geometry_changed = false;\n        let mut subtree_relayout_safe = true;\n        let mut flow_relayout_nodes = BTreeSet::new();\n''',
-              1,
-          )
-          text = text.replace(
-              '''                    if layout_changed && vertical_footprint_changed(old_style, new_style) {\n                        subtree_relayout_safe = false;\n                    }\n''',
-              '''                    if layout_changed && vertical_footprint_changed(old_style, new_style) {\n                        subtree_relayout_safe = false;\n                        flow_relayout_nodes.insert(node);\n                    }\n''',
-              1,
-          )
-          old_branch = '''        } else if geometry_changed {\n            let previous_display_list = self.display_list.clone();\n            patched_nodes = style_updates.len();\n            for &(node, style) in &style_updates {\n                patch_layout_style(&mut self.layout.tree.root, node, style);\n            }\n            self.styles = new_styles;\n            self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);\n            self.display_list = build_display_list(&self.layout.fragments);\n            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);\n            self.framebuffer.rasterize_damage(\n                &self.display_list,\n                &self.damage,\n                self.options.background,\n            );\n            mode = IncrementalMode::GeometryRelayout;\n'''
-          new_branch = '''        } else if geometry_changed {\n            let previous_display_list = self.display_list.clone();\n            patched_nodes = style_updates.len();\n            for &(node, style) in &style_updates {\n                patch_layout_style(&mut self.layout.tree.root, node, style);\n            }\n            self.styles = new_styles;\n            let flow_nodes = flow_relayout_nodes.into_iter().collect::<Vec<_>>();\n            if relayout_fragment_flow(\n                &self.layout.tree,\n                &mut self.layout.fragments,\n                &flow_nodes,\n            ) {\n                mode = IncrementalMode::FlowRelayout;\n            } else {\n                self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);\n                mode = IncrementalMode::GeometryRelayout;\n            }\n            self.display_list = build_display_list(&self.layout.fragments);\n            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);\n            self.framebuffer.rasterize_damage(\n                &self.display_list,\n                &self.damage,\n                self.options.background,\n            );\n'''
-          if old_branch not in text:
-              raise SystemExit('engine geometry branch marker not found')
-          text = text.replace(old_branch, new_branch, 1)
-
-          helper_marker = '''    fn first_element(document: &Document) -> NodeId {\n        *document\n            .children(document.root())\n            .iter()\n            .find(|node| matches!(&document.node(**node).kind, NodeKind::Element(_)))\n            .expect("fixture contains an element")\n    }\n\n'''
-          helper_add = helper_marker + '''    fn element_with_id(document: &Document, id: &str) -> NodeId {\n        fn find(document: &Document, node: NodeId, id: &str) -> Option<NodeId> {\n            if let NodeKind::Element(element) = &document.node(node).kind\n                && element.attributes.get("id").map(String::as_str) == Some(id)\n            {\n                return Some(node);\n            }\n            document\n                .children(node)\n                .iter()\n                .find_map(|child| find(document, *child, id))\n        }\n\n        find(document, document.root(), id).expect("fixture contains requested id")\n    }\n\n'''
-          if helper_marker not in text:
-              raise SystemExit('engine helper marker not found')
-          text = text.replace(helper_marker, helper_add, 1)
-
-          old_test = '''    #[test]\n    fn vertical_geometry_change_uses_full_fragment_relayout() {\n        let mut session = RenderSession::new(\n            "<div style=\\"width:80px;height:20px;background:#112233\\">Rarog</div><div style=\\"height:10px\\">next</div>",\n            deterministic_options(),\n        );\n        let node = first_element(session.document());\n        session\n            .document_mut()\n            .set_attribute(node, "style", "width:80px;height:32px;background:#112233")\n            .unwrap();\n\n        let report = session.update();\n        assert_eq!(report.mode, IncrementalMode::GeometryRelayout);\n        assert_eq!(\n            session.layout().fragments.root.children[1]\n                .boxes\n                .margin_box\n                .origin\n                .y,\n            32.0\n        );\n    }\n'''
-          new_test = '''    #[test]\n    fn vertical_geometry_change_reflows_ancestors_and_following_siblings() {\n        let source = "<div id=\\"before\\" style=\\"height:5px\\"></div><div id=\\"outer\\" style=\\"padding:2px\\"><div id=\\"target\\" style=\\"height:20px\\"></div></div><div id=\\"after\\" style=\\"height:10px\\"></div>";\n        let expected_source = "<div id=\\"before\\" style=\\"height:5px\\"></div><div id=\\"outer\\" style=\\"padding:2px\\"><div id=\\"target\\" style=\\"height:32px\\"></div></div><div id=\\"after\\" style=\\"height:10px\\"></div>";\n        let mut session = RenderSession::new(source, deterministic_options());\n        let target = element_with_id(session.document(), "target");\n        let before = element_with_id(session.document(), "before");\n        let after = element_with_id(session.document(), "after");\n        let layout_before = session.layout().tree.snapshot();\n        let before_fragment_id = fragment_for_dom(&session.layout().fragments, before)\n            .expect("before fragment exists")\n            .id;\n\n        session\n            .document_mut()\n            .set_attribute(target, "style", "height:32px")\n            .unwrap();\n\n        let report = session.update();\n        let expected = render_html(expected_source, deterministic_options());\n\n        assert_eq!(report.mode, IncrementalMode::FlowRelayout);\n        assert_eq!(session.layout().tree.snapshot(), layout_before);\n        assert_eq!(\n            fragment_for_dom(&session.layout().fragments, before)\n                .expect("before fragment remains")\n                .id,\n            before_fragment_id\n        );\n        assert_eq!(\n            fragment_for_dom(&session.layout().fragments, after)\n                .expect("after fragment exists")\n                .boxes\n                .margin_box\n                .origin\n                .y,\n            41.0\n        );\n        assert_eq!(\n            session.framebuffer().stable_hash64(),\n            expected.framebuffer.stable_hash64()\n        );\n        assert!(!session.damage().rects.is_empty());\n    }\n'''
-          if old_test not in text:
-              raise SystemExit('engine vertical test marker not found')
-          engine.write_text(text.replace(old_test, new_test, 1))
-          PY
           cargo fmt --all
           cargo check --workspace --all-targets
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
       - name: Commit changes
-        shell: bash
         run: |
           git config user.name "Stanley Lloyd"
           git config user.email "131160519+StanleyLl0yd@users.noreply.github.com"
