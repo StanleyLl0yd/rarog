@@ -1,0 +1,143 @@
+from pathlib import Path
+
+paint = Path("crates/rarog-paint/src/lib.rs")
+text = paint.read_text()
+marker = """    pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
+        let Some(previous) = previous else {
+"""
+replacement = """    pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
+        assert!(
+            current.has_unique_ids(),
+            "current display list contains duplicate display item IDs"
+        );
+        if let Some(previous) = previous {
+            assert!(
+                previous.has_unique_ids(),
+                "previous display list contains duplicate display item IDs"
+            );
+        }
+
+        let Some(previous) = previous else {
+"""
+if marker not in text:
+    raise SystemExit("damage invariant marker not found")
+text = text.replace(marker, replacement, 1)
+insert = """
+    #[test]
+    #[should_panic(expected = "current display list contains duplicate display item IDs")]
+    fn damage_rejects_duplicate_display_ids() {
+        let id = DisplayItemId {
+            source: 1,
+            fragment: 2,
+            slot: 0,
+        };
+        let list = DisplayList {
+            command_ids: vec![id, id],
+            commands: vec![
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(1.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+            ],
+        };
+        let _ = DamageRegion::between(None, &list);
+    }
+"""
+module_end = text.rfind("\n}")
+if module_end < 0:
+    raise SystemExit("paint test module end not found")
+text = text[:module_end] + insert + text[module_end:]
+paint.write_text(text)
+
+readme = Path("README.md")
+text = readme.read_text()
+text = text.replace(
+    "stable display-item IDs + damage tracking",
+    "source + fragment + paint-slot display-item IDs + damage tracking",
+)
+text = text.replace(
+    "- display-item IDs anchored to stable DOM source identity, retained replacement of affected display-list ranges when safe, and damage rectangles between display lists;",
+    "- display-item IDs combine stable source identity, fragment identity and paint slot; generated display lists enforce ID uniqueness before damage comparison, while retained replacement preserves unaffected ranges when safe;",
+)
+text = text.replace(
+    "- bounded framebuffer allocation with checked pixel counts;",
+    "- bounded framebuffer allocation with checked pixel counts and a fallible public render boundary for invalid or oversized viewports;",
+)
+text = text.replace(
+    "- mutation-journal pruning after the engine consumes a DOM generation;",
+    "- mutation-journal pruning after the engine consumes a DOM generation, with `RenderSession` exposing a mutation-only `DocumentEditor` so callers cannot prune its journal behind the engine;",
+)
+text = text.replace(
+    "cargo test -p rarog-paint damage_raster_matches_full_raster\n",
+    "cargo test -p rarog-paint damage_raster_matches_full_raster\ncargo test -p rarog-css non_finite_lengths_are_rejected\ncargo test -p rarog-dom deterministic_mutation_sequences_preserve_dom_invariants\ncargo test -p rarog-engine invalid_viewport_is_reported_instead_of_panicking\ncargo test -p rarog-paint fragment_component_prevents_multi_fragment_collisions\n",
+)
+readme.write_text(text)
+
+architecture = Path("docs/ARCHITECTURE.md")
+text = architecture.read_text()
+text = text.replace(
+    "Downstream invalidation code consumes these records through a generation boundary. `Document` also tracks a mutation-history floor; once the active engine consumer has advanced through a generation, older records are pruned so a long-lived document does not retain an unbounded journal. Requests older than the retained floor fail loudly instead of silently producing incomplete invalidation input.",
+    "Downstream invalidation code consumes these records through a generation boundary. `Document` also tracks a mutation-history floor; once the active engine consumer has advanced through a generation, older records are pruned so a long-lived document does not retain an unbounded journal. Requests older than the retained floor fail loudly instead of silently producing incomplete invalidation input. `RenderSession` owns that checkpoint: its public mutation surface is a `DocumentEditor` that exposes DOM mutations but not journal pruning, so an embedder cannot invalidate the session's dirty-generation contract behind the engine.",
+)
+old = "The display list remains backend-neutral. R0 adds deterministic `DisplayItemId` values to the current paint commands. For the current one-fragment-per-DOM-node bootstrap path, IDs are anchored to stable DOM source identity plus a command slot; anonymous/future sources fall back to layout identity. This avoids unrelated fragment renumbering churning display IDs while keeping the representation replaceable before general fragmentation."
+new = "The display list remains backend-neutral. R0 `DisplayItemId` values now contain three explicit components: source identity, Fragment identity and paint-command slot. This prevents two fragments produced from the same DOM/layout source from colliding once fragmentation begins. Generated display lists assert ID uniqueness, and damage comparison rejects duplicate IDs instead of silently overwriting them in its index. Fragment identity is still snapshot-oriented in R0; retained/stable fragment ordinals remain a later fragmentation concern."
+if old not in text:
+    raise SystemExit("architecture paint identity paragraph not found")
+text = text.replace(old, new, 1)
+text = text.replace(
+    "The software framebuffer enforces a checked R0 pixel budget before allocation and exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels.",
+    "CSS bootstrap length parsing rejects non-finite values before they enter computed geometry. The software framebuffer enforces a checked R0 pixel budget before allocation, and the public render/session construction boundary returns a `RenderError` rather than panicking for invalid or oversized viewports. The framebuffer exposes a stable 64-bit FNV-1a hash over dimensions and RGBA pixels.",
+)
+architecture.write_text(text)
+
+backlog = Path("docs/R0-BACKLOG.md")
+text = backlog.read_text()
+text = text.replace(
+    "- [x] unit tests for DOM arena invariants",
+    "- [x] unit tests for DOM arena invariants\n- [x] deterministic mutation-stress test over checked DOM operations",
+)
+text = text.replace(
+    "- [x] mutation-history pruning/checkpoint after the active engine consumer advances",
+    "- [x] mutation-history pruning/checkpoint after the active engine consumer advances\n- [x] engine-owned mutation facade prevents session callers from pruning mutation history",
+)
+text = text.replace(
+    "- [x] persistent dirty state survives across DOM mutations until a render consumes it",
+    "- [x] persistent dirty state survives across DOM mutations until a render consumes it\n- [x] non-finite bootstrap CSS lengths are rejected before computed geometry",
+)
+text = text.replace(
+    "- [x] stable deterministic display-item IDs for current fragment commands\n- [x] current display-item identity anchored to DOM source identity so unrelated fragment renumbering does not churn retained IDs",
+    "- [x] deterministic display-item IDs combine source identity, fragment identity and paint slot\n- [x] display-list ID uniqueness invariant prevents silent damage-index collisions before fragmentation",
+)
+text = text.replace(
+    "- [x] stateful R0 `RenderSession` bootstrap for mutation → dirty state → update orchestration",
+    "- [x] stateful R0 `RenderSession` bootstrap for mutation → dirty state → update orchestration\n- [x] fallible render/session construction for invalid or oversized framebuffer viewports",
+)
+backlog.write_text(text)
+
+adr = Path("docs/adr/0011-correctness-boundaries-before-fragmentation.md")
+adr.write_text("""# ADR-0011: Correctness boundaries before fragmentation
+
+## Status
+
+Accepted.
+
+## Context
+
+R0 is about to add clip/stacking semantics and then allow multiple fragments per layout source. Three bootstrap assumptions would become correctness hazards at that boundary: non-finite CSS lengths could reach geometry, public render construction could panic on hostile viewport sizes, and display-item identity based only on source plus paint slot could collide when one source creates multiple fragments. `RenderSession` also owns a mutation-history checkpoint that must not be advanced by an external caller.
+
+## Decision
+
+1. Bootstrap CSS length parsing rejects all non-finite `f32` values.
+2. `render_html`, `render_html_against` and `RenderSession::new` are fallible and propagate framebuffer validation through `RenderError`.
+3. `DisplayItemId` contains source identity, Fragment identity and paint slot. Generated display lists assert ID uniqueness and damage comparison fails loudly on duplicate IDs.
+4. `RenderSession` exposes a mutation-only `DocumentEditor` instead of a raw mutable `Document`, keeping mutation-journal pruning engine-owned.
+5. A deterministic mutation-stress test exercises DOM invariants over a long reproducible sequence without adding a fuzzing dependency to the runtime workspace.
+
+## Consequences
+
+The public R0 render API now requires error handling. Deterministic display-list/signature goldens change because display identity has a richer representation, while framebuffer output remains unchanged. Fragment IDs are still snapshot identities; a later fragmentation/retained-paint ADR must define stable fragment ordinals if retained identity needs to survive fragment reconstruction.
+""")
