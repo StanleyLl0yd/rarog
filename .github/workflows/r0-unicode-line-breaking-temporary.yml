@@ -23,6 +23,7 @@ jobs:
         run: |
           python tools/r0_unicode_line_breaking_apply.py
           python tools/r0_unicode_line_breaking_finalize.py
+          python tools/r0_unicode_line_breaking_algorithm_fix.py
       - name: Format
         run: cargo fmt --all
       - name: Check
