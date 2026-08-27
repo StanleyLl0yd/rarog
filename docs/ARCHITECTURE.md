@@ -253,6 +253,8 @@ Clip commands are explicit backend-neutral display-list operations. R0 rasteriza
 
 Stacking contexts are represented as explicit balanced display-list scopes with stable context IDs. R0 does not yet assign CSS stacking order, opacity, transforms, or compositing behavior to these scopes; the representation exists so those semantics can be added without changing the display-list contract again.
 
+Retained display-list replacement operates on exact contiguous command ranges rather than unordered ID sets. A patch is accepted only when the previous range is contiguous and both replacement and resulting lists preserve unique IDs and balanced structural scopes.
+
 Damage is computed by comparing previous and current display lists by item ID:
 
 - unchanged item and command → no damage;
