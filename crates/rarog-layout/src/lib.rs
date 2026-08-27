@@ -192,6 +192,137 @@ pub trait LineBreaker {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextDirection {
+    Ltr,
+    Rtl,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BidiLevel(u8);
+
+impl BidiLevel {
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+
+    pub const fn direction(self) -> TextDirection {
+        if self.0 % 2 == 0 {
+            TextDirection::Ltr
+        } else {
+            TextDirection::Rtl
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BidiRun {
+    pub range: TextRange,
+    pub level: BidiLevel,
+}
+
+pub fn paragraph_direction(text: &str) -> TextDirection {
+    text.chars()
+        .find_map(strong_direction)
+        .unwrap_or(TextDirection::Ltr)
+}
+
+pub fn bidi_runs(text: &str) -> Vec<BidiRun> {
+    let characters = text.chars().collect::<Vec<_>>();
+    if characters.is_empty() {
+        return Vec::new();
+    }
+
+    let base = paragraph_direction(text);
+    let base_level = match base {
+        TextDirection::Ltr => BidiLevel::new(0),
+        TextDirection::Rtl => BidiLevel::new(1),
+    };
+
+    let mut resolved = Vec::with_capacity(characters.len());
+    let mut previous = base;
+    for character in characters.iter().copied() {
+        let direction = strong_direction(character).unwrap_or(previous);
+        resolved.push(direction);
+        if strong_direction(character).is_some() {
+            previous = direction;
+        }
+    }
+
+    let mut runs = Vec::new();
+    let mut start = 0usize;
+    let mut current = resolved[0];
+    for (index, direction) in resolved.iter().copied().enumerate().skip(1) {
+        if direction != current {
+            runs.push(BidiRun {
+                range: TextRange::new(start, index),
+                level: level_for_direction(base_level, current),
+            });
+            start = index;
+            current = direction;
+        }
+    }
+    runs.push(BidiRun {
+        range: TextRange::new(start, characters.len()),
+        level: level_for_direction(base_level, current),
+    });
+    runs
+}
+
+pub fn visual_bidi_runs(text: &str) -> Vec<BidiRun> {
+    let mut runs = bidi_runs(text);
+    if runs.is_empty() {
+        return runs;
+    }
+    let max_level = runs.iter().map(|run| run.level.value()).max().unwrap_or(0);
+    let min_odd = runs
+        .iter()
+        .map(|run| run.level.value())
+        .filter(|level| level % 2 == 1)
+        .min();
+    if let Some(min_odd) = min_odd {
+        for level in (min_odd..=max_level).rev() {
+            let mut index = 0usize;
+            while index < runs.len() {
+                if runs[index].level.value() < level {
+                    index += 1;
+                    continue;
+                }
+                let start = index;
+                while index < runs.len() && runs[index].level.value() >= level {
+                    index += 1;
+                }
+                runs[start..index].reverse();
+            }
+        }
+    }
+    runs
+}
+
+fn level_for_direction(base: BidiLevel, direction: TextDirection) -> BidiLevel {
+    match (base.direction(), direction) {
+        (TextDirection::Ltr, TextDirection::Ltr) => BidiLevel::new(0),
+        (TextDirection::Ltr, TextDirection::Rtl) => BidiLevel::new(1),
+        (TextDirection::Rtl, TextDirection::Rtl) => BidiLevel::new(1),
+        (TextDirection::Rtl, TextDirection::Ltr) => BidiLevel::new(2),
+    }
+}
+
+fn strong_direction(character: char) -> Option<TextDirection> {
+    let code = character as u32;
+    if matches!(code, 0x0590..=0x08ff | 0xfb1d..=0xfdff | 0xfe70..=0xfefc) {
+        Some(TextDirection::Rtl)
+    } else if character.is_alphabetic() || character.is_ascii_digit() {
+        Some(TextDirection::Ltr)
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BreakKind {
     Soft,
     Mandatory,
@@ -1410,5 +1541,60 @@ mod tests {
                 kind: BreakKind::Mandatory
             }]
         );
+    }
+
+    #[test]
+    fn bidi_detects_ltr_and_rtl_paragraph_direction() {
+        assert_eq!(paragraph_direction("hello"), TextDirection::Ltr);
+        assert_eq!(paragraph_direction("שלום"), TextDirection::Rtl);
+        assert_eq!(paragraph_direction("مرحبا"), TextDirection::Rtl);
+    }
+
+    #[test]
+    fn bidi_builds_stable_mixed_direction_runs() {
+        let runs = bidi_runs("abc שלום xyz");
+        assert_eq!(runs.len(), 3);
+        assert_eq!(
+            runs[0],
+            BidiRun {
+                range: TextRange::new(0, 4),
+                level: BidiLevel::new(0)
+            }
+        );
+        assert_eq!(
+            runs[1],
+            BidiRun {
+                range: TextRange::new(4, 9),
+                level: BidiLevel::new(1)
+            }
+        );
+        assert_eq!(
+            runs[2],
+            BidiRun {
+                range: TextRange::new(9, 12),
+                level: BidiLevel::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn bidi_visual_order_reverses_rtl_run_groups_without_touching_text_ranges() {
+        let logical = bidi_runs("אבג abc דהו");
+        let visual = visual_bidi_runs("אבג abc דהו");
+        assert_eq!(logical.len(), 3);
+        assert_eq!(visual.len(), 3);
+        assert_eq!(visual[0].range, logical[2].range);
+        assert_eq!(visual[1].range, logical[1].range);
+        assert_eq!(visual[2].range, logical[0].range);
+    }
+
+    #[test]
+    fn bidi_keeps_grapheme_ranges_scalar_indexed() {
+        let runs = bidi_runs("a e\u{301} שלום");
+        assert!(
+            runs.iter()
+                .all(|run| run.range.end <= "a e\u{301} שלום".chars().count())
+        );
+        assert_eq!(grapheme_boundaries("e\u{301}"), vec![0, 2]);
     }
 }
