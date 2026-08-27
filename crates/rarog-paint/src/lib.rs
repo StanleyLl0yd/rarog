@@ -6,7 +6,22 @@ use std::fmt;
 pub const MAX_FRAMEBUFFER_PIXELS: u64 = 67_108_864;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DisplayItemId(pub u64);
+pub struct DisplayItemId {
+    pub source: u64,
+    pub fragment: u64,
+    pub slot: u8,
+}
+
+impl DisplayItemId {
+    #[cfg(test)]
+    const fn test(value: u64) -> Self {
+        Self {
+            source: value,
+            fragment: value,
+            slot: 0,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DisplayCommand {
@@ -34,13 +49,22 @@ impl DisplayList {
         self.commands.push(command);
     }
 
+    pub fn has_unique_ids(&self) -> bool {
+        self.command_ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .len()
+            == self.command_ids.len()
+    }
+
     pub fn snapshot(&self) -> String {
         let mut output = String::new();
         for (id, command) in self.command_ids.iter().zip(&self.commands) {
             match command {
                 DisplayCommand::FillRect { rect, color } => output.push_str(&format!(
                     "{}|fill|{}|{:02x}{:02x}{:02x}{:02x}\n",
-                    id.0,
+                    display_item_id_snapshot(*id),
                     rect_snapshot(*rect),
                     color.r,
                     color.g,
@@ -49,7 +73,7 @@ impl DisplayList {
                 )),
                 DisplayCommand::TextPlaceholder { rect, color } => output.push_str(&format!(
                     "{}|text-placeholder|{}|{:02x}{:02x}{:02x}{:02x}\n",
-                    id.0,
+                    display_item_id_snapshot(*id),
                     rect_snapshot(*rect),
                     color.r,
                     color.g,
@@ -69,6 +93,7 @@ pub fn build_display_list(tree: &FragmentTree) -> DisplayList {
 pub fn build_display_list_for_fragment(fragment: &Fragment) -> DisplayList {
     let mut list = DisplayList::default();
     collect(fragment, &mut list);
+    assert!(list.has_unique_ids(), "display item IDs must be unique");
     list
 }
 
@@ -223,8 +248,16 @@ fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {
     let source = fragment
         .dom_node
         .map(|node| node as u64)
-        .unwrap_or_else(|| (1_u64 << 55) | fragment.layout_node.index() as u64);
-    DisplayItemId((source << 8) | u64::from(slot))
+        .unwrap_or_else(|| (1_u64 << 63) | fragment.layout_node.index() as u64);
+    DisplayItemId {
+        source,
+        fragment: fragment.id.index() as u64,
+        slot,
+    }
+}
+
+fn display_item_id_snapshot(id: DisplayItemId) -> String {
+    format!("{}:{}:{}", id.source, id.fragment, id.slot)
 }
 
 fn push_fill(list: &mut DisplayList, id: DisplayItemId, rect: Rect, color: Color) {
@@ -459,7 +492,7 @@ mod tests {
 
     fn single_fill(id: u64, rect: Rect, color: Color) -> DisplayList {
         DisplayList {
-            command_ids: vec![DisplayItemId(id)],
+            command_ids: vec![DisplayItemId::test(id)],
             commands: vec![DisplayCommand::FillRect { rect, color }],
         }
     }
@@ -499,7 +532,11 @@ mod tests {
         assert!(replace_display_items(&mut list, &middle, &replacement));
         assert_eq!(
             list.command_ids,
-            vec![DisplayItemId(1), DisplayItemId(2), DisplayItemId(3)]
+            vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3)
+            ]
         );
         assert_eq!(list.commands[0], first.commands[0]);
         assert_eq!(list.commands[2], last.commands[0]);
@@ -509,7 +546,7 @@ mod tests {
     #[test]
     fn damage_raster_matches_full_raster() {
         let before = DisplayList {
-            command_ids: vec![DisplayItemId(1), DisplayItemId(2)],
+            command_ids: vec![DisplayItemId::test(1), DisplayItemId::test(2)],
             commands: vec![
                 DisplayCommand::FillRect {
                     rect: Rect::new(0.0, 0.0, 4.0, 4.0),
@@ -573,5 +610,48 @@ mod tests {
         framebuffer.rasterize(&list);
 
         assert_eq!(framebuffer.stable_hash64(), framebuffer.stable_hash64());
+    }
+}
+
+#[cfg(test)]
+mod display_identity_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn fragment_component_prevents_multi_fragment_collisions() {
+        let first = DisplayItemId {
+            source: 7,
+            fragment: 10,
+            slot: 0,
+        };
+        let second = DisplayItemId {
+            source: 7,
+            fragment: 11,
+            slot: 0,
+        };
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn duplicate_ids_are_detectable() {
+        let id = DisplayItemId {
+            source: 1,
+            fragment: 2,
+            slot: 3,
+        };
+        let list = DisplayList {
+            command_ids: vec![id, id],
+            commands: vec![
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(1.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+            ],
+        };
+        assert!(!list.has_unique_ids());
     }
 }

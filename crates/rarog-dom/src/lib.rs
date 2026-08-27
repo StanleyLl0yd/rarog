@@ -661,3 +661,59 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod mutation_stress_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn element(name: &str) -> NodeKind {
+        NodeKind::Element(ElementData {
+            tag_name: name.into(),
+            attributes: BTreeMap::new(),
+        })
+    }
+
+    fn next(seed: &mut u64) -> u64 {
+        *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        *seed
+    }
+
+    #[test]
+    fn deterministic_mutation_sequences_preserve_dom_invariants() {
+        let mut document = Document::new();
+        let mut nodes = vec![document.root()];
+        let mut seed = 0x7261726f67_u64;
+
+        for _ in 0..2_000 {
+            match next(&mut seed) % 5 {
+                0 => {
+                    let parent = nodes[(next(&mut seed) as usize) % nodes.len()];
+                    if let Ok(node) = document.append_new(parent, element("div")) {
+                        nodes.push(node);
+                    }
+                }
+                1 if nodes.len() > 1 => {
+                    let child = nodes[1 + (next(&mut seed) as usize % (nodes.len() - 1))];
+                    let parent = nodes[(next(&mut seed) as usize) % nodes.len()];
+                    let _ = document.append_child(parent, child);
+                }
+                2 if nodes.len() > 1 => {
+                    let child = nodes[1 + (next(&mut seed) as usize % (nodes.len() - 1))];
+                    let _ = document.detach(child);
+                }
+                3 if nodes.len() > 1 => {
+                    let node = nodes[1 + (next(&mut seed) as usize % (nodes.len() - 1))];
+                    let _ = document.set_attribute(node, "data-seed", next(&mut seed).to_string());
+                }
+                _ => {
+                    let parent = nodes[(next(&mut seed) as usize) % nodes.len()];
+                    if let Ok(node) = document.append_new(parent, NodeKind::Text("x".into())) {
+                        nodes.push(node);
+                    }
+                }
+            }
+            assert_eq!(document.validate_invariants(), Ok(()));
+        }
+    }
+}
