@@ -734,6 +734,8 @@ fn shaping_script_for_character(character: char) -> Option<ShapingScript> {
     let code = character as u32;
     if is_extended_pictographic(character) || is_regional_indicator(character) {
         Some(ShapingScript::Emoji)
+    } else if is_common_font_character(character) || character.is_ascii_digit() {
+        None
     } else if matches!(code, 0x0041..=0x024f) {
         Some(ShapingScript::Latin)
     } else if matches!(code, 0x0400..=0x052f) {
@@ -744,7 +746,7 @@ fn shaping_script_for_character(character: char) -> Option<ShapingScript> {
         Some(ShapingScript::Arabic)
     } else if matches!(code, 0x2e80..=0x9fff | 0xf900..=0xfaff) {
         Some(ShapingScript::Han)
-    } else if is_common_font_character(character) || is_grapheme_extend(character) {
+    } else if is_grapheme_extend(character) {
         None
     } else {
         Some(ShapingScript::Unknown)
@@ -2468,5 +2470,16 @@ mod tests {
         });
         let shaped = backend.shape_run("abc", &configured, face);
         assert_eq!(baseline, shaped);
+    }
+
+    #[test]
+    fn common_ascii_punctuation_and_digits_do_not_create_script_boundaries() {
+        let fallback = FontFallbackChain::default();
+        let run = TextRun::with_fallback("abc-123 Привет".into(), &fallback);
+        let requests = run.shaping_requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].script, ShapingScript::Latin);
+        assert_eq!(requests[1].script, ShapingScript::Cyrillic);
+        assert_eq!(requests[0].run.range.end, requests[1].run.range.start);
     }
 }
