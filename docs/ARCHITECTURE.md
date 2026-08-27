@@ -251,6 +251,8 @@ The display list remains backend-neutral. R0 `DisplayItemId` values now contain 
 
 Clip commands are explicit backend-neutral display-list operations. R0 rasterization maintains a nested rectangular clip stack. Damage-scoped rasterization conservatively falls back to a full framebuffer refresh whenever clips are present; clip-aware retained damage remains intentionally deferred until stacking and fragmentation semantics are defined.
 
+Stacking contexts are represented as explicit balanced display-list scopes with stable context IDs. R0 does not yet assign CSS stacking order, opacity, transforms, or compositing behavior to these scopes; the representation exists so those semantics can be added without changing the display-list contract again.
+
 Damage is computed by comparing previous and current display lists by item ID:
 
 - unchanged item and command → no damage;
