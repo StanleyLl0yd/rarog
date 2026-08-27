@@ -13,6 +13,7 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] Linux portability CI lane
 - [x] architectural decision records
 - [x] unit tests for DOM arena invariants
+- [x] deterministic mutation-stress test over checked DOM operations
 - [x] parser fixture/invariant test
 - [x] deterministic DOM/style/layout/fragment/display-list snapshot coverage
 - [x] deterministic framebuffer hash and combined render-signature hash
@@ -32,6 +33,7 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] explicit document generation ID
 - [x] generation-ordered mutation records for invalidation consumers
 - [x] mutation-history pruning/checkpoint after the active engine consumer advances
+- [x] engine-owned mutation facade prevents session callers from pruning mutation history
 - [ ] element namespace representation
 - [ ] interned atom/string strategy ADR
 
@@ -60,6 +62,7 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] selector invalidation key prototype
 - [x] DOM-mutation-to-style/layout/paint invalidation primitives
 - [x] persistent dirty state survives across DOM mutations until a render consumes it
+- [x] non-finite bootstrap CSS lengths are rejected before computed geometry
 - [ ] style sharing/cache design note
 - [ ] descendant/sibling selector invalidation dependencies
 - [ ] standards-oriented CSS tokenizer/parser adapter
@@ -92,8 +95,8 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] software framebuffer rasterizer
 - [x] paint consumes Fragment Tree rather than drawing from layout code
 - [x] bootstrap background and border painting
-- [x] stable deterministic display-item IDs for current fragment commands
-- [x] current display-item identity anchored to DOM source identity so unrelated fragment renumbering does not churn retained IDs
+- [x] deterministic display-item IDs combine source identity, fragment identity and paint slot
+- [x] display-list ID uniqueness invariant prevents silent damage-index collisions before fragmentation
 - [x] damage rectangles by comparing previous/current display lists
 - [x] checked framebuffer allocation with an explicit R0 pixel budget
 - [x] deterministic display-list snapshot
@@ -127,6 +130,7 @@ Win32, WinRT, Direct3D and other Windows-specific APIs must not leak into DOM, H
 - [x] `render_html` orchestration bootstrap
 - [x] previous-display-list input and damage output for bootstrap rendering
 - [x] stateful R0 `RenderSession` bootstrap for mutation → dirty state → update orchestration
+- [x] fallible render/session construction for invalid or oversized framebuffer viewports
 - [ ] `Engine` object
 - [ ] `View` object
 - [ ] navigation/request interfaces without networking implementation

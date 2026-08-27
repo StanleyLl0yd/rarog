@@ -38,7 +38,7 @@ layout tree
    ↓
 fragment tree + box model
    ↓
-stable display-item IDs + damage tracking
+source + fragment + paint-slot display-item IDs + damage tracking
    ↓
 software framebuffer / deterministic hash
 ```
@@ -55,10 +55,10 @@ The current R0 foundation includes:
 - explicit containing-block, intrinsic-size and text-run abstractions in the bootstrap layout path;
 - separate DOM, layout-node and fragment identities;
 - a derived/disposable Fragment Tree and explicit content/padding/border/margin boxes;
-- display-item IDs anchored to stable DOM source identity, retained replacement of affected display-list ranges when safe, and damage rectangles between display lists;
+- display-item IDs combine stable source identity, fragment identity and paint slot; generated display lists enforce ID uniqueness before damage comparison, while retained replacement preserves unaffected ranges when safe;
 - damage-scoped software framebuffer updates that clear and rerasterize only damaged rectangles;
-- bounded framebuffer allocation with checked pixel counts;
-- mutation-journal pruning after the engine consumes a DOM generation;
+- bounded framebuffer allocation with checked pixel counts and a fallible public render boundary for invalid or oversized viewports;
+- mutation-journal pruning after the engine consumes a DOM generation, with `RenderSession` exposing a mutation-only `DocumentEditor` so callers cannot prune its journal behind the engine;
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
 - CI with Windows as the primary platform lane, Linux as a portability lane and an explicit Rust 1.85 MSRV check; CI actions are pinned to immutable revisions.
 
@@ -100,6 +100,10 @@ cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_t
 cargo test -p rarog-engine vertical_geometry_change_reflows_ancestors_and_following_siblings
 cargo test -p rarog-paint retained_display_patch_preserves_unrelated_items
 cargo test -p rarog-paint damage_raster_matches_full_raster
+cargo test -p rarog-css non_finite_lengths_are_rejected
+cargo test -p rarog-dom deterministic_mutation_sequences_preserve_dom_invariants
+cargo test -p rarog-engine invalid_viewport_is_reported_instead_of_panicking
+cargo test -p rarog-paint fragment_component_prevents_multi_fragment_collisions
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 

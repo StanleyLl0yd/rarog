@@ -1,11 +1,12 @@
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
-use rarog_dom::{Document, MutationKind, NodeId};
+use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
     Fragment, LayoutNode, LayoutOutput, fragment_for_dom, layout_document_with_styles,
     relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
-    DamageRegion, DisplayList, Framebuffer, build_display_list, replace_display_items_for_fragment,
+    DamageRegion, DisplayList, Framebuffer, FramebufferError, build_display_list,
+    replace_display_items_for_fragment,
 };
 use rarog_types::{Color, Size};
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,6 +15,27 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct RenderOptions {
     pub viewport: Size,
     pub background: Color,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderError {
+    Framebuffer(FramebufferError),
+}
+
+impl std::fmt::Display for RenderError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Framebuffer(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for RenderError {}
+
+impl From<FramebufferError> for RenderError {
+    fn from(error: FramebufferError) -> Self {
+        Self::Framebuffer(error)
+    }
 }
 
 impl Default for RenderOptions {
@@ -111,6 +133,53 @@ pub struct IncrementalReport {
     pub patched_nodes: usize,
 }
 
+pub struct DocumentEditor<'a> {
+    document: &'a mut Document,
+}
+
+impl DocumentEditor<'_> {
+    pub fn create_node(&mut self, kind: NodeKind) -> Result<NodeId, MutationError> {
+        self.document.create_node(kind)
+    }
+
+    pub fn append_new(&mut self, parent: NodeId, kind: NodeKind) -> Result<NodeId, MutationError> {
+        self.document.append_new(parent, kind)
+    }
+
+    pub fn append_child(&mut self, parent: NodeId, child: NodeId) -> Result<(), MutationError> {
+        self.document.append_child(parent, child)
+    }
+
+    pub fn detach(&mut self, child: NodeId) -> Result<(), MutationError> {
+        self.document.detach(child)
+    }
+
+    pub fn set_attribute(
+        &mut self,
+        node: NodeId,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<(), MutationError> {
+        self.document.set_attribute(node, name, value)
+    }
+
+    pub fn remove_attribute(
+        &mut self,
+        node: NodeId,
+        name: &str,
+    ) -> Result<Option<String>, MutationError> {
+        self.document.remove_attribute(node, name)
+    }
+
+    pub fn set_text(
+        &mut self,
+        node: NodeId,
+        value: impl Into<String>,
+    ) -> Result<(), MutationError> {
+        self.document.set_text(node, value)
+    }
+}
+
 pub struct RenderSession {
     options: RenderOptions,
     document: Document,
@@ -123,11 +192,11 @@ pub struct RenderSession {
 }
 
 impl RenderSession {
-    pub fn new(source: &str, options: RenderOptions) -> Self {
-        let mut output = render_html(source, options);
+    pub fn new(source: &str, options: RenderOptions) -> Result<Self, RenderError> {
+        let mut output = render_html(source, options)?;
         let generation = output.document.generation();
         output.document.prune_mutations_through(generation);
-        Self {
+        Ok(Self {
             options,
             document: output.document,
             styles: output.styles,
@@ -136,15 +205,17 @@ impl RenderSession {
             damage: output.damage,
             framebuffer: output.framebuffer,
             dirty: DirtyState::clean_at(generation),
-        }
+        })
     }
 
     pub fn document(&self) -> &Document {
         &self.document
     }
 
-    pub fn document_mut(&mut self) -> &mut Document {
-        &mut self.document
+    pub fn document_mut(&mut self) -> DocumentEditor<'_> {
+        DocumentEditor {
+            document: &mut self.document,
+        }
     }
 
     pub fn styles(&self) -> &StyleSet {
@@ -386,7 +457,7 @@ impl RenderSession {
     }
 }
 
-pub fn render_html(source: &str, options: RenderOptions) -> RenderOutput {
+pub fn render_html(source: &str, options: RenderOptions) -> Result<RenderOutput, RenderError> {
     render_html_against(source, options, None)
 }
 
@@ -394,23 +465,23 @@ pub fn render_html_against(
     source: &str,
     options: RenderOptions,
     previous_display_list: Option<&DisplayList>,
-) -> RenderOutput {
+) -> Result<RenderOutput, RenderError> {
     let document = rarog_html::parse(source);
     let styles = StyleSet::for_document(&document);
     let layout = layout_document_with_styles(&document, &styles, options.viewport);
     let display_list = build_display_list(&layout.fragments);
     let damage = DamageRegion::between(previous_display_list, &display_list);
-    let mut framebuffer = Framebuffer::new(options.viewport, options.background);
+    let mut framebuffer = Framebuffer::try_new(options.viewport, options.background)?;
     framebuffer.rasterize(&display_list);
 
-    RenderOutput {
+    Ok(RenderOutput {
         document,
         styles,
         layout,
         display_list,
         damage,
         framebuffer,
-    }
+    })
 }
 
 fn layout_style_for_dom(node: &LayoutNode, dom_node: NodeId) -> Option<ComputedStyle> {
@@ -472,6 +543,22 @@ mod tests {
     use super::*;
     use rarog_dom::NodeKind;
 
+    fn render_ok(source: &str, options: RenderOptions) -> RenderOutput {
+        render_html(source, options).expect("valid test viewport")
+    }
+
+    fn render_against_ok(
+        source: &str,
+        options: RenderOptions,
+        previous: Option<&DisplayList>,
+    ) -> RenderOutput {
+        render_html_against(source, options, previous).expect("valid test viewport")
+    }
+
+    fn session(source: &str, options: RenderOptions) -> RenderSession {
+        RenderSession::new(source, options).expect("valid test viewport")
+    }
+
     const DETERMINISTIC_FIXTURE: &str = "<style>.card { width:80px; padding:4px; background:#112233; } #hero { border-width:2px; border-color:#000000; }</style><div id=\"hero\" class=\"card\">Rarog</div>";
 
     fn deterministic_options() -> RenderOptions {
@@ -510,7 +597,7 @@ mod tests {
 
     #[test]
     fn bootstrap_pipeline_produces_commands_and_fragments() {
-        let output = render_html(
+        let output = render_ok(
             "<html><body><div style=\"background:#ffffff;height:32px\">x</div></body></html>",
             RenderOptions::default(),
         );
@@ -523,7 +610,7 @@ mod tests {
 
     #[test]
     fn box_model_reaches_paint_without_layout_drawing_directly() {
-        let output = render_html(
+        let output = render_ok(
             "<div style=\"width:100px;height:20px;padding:10px;border-width:2px;\
              border-color:#000000;background:#ffffff\">x</div>",
             RenderOptions {
@@ -543,7 +630,7 @@ mod tests {
 
     #[test]
     fn author_stylesheet_cascade_reaches_rendering() {
-        let output = render_html(DETERMINISTIC_FIXTURE, deterministic_options());
+        let output = render_ok(DETERMINISTIC_FIXTURE, deterministic_options());
         let fragment = &output.layout.fragments.root.children[0];
 
         assert_eq!(fragment.boxes.content_box.size.width, 80.0);
@@ -553,8 +640,8 @@ mod tests {
 
     #[test]
     fn damage_is_empty_when_display_list_is_unchanged() {
-        let first = render_html(DETERMINISTIC_FIXTURE, deterministic_options());
-        let second = render_html_against(
+        let first = render_ok(DETERMINISTIC_FIXTURE, deterministic_options());
+        let second = render_against_ok(
             DETERMINISTIC_FIXTURE,
             deterministic_options(),
             Some(&first.display_list),
@@ -583,7 +670,7 @@ mod tests {
 
     #[test]
     fn render_session_prunes_consumed_mutation_history() {
-        let mut session = RenderSession::new(
+        let mut session = session(
             "<div style=\"width:80px;height:20px\">Rarog</div>",
             deterministic_options(),
         );
@@ -606,7 +693,7 @@ mod tests {
 
     #[test]
     fn paint_only_update_reuses_layout_and_fragment_geometry() {
-        let mut session = RenderSession::new(
+        let mut session = session(
             "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div>",
             deterministic_options(),
         );
@@ -632,7 +719,7 @@ mod tests {
 
     #[test]
     fn geometry_change_relayouts_without_rebuilding_layout_tree() {
-        let mut session = RenderSession::new(
+        let mut session = session(
             "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div>",
             deterministic_options(),
         );
@@ -662,7 +749,7 @@ mod tests {
     fn vertical_geometry_change_reflows_ancestors_and_following_siblings() {
         let source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"outer\" style=\"padding:2px;background:#112233\"><div id=\"target\" style=\"height:20px\"></div></div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
         let expected_source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"outer\" style=\"padding:2px;background:#112233\"><div id=\"target\" style=\"height:32px\"></div></div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
-        let mut session = RenderSession::new(source, deterministic_options());
+        let mut session = session(source, deterministic_options());
         let target = element_with_id(session.document(), "target");
         let before = element_with_id(session.document(), "before");
         let after = element_with_id(session.document(), "after");
@@ -677,7 +764,7 @@ mod tests {
             .unwrap();
 
         let report = session.update();
-        let expected = render_html(expected_source, deterministic_options());
+        let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(report.mode, IncrementalMode::FlowRelayout);
         assert_eq!(session.layout().tree.snapshot(), layout_before);
@@ -705,7 +792,7 @@ mod tests {
 
     #[test]
     fn structural_change_still_falls_back_to_full_rebuild() {
-        let mut session = RenderSession::new(
+        let mut session = session(
             "<div style=\"width:80px;height:20px\">Rarog</div>",
             deterministic_options(),
         );
@@ -721,7 +808,7 @@ mod tests {
 
     #[test]
     fn unrelated_attribute_change_does_not_rebuild_render_state() {
-        let mut session = RenderSession::new(
+        let mut session = session(
             "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div>",
             deterministic_options(),
         );
@@ -741,8 +828,8 @@ mod tests {
 
     #[test]
     fn deterministic_render_snapshot_and_hash() {
-        let first = render_html(DETERMINISTIC_FIXTURE, deterministic_options());
-        let second = render_html(DETERMINISTIC_FIXTURE, deterministic_options());
+        let first = render_ok(DETERMINISTIC_FIXTURE, deterministic_options());
+        let second = render_ok(DETERMINISTIC_FIXTURE, deterministic_options());
 
         assert_eq!(first.document.snapshot(), second.document.snapshot());
         assert_eq!(first.styles.snapshot(), second.styles.snapshot());
@@ -774,7 +861,33 @@ mod tests {
         );
         assert_eq!(
             first.deterministic_signature_hash(),
-            13_019_471_889_845_055_156
+            3_175_256_631_850_577_609
         );
+    }
+}
+
+#[cfg(test)]
+mod render_boundary_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_viewport_is_reported_instead_of_panicking() {
+        let error = match render_html(
+            "<div>x</div>",
+            RenderOptions {
+                viewport: Size {
+                    width: f32::NAN,
+                    height: 100.0,
+                },
+                background: Color::WHITE,
+            },
+        ) {
+            Ok(_) => panic!("non-finite viewport must fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RenderError::Framebuffer(FramebufferError::NonFiniteSize)
+        ));
     }
 }

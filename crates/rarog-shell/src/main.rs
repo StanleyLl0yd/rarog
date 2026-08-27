@@ -16,7 +16,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let input = args.next().unwrap_or_else(|| "examples/hello.html".into());
     let output = args.next().unwrap_or_else(|| "rarog.ppm".into());
     let source = fs::read_to_string(&input)?;
-    let rendered = render_html(&source, RenderOptions::default());
+    let rendered = render_html(&source, RenderOptions::default())?;
     fs::write(&output, rendered.framebuffer.to_ppm())?;
     println!("Rarog rendered {input} -> {output}");
     println!("display commands: {}", rendered.display_list.commands.len());

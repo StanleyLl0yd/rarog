@@ -696,12 +696,13 @@ fn push_edges(
 }
 
 fn parse_px(value: &str) -> Option<f32> {
-    value
+    let parsed = value
         .trim()
         .strip_suffix("px")
         .unwrap_or(value.trim())
-        .parse()
-        .ok()
+        .parse::<f32>()
+        .ok()?;
+    parsed.is_finite().then_some(parsed)
 }
 
 fn parse_edge_sizes(value: &str) -> Option<EdgeSizes> {
@@ -1004,5 +1005,18 @@ mod tests {
             )
             .unwrap();
         (document, target)
+    }
+}
+
+#[cfg(test)]
+mod finite_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn non_finite_lengths_are_rejected() {
+        assert_eq!(parse_px("NaNpx"), None);
+        assert_eq!(parse_px("infpx"), None);
+        assert_eq!(parse_px("-infpx"), None);
+        assert_eq!(parse_px("12px"), Some(12.0));
     }
 }
