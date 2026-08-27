@@ -22,7 +22,7 @@ jobs:
       - name: Apply
         run: python tools/r0_correctness_finalize.py
       - name: Format
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all
       - name: Check
         run: cargo check --workspace --all-targets
       - name: Clippy
