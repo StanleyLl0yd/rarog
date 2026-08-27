@@ -83,7 +83,7 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] first geometry-affecting incremental relayout from a retained Layout Tree
 - [x] first subtree-local incremental relayout for geometry changes that preserve vertical flow footprint
 - [x] first ancestor/sibling-aware local reflow for vertical-footprint changes in the root block-flow context
-- [ ] fragmentation cases that produce multiple fragments per layout node
+- [x] bootstrap text fragmentation can produce multiple fragments per layout node with stable ordinals
 
 ### Required invariant
 

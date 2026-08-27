@@ -861,7 +861,7 @@ mod tests {
         );
         assert_eq!(
             first.deterministic_signature_hash(),
-            3_175_256_631_850_577_609
+            2_598_378_446_485_377_948
         );
     }
 }
