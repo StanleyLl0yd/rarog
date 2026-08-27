@@ -386,3 +386,8 @@ parse → DOM → style/cascade → dirty state → Layout Tree → Fragment Tre
 ```
 
 It is not a standards claim. A small end-to-end pipeline lets us replace parsing, selector, cascade, layout and raster implementations without rewriting host and test infrastructure.
+
+### Bidirectional text foundation
+
+R0 now exposes explicit `TextDirection`, `BidiLevel`, and `BidiRun` values. Paragraph direction is derived from the first strong character and mixed strong-direction spans are represented as scalar-indexed runs. `visual_bidi_runs()` performs deterministic level-based run reordering while leaving grapheme, shaping, line-breaking, fragment, and retained-paint identities unchanged. This is a UAX #9-oriented bootstrap boundary, not full Unicode Bidirectional Algorithm conformance.
+
