@@ -101,7 +101,7 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] checked framebuffer allocation with an explicit R0 pixel budget
 - [x] deterministic display-list snapshot
 - [x] stable framebuffer hash
-- [ ] clip commands
+- [x] clip commands with nested software-raster clip-stack semantics and conservative damage fallback
 - [ ] stacking-context representation
 - [ ] transforms/opacity representation
 - [x] retained display-list replacement experiment for affected fragment subtrees
