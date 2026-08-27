@@ -20,7 +20,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Apply
-        run: python tools/r0_text_metrics_apply.py
+        run: |
+          python tools/r0_text_metrics_apply.py
+          python tools/r0_text_metrics_finalize.py
       - name: Format
         run: cargo fmt --all
       - name: Check
