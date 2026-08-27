@@ -1,0 +1,473 @@
+name: Temporary R0 correctness hardening v2
+
+on:
+  push:
+    branches:
+      - r0-correctness-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-correctness-hardening
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Apply hardening
+        shell: python
+        run: |
+          from pathlib import Path
+
+          css = Path("crates/rarog-css/src/lib.rs")
+          text = css.read_text()
+          old = '''fn parse_px(value: &str) -> Option<f32> {
+              value
+                  .trim()
+                  .strip_suffix("px")
+                  .unwrap_or(value.trim())
+                  .parse()
+                  .ok()
+          }
+          '''
+          new = '''fn parse_px(value: &str) -> Option<f32> {
+              let parsed = value
+                  .trim()
+                  .strip_suffix("px")
+                  .unwrap_or(value.trim())
+                  .parse::<f32>()
+                  .ok()?;
+              parsed.is_finite().then_some(parsed)
+          }
+          '''
+          if old not in text:
+              raise SystemExit("parse_px marker not found")
+          text = text.replace(old, new, 1)
+          text += '''
+
+          #[cfg(test)]
+          mod finite_geometry_tests {
+              use super::*;
+
+              #[test]
+              fn non_finite_lengths_are_rejected() {
+                  assert_eq!(parse_px("NaNpx"), None);
+                  assert_eq!(parse_px("infpx"), None);
+                  assert_eq!(parse_px("-infpx"), None);
+                  assert_eq!(parse_px("12px"), Some(12.0));
+              }
+          }
+          '''
+          css.write_text(text)
+
+          paint = Path("crates/rarog-paint/src/lib.rs")
+          text = paint.read_text()
+          old = '''#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+          pub struct DisplayItemId(pub u64);
+          '''
+          new = '''#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+          pub struct DisplayItemId {
+              pub source: u64,
+              pub fragment: u64,
+              pub slot: u8,
+          }
+          '''
+          if old not in text:
+              raise SystemExit("DisplayItemId marker not found")
+          text = text.replace(old, new, 1)
+          text = text.replace('id.0,', 'display_item_id_snapshot(*id),')
+
+          marker = '''    pub fn snapshot(&self) -> String {
+          '''
+          addition = '''    pub fn has_unique_ids(&self) -> bool {
+              self.command_ids.iter().copied().collect::<BTreeSet<_>>().len()
+                  == self.command_ids.len()
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit("DisplayList marker not found")
+          text = text.replace(marker, addition + marker, 1)
+
+          old = '''pub fn build_display_list_for_fragment(fragment: &Fragment) -> DisplayList {
+              let mut list = DisplayList::default();
+              collect(fragment, &mut list);
+              list
+          }
+          '''
+          new = '''pub fn build_display_list_for_fragment(fragment: &Fragment) -> DisplayList {
+              let mut list = DisplayList::default();
+              collect(fragment, &mut list);
+              assert!(list.has_unique_ids(), "display item IDs must be unique");
+              list
+          }
+          '''
+          if old not in text:
+              raise SystemExit("display-list build marker not found")
+          text = text.replace(old, new, 1)
+
+          old = '''fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {
+              let source = fragment
+                  .dom_node
+                  .map(|node| node as u64)
+                  .unwrap_or_else(|| (1_u64 << 55) | fragment.layout_node.index() as u64);
+              DisplayItemId((source << 8) | u64::from(slot))
+          }
+          '''
+          new = '''fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {
+              let source = fragment
+                  .dom_node
+                  .map(|node| node as u64)
+                  .unwrap_or_else(|| (1_u64 << 63) | fragment.layout_node.index() as u64);
+              DisplayItemId {
+                  source,
+                  fragment: fragment.id.index() as u64,
+                  slot,
+              }
+          }
+
+          fn display_item_id_snapshot(id: DisplayItemId) -> String {
+              format!("{}:{}:{}", id.source, id.fragment, id.slot)
+          }
+          '''
+          if old not in text:
+              raise SystemExit("item_id marker not found")
+          text = text.replace(old, new, 1)
+          text += '''
+
+          #[cfg(test)]
+          mod display_identity_hardening_tests {
+              use super::*;
+
+              #[test]
+              fn fragment_component_prevents_multi_fragment_collisions() {
+                  let first = DisplayItemId {
+                      source: 7,
+                      fragment: 10,
+                      slot: 0,
+                  };
+                  let second = DisplayItemId {
+                      source: 7,
+                      fragment: 11,
+                      slot: 0,
+                  };
+                  assert_ne!(first, second);
+              }
+
+              #[test]
+              fn duplicate_ids_are_detectable() {
+                  let id = DisplayItemId {
+                      source: 1,
+                      fragment: 2,
+                      slot: 3,
+                  };
+                  let list = DisplayList {
+                      command_ids: vec![id, id],
+                      commands: vec![
+                          DisplayCommand::FillRect {
+                              rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                              color: Color::BLACK,
+                          },
+                          DisplayCommand::FillRect {
+                              rect: Rect::new(1.0, 0.0, 1.0, 1.0),
+                              color: Color::BLACK,
+                          },
+                      ],
+                  };
+                  assert!(!list.has_unique_ids());
+              }
+          }
+          '''
+          paint.write_text(text)
+
+          engine = Path("crates/rarog-engine/src/lib.rs")
+          text = engine.read_text()
+          text = text.replace(
+              'use rarog_dom::{Document, MutationKind, NodeId};',
+              'use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};',
+              1,
+          )
+          text = text.replace(
+              'DamageRegion, DisplayList, Framebuffer, build_display_list, replace_display_items_for_fragment,',
+              'DamageRegion, DisplayList, Framebuffer, FramebufferError, build_display_list,\n    replace_display_items_for_fragment,',
+              1,
+          )
+
+          marker = 'impl Default for RenderOptions {'
+          error_block = '''#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+          pub enum RenderError {
+              Framebuffer(FramebufferError),
+          }
+
+          impl std::fmt::Display for RenderError {
+              fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                  match self {
+                      Self::Framebuffer(error) => write!(formatter, "{error}"),
+                  }
+              }
+          }
+
+          impl std::error::Error for RenderError {}
+
+          impl From<FramebufferError> for RenderError {
+              fn from(error: FramebufferError) -> Self {
+                  Self::Framebuffer(error)
+              }
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit("RenderOptions marker not found")
+          text = text.replace(marker, error_block + marker, 1)
+
+          session_start = text.index('impl RenderSession {')
+          document_start = text.index('    pub fn document(&self)', session_start)
+          constructor = text[session_start:document_start]
+          constructor = constructor.replace(
+              'pub fn new(source: &str, options: RenderOptions) -> Self {',
+              'pub fn new(source: &str, options: RenderOptions) -> Result<Self, RenderError> {',
+              1,
+          )
+          constructor = constructor.replace(
+              'let mut output = render_html(source, options);',
+              'let mut output = render_html(source, options)?;',
+              1,
+          )
+          constructor = constructor.replace('        Self {', '        Ok(Self {', 1)
+          end = constructor.rfind('        }\n    }')
+          if end < 0:
+              raise SystemExit("constructor end not found")
+          constructor = constructor[:end] + '        })\n    }' + constructor[end + len('        }\n    }'):]
+          text = text[:session_start] + constructor + text[document_start:]
+
+          old = '''    pub fn document_mut(&mut self) -> &mut Document {
+              &mut self.document
+          }
+          '''
+          if old not in text:
+              # Normalize via positional replacement when whitespace differs.
+              start = text.index('    pub fn document_mut(&mut self)')
+              end = text.index('\n    pub fn styles(&self)', start)
+              old = text[start:end]
+          new = '''    pub fn document_mut(&mut self) -> DocumentEditor<'_> {
+              DocumentEditor {
+                  document: &mut self.document,
+              }
+          }
+          '''
+          text = text.replace(old, new, 1)
+
+          marker = 'pub struct RenderSession {'
+          editor = '''pub struct DocumentEditor<'a> {
+              document: &'a mut Document,
+          }
+
+          impl DocumentEditor<'_> {
+              pub fn create_node(&mut self, kind: NodeKind) -> Result<NodeId, MutationError> {
+                  self.document.create_node(kind)
+              }
+
+              pub fn append_new(&mut self, parent: NodeId, kind: NodeKind) -> Result<NodeId, MutationError> {
+                  self.document.append_new(parent, kind)
+              }
+
+              pub fn append_child(&mut self, parent: NodeId, child: NodeId) -> Result<(), MutationError> {
+                  self.document.append_child(parent, child)
+              }
+
+              pub fn detach(&mut self, child: NodeId) -> Result<(), MutationError> {
+                  self.document.detach(child)
+              }
+
+              pub fn set_attribute(
+                  &mut self,
+                  node: NodeId,
+                  name: impl Into<String>,
+                  value: impl Into<String>,
+              ) -> Result<(), MutationError> {
+                  self.document.set_attribute(node, name, value)
+              }
+
+              pub fn remove_attribute(&mut self, node: NodeId, name: &str) -> Result<Option<String>, MutationError> {
+                  self.document.remove_attribute(node, name)
+              }
+
+              pub fn set_text(&mut self, node: NodeId, value: impl Into<String>) -> Result<(), MutationError> {
+                  self.document.set_text(node, value)
+              }
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit("RenderSession marker not found")
+          text = text.replace(marker, editor + marker, 1)
+
+          render_start = text.index('pub fn render_html(')
+          render_end = text.index('fn layout_style_for_dom', render_start)
+          region = text[render_start:render_end]
+          region = region.replace(
+              'pub fn render_html(source: &str, options: RenderOptions) -> RenderOutput {',
+              'pub fn render_html(source: &str, options: RenderOptions) -> Result<RenderOutput, RenderError> {',
+              1,
+          )
+          region = region.replace(
+              ') -> RenderOutput {',
+              ') -> Result<RenderOutput, RenderError> {',
+              1,
+          )
+          region = region.replace(
+              'let mut framebuffer = Framebuffer::new(options.viewport, options.background);',
+              'let mut framebuffer = Framebuffer::try_new(options.viewport, options.background)?;',
+              1,
+          )
+          region = region.replace('    RenderOutput {', '    Ok(RenderOutput {', 1)
+          tail = region.rfind('    }\n}\n\n')
+          if tail < 0:
+              raise SystemExit("render output end not found")
+          region = region[:tail] + '    })\n}\n\n' + region[tail + len('    }\n}\n\n'):]
+          text = text[:render_start] + region + text[render_end:]
+
+          test_marker = '#[cfg(test)]\nmod tests {\n    use super::*;\n    use rarog_dom::NodeKind;\n'
+          if test_marker not in text:
+              raise SystemExit("test module marker not found")
+          prefix, tests = text.split(test_marker, 1)
+          tests = tests.replace('render_html_against(', 'render_against_ok(')
+          tests = tests.replace('render_html(', 'render_ok(')
+          tests = tests.replace('RenderSession::new(', 'session(')
+          helpers = '''#[cfg(test)]
+          mod tests {
+              use super::*;
+              use rarog_dom::NodeKind;
+
+              fn render_ok(source: &str, options: RenderOptions) -> RenderOutput {
+                  render_html(source, options).expect("valid test viewport")
+              }
+
+              fn render_against_ok(
+                  source: &str,
+                  options: RenderOptions,
+                  previous: Option<&DisplayList>,
+              ) -> RenderOutput {
+                  render_html_against(source, options, previous).expect("valid test viewport")
+              }
+
+              fn session(source: &str, options: RenderOptions) -> RenderSession {
+                  RenderSession::new(source, options).expect("valid test viewport")
+              }
+          '''
+          text = prefix + helpers + tests
+          text += '''
+
+          #[cfg(test)]
+          mod render_boundary_hardening_tests {
+              use super::*;
+
+              #[test]
+              fn invalid_viewport_is_reported_instead_of_panicking() {
+                  let error = render_html(
+                      "<div>x</div>",
+                      RenderOptions {
+                          viewport: Size {
+                              width: f32::NAN,
+                              height: 100.0,
+                          },
+                          background: Color::WHITE,
+                      },
+                  )
+                  .expect_err("non-finite viewport must fail");
+                  assert!(matches!(
+                      error,
+                      RenderError::Framebuffer(FramebufferError::NonFiniteSize)
+                  ));
+              }
+          }
+          '''
+          engine.write_text(text)
+
+          shell = Path("crates/rarog-shell/src/main.rs")
+          text = shell.read_text()
+          old = '    let rendered = render_html(&source, RenderOptions::default());'
+          if old not in text:
+              raise SystemExit("shell render marker not found")
+          shell.write_text(text.replace(old, old[:-1] + '?;', 1))
+
+          dom = Path("crates/rarog-dom/src/lib.rs")
+          text = dom.read_text()
+          text += '''
+
+          #[cfg(test)]
+          mod mutation_stress_tests {
+              use super::*;
+              use std::collections::BTreeMap;
+
+              fn element(name: &str) -> NodeKind {
+                  NodeKind::Element(ElementData {
+                      tag_name: name.into(),
+                      attributes: BTreeMap::new(),
+                  })
+              }
+
+              fn next(seed: &mut u64) -> u64 {
+                  *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                  *seed
+              }
+
+              #[test]
+              fn deterministic_mutation_sequences_preserve_dom_invariants() {
+                  let mut document = Document::new();
+                  let mut nodes = vec![document.root()];
+                  let mut seed = 0x7261726f67_u64;
+
+                  for _ in 0..2_000 {
+                      match next(&mut seed) % 5 {
+                          0 => {
+                              let parent = nodes[(next(&mut seed) as usize) % nodes.len()];
+                              if let Ok(node) = document.append_new(parent, element("div")) {
+                                  nodes.push(node);
+                              }
+                          }
+                          1 if nodes.len() > 1 => {
+                              let child = nodes[1 + (next(&mut seed) as usize % (nodes.len() - 1))];
+                              let parent = nodes[(next(&mut seed) as usize) % nodes.len()];
+                              let _ = document.append_child(parent, child);
+                          }
+                          2 if nodes.len() > 1 => {
+                              let child = nodes[1 + (next(&mut seed) as usize % (nodes.len() - 1))];
+                              let _ = document.detach(child);
+                          }
+                          3 if nodes.len() > 1 => {
+                              let node = nodes[1 + (next(&mut seed) as usize % (nodes.len() - 1))];
+                              let _ = document.set_attribute(node, "data-seed", next(&mut seed).to_string());
+                          }
+                          _ => {
+                              let parent = nodes[(next(&mut seed) as usize) % nodes.len()];
+                              if let Ok(node) = document.append_new(parent, NodeKind::Text("x".into())) {
+                                  nodes.push(node);
+                              }
+                          }
+                      }
+                      assert_eq!(document.validate_invariants(), Ok(()));
+                  }
+              }
+          }
+          '''
+          dom.write_text(text)
+      - name: Format
+        run: cargo fmt --all
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Commit
+        run: |
+          git config user.name "Stanley Lloyd"
+          git config user.email "131160519+StanleyLl0yd@users.noreply.github.com"
+          git add crates
+          git diff --cached --quiet || git commit -m "Harden geometry, render errors, and display identities"
+          git push origin HEAD:r0-correctness-hardening
