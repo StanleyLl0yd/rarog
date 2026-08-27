@@ -107,16 +107,21 @@ impl Default for FixedTextShaper {
 
 impl TextShaper for FixedTextShaper {
     fn shape(&self, text: &str) -> ShapedText {
-        let clusters = text
-            .chars()
-            .enumerate()
-            .map(|(index, character)| GlyphCluster {
-                source: TextRange::new(index, index + 1),
-                advance: if is_mandatory_break(character) {
-                    0.0
-                } else {
-                    self.advance
-                },
+        let characters = text.chars().collect::<Vec<_>>();
+        let boundaries = grapheme_boundaries(text);
+        let clusters = boundaries
+            .windows(2)
+            .map(|window| {
+                let start = window[0];
+                let end = window[1];
+                let mandatory = characters[start..end]
+                    .iter()
+                    .copied()
+                    .any(is_mandatory_break);
+                GlyphCluster {
+                    source: TextRange::new(start, end),
+                    advance: if mandatory { 0.0 } else { self.advance },
+                }
             })
             .collect::<Vec<_>>();
         ShapedText {
@@ -154,7 +159,7 @@ impl TextRun {
     }
 
     pub fn character_count(&self) -> usize {
-        self.shaped.clusters.len()
+        self.text.chars().count()
     }
 
     pub fn advance_for_range(&self, range: TextRange) -> f32 {
@@ -198,22 +203,92 @@ pub struct BreakOpportunity {
     pub kind: BreakKind,
 }
 
+pub fn grapheme_boundaries(text: &str) -> Vec<usize> {
+    let characters = text.chars().collect::<Vec<_>>();
+    let mut boundaries = vec![0];
+    for index in 1..characters.len() {
+        let previous = characters[index - 1];
+        let current = characters[index];
+        let previous_previous = index.checked_sub(2).map(|value| characters[value]);
+        let preceding_regional_indicators = characters[..index]
+            .iter()
+            .rev()
+            .take_while(|character| is_regional_indicator(**character))
+            .count();
+
+        let no_break = (previous == '\r' && current == '\n')
+            || is_grapheme_extend(current)
+            || previous == '\u{200d}'
+            || current == '\u{200d}'
+            || (is_regional_indicator(previous)
+                && is_regional_indicator(current)
+                && preceding_regional_indicators % 2 == 1)
+            || (previous_previous == Some('\u{200d}') && is_extended_pictographic(current));
+
+        if !no_break {
+            boundaries.push(index);
+        }
+    }
+
+    boundaries.push(characters.len());
+    boundaries.dedup();
+    boundaries
+}
+
+pub fn is_grapheme_boundary(text: &str, index: usize) -> bool {
+    grapheme_boundaries(text).binary_search(&index).is_ok()
+}
+
+fn is_grapheme_extend(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x0300..=0x036f
+            | 0x0483..=0x0489
+            | 0x0591..=0x05bd
+            | 0x05bf
+            | 0x05c1..=0x05c2
+            | 0x05c4..=0x05c5
+            | 0x0610..=0x061a
+            | 0x064b..=0x065f
+            | 0x0670
+            | 0x06d6..=0x06ed
+            | 0x1ab0..=0x1aff
+            | 0x1dc0..=0x1dff
+            | 0x20d0..=0x20ff
+            | 0xfe00..=0xfe0f
+            | 0xfe20..=0xfe2f
+            | 0xe0100..=0xe01ef
+            | 0x1f3fb..=0x1f3ff
+    )
+}
+
+fn is_regional_indicator(character: char) -> bool {
+    matches!(character as u32, 0x1f1e6..=0x1f1ff)
+}
+
+fn is_extended_pictographic(character: char) -> bool {
+    matches!(character as u32, 0x1f000..=0x1faff | 0x2600..=0x27bf)
+}
+
 pub fn unicode_break_opportunities(text: &str) -> Vec<BreakOpportunity> {
     let characters = text.chars().collect::<Vec<_>>();
     let mut opportunities = Vec::new();
     for (index, character) in characters.iter().copied().enumerate() {
         let boundary = index + 1;
         if is_mandatory_break(character) {
-            opportunities.push(BreakOpportunity {
-                index: boundary,
-                kind: BreakKind::Mandatory,
-            });
+            if is_grapheme_boundary(text, boundary) {
+                opportunities.push(BreakOpportunity {
+                    index: boundary,
+                    kind: BreakKind::Mandatory,
+                });
+            }
             continue;
         }
         let next = characters.get(boundary).copied();
-        if is_breakable_whitespace(character)
-            || character == '-'
-            || (is_cjk_ideograph(character) && next.is_some_and(is_cjk_ideograph))
+        if is_grapheme_boundary(text, boundary)
+            && (is_breakable_whitespace(character)
+                || character == '-'
+                || (is_cjk_ideograph(character) && next.is_some_and(is_cjk_ideograph)))
         {
             opportunities.push(BreakOpportunity {
                 index: boundary,
@@ -288,8 +363,10 @@ impl LineBreaker for UnicodeLineBreaker {
             if available_width.is_finite() && available_width >= 0.0 && width > available_width {
                 let emergency = cluster.source.start;
                 let break_at = last_soft.filter(|value| *value > line_start).or_else(|| {
-                    (emergency > line_start && !is_non_breaking_boundary(&run.text, emergency))
-                        .then_some(emergency)
+                    (emergency > line_start
+                        && is_grapheme_boundary(&run.text, emergency)
+                        && !is_non_breaking_boundary(&run.text, emergency))
+                    .then_some(emergency)
                 });
                 if let Some(break_at) = break_at {
                     ranges.push(TextRange::new(line_start, break_at));
@@ -1283,6 +1360,55 @@ mod tests {
         assert_eq!(
             breaker.break_text(&run, 16.0),
             vec![TextRange::new(0, 2), TextRange::new(2, 4)]
+        );
+    }
+
+    #[test]
+    fn grapheme_boundaries_keep_combining_sequences_together() {
+        let text = "e\u{301}x";
+        assert_eq!(grapheme_boundaries(text), vec![0, 2, 3]);
+        let run = TextRun::new(text.into());
+        assert_eq!(run.shaped.clusters[0].source, TextRange::new(0, 2));
+        assert_eq!(run.shaped.clusters.len(), 2);
+    }
+
+    #[test]
+    fn grapheme_boundaries_keep_emoji_modifier_and_zwj_sequences_together() {
+        let text = "👩🏽\u{200d}💻x";
+        assert_eq!(grapheme_boundaries(text), vec![0, 4, 5]);
+        let run = TextRun::new(text.into());
+        assert_eq!(run.shaped.clusters[0].source, TextRange::new(0, 4));
+    }
+
+    #[test]
+    fn grapheme_boundaries_pair_regional_indicators() {
+        let text = "🇺🇸🇨🇦";
+        assert_eq!(grapheme_boundaries(text), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn unicode_line_breaker_never_emergency_breaks_inside_grapheme_cluster() {
+        let run = TextRun::new("e\u{301}x".into());
+        let breaker = UnicodeLineBreaker;
+        assert_eq!(
+            breaker.break_text(&run, 4.0),
+            vec![TextRange::new(0, 2), TextRange::new(2, 3)]
+        );
+    }
+
+    #[test]
+    fn crlf_is_one_grapheme_cluster_and_one_mandatory_boundary() {
+        let text = "a\r\nb";
+        assert_eq!(grapheme_boundaries(text), vec![0, 1, 3, 4]);
+        assert_eq!(
+            unicode_break_opportunities(text)
+                .into_iter()
+                .filter(|value| value.kind == BreakKind::Mandatory)
+                .collect::<Vec<_>>(),
+            vec![BreakOpportunity {
+                index: 3,
+                kind: BreakKind::Mandatory
+            }]
         );
     }
 }
