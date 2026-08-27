@@ -25,7 +25,6 @@ impl FragmentOrdinal {
     }
 }
 ''', 1)
-
 text = text.replace(
 '''pub struct Fragment {
     pub id: FragmentId,
@@ -36,7 +35,6 @@ text = text.replace(
     pub ordinal: FragmentOrdinal,
     pub layout_node: LayoutNodeId,
 ''', 1)
-
 text = text.replace(
 '''pub fn fragment_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Option<&Fragment> {
     find_fragment(&tree.root, dom_node)
@@ -52,7 +50,6 @@ pub fn fragments_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Vec<&Fragment
     fragments
 }
 ''', 1)
-
 text = text.replace(
 '''fn find_fragment(fragment: &Fragment, dom_node: NodeId) -> Option<&Fragment> {
     if fragment.dom_node == Some(dom_node) {
@@ -83,7 +80,6 @@ fn collect_fragments<'a>(fragment: &'a Fragment, dom_node: NodeId, output: &mut 
     }
 }
 ''', 1)
-
 text = text.replace(
 '''    for child in &tree.root.children[start_index..] {
         rebuilt.push(builder.layout_node(child, containing_block, &mut cursor_y));
@@ -93,7 +89,6 @@ text = text.replace(
         rebuilt.extend(builder.layout_node(child, containing_block, &mut cursor_y));
     }
 ''', 1)
-
 text = text.replace(
 '''        if child.dom_node == Some(dom_node) {
             let mut cursor_y = child.boxes.margin_box.origin.y;
@@ -111,7 +106,6 @@ text = text.replace(
             return true;
         }
 ''', 1)
-
 text = text.replace(
 '''        for child in &tree.root.children {
             children.push(self.layout_node(child, containing_block, &mut cursor_y));
@@ -121,7 +115,6 @@ text = text.replace(
             children.extend(self.layout_node(child, containing_block, &mut cursor_y));
         }
 ''', 1)
-
 text = text.replace(
 '''            root: Fragment {
                 id: self.allocate_id(),
@@ -132,7 +125,6 @@ text = text.replace(
                 ordinal: FragmentOrdinal(0),
                 layout_node: tree.root.id,
 ''', 1)
-
 old = '''    fn layout_node(
         &mut self,
         node: &LayoutNode,
@@ -199,7 +191,6 @@ new = '''    fn layout_node(
         let fragment_count = character_count.max(1).div_ceil(characters_per_fragment);
         let mut fragments = Vec::with_capacity(fragment_count);
         let mut remaining = character_count;
-
         for ordinal in 0..fragment_count {
             let characters = remaining.min(characters_per_fragment);
             let width = (characters as f32 * BOOTSTRAP_ADVANCE).min(available_width);
@@ -223,7 +214,6 @@ new = '''    fn layout_node(
 if old not in text:
     raise SystemExit('layout text marker not found')
 text = text.replace(old, new, 1)
-
 text = text.replace(
 '''        for child in &node.children {
             children.push(self.layout_node(child, child_containing_block, &mut child_y));
@@ -233,7 +223,6 @@ text = text.replace(
             children.extend(self.layout_node(child, child_containing_block, &mut child_y));
         }
 ''', 1)
-
 text = text.replace(
 '''        Fragment {
             id: self.allocate_id(),
@@ -244,7 +233,6 @@ text = text.replace(
             ordinal: FragmentOrdinal(0),
             layout_node: node.id,
 ''', 1)
-
 text = text.replace(
 '''        "{}fragment={}|layout={}|dom={dom}|kind={:?}|margin={}|border={}|padding={}|content={}\\n",
         " ".repeat(depth),
@@ -257,7 +245,6 @@ text = text.replace(
         fragment.ordinal.index(),
         fragment.layout_node.index(),
 ''', 1)
-
 module_end = text.rfind('\n}')
 insert = r'''
 
@@ -274,16 +261,12 @@ insert = r'''
                 height: 200.0,
             },
         );
-
         let layout_node = &output.tree.root.children[0];
         let fragments = fragments_for_dom(&output.fragments, text_node);
         assert_eq!(fragments.len(), 4);
         assert!(fragments.iter().all(|fragment| fragment.layout_node == layout_node.id));
         assert_eq!(
-            fragments
-                .iter()
-                .map(|fragment| fragment.ordinal.index())
-                .collect::<Vec<_>>(),
+            fragments.iter().map(|fragment| fragment.ordinal.index()).collect::<Vec<_>>(),
             vec![0, 1, 2, 3]
         );
         assert_eq!(fragments[0].boxes.content_box.size.width, 24.0);
@@ -294,13 +277,20 @@ text = text[:module_end] + insert + text[module_end:]
 layout.write_text(text)
 
 paint = Path('crates/rarog-paint/src/lib.rs')
-text = paint.read_text()
-text = text.replace(
+text = paint.read_text().replace(
 '''        fragment: fragment.id.index() as u64,
 ''',
 '''        fragment: u64::from(fragment.ordinal.index()),
 ''', 1)
 paint.write_text(text)
+
+engine = Path('crates/rarog-engine/src/lib.rs')
+text = engine.read_text().replace(
+    '3_175_256_631_850_577_609',
+    '2_598_378_446_485_377_948',
+    1,
+)
+engine.write_text(text)
 
 backlog = Path('docs/R0-BACKLOG.md')
 text = backlog.read_text().replace(
