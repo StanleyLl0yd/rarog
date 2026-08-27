@@ -117,8 +117,90 @@ pub struct ShapedRun {
     pub metrics: FontMetrics,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OpenTypeTag(u32);
+
+impl OpenTypeTag {
+    pub const fn from_bytes(bytes: [u8; 4]) -> Self {
+        Self(u32::from_be_bytes(bytes))
+    }
+
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapingScript {
+    Common,
+    Latin,
+    Cyrillic,
+    Hebrew,
+    Arabic,
+    Han,
+    Emoji,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanguageTag(String);
+
+impl LanguageTag {
+    pub fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        Self(if value.trim().is_empty() {
+            "und".into()
+        } else {
+            value.to_ascii_lowercase()
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for LanguageTag {
+    fn default() -> Self {
+        Self("und".into())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenTypeFeature {
+    pub tag: OpenTypeTag,
+    pub value: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VariationCoordinate {
+    pub axis: OpenTypeTag,
+    pub value: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapingRequest {
+    pub run: ShapingRun,
+    pub script: ShapingScript,
+    pub language: LanguageTag,
+    pub features: Vec<OpenTypeFeature>,
+    pub variations: Vec<VariationCoordinate>,
+}
+
+impl ShapingRequest {
+    pub fn bootstrap(text: &str, run: ShapingRun) -> Self {
+        Self {
+            run,
+            script: shaping_script_for_range(text, run.range),
+            language: LanguageTag::default(),
+            features: Vec::new(),
+            variations: Vec::new(),
+        }
+    }
+}
+
 pub trait ShapingBackend {
-    fn shape_run(&self, text: &str, run: ShapingRun, face: &FontFace) -> ShapedRun;
+    fn shape_run(&self, text: &str, request: &ShapingRequest, face: &FontFace) -> ShapedRun;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -329,7 +411,8 @@ impl Default for FixedTextShaper {
 }
 
 impl ShapingBackend for FixedTextShaper {
-    fn shape_run(&self, text: &str, run: ShapingRun, face: &FontFace) -> ShapedRun {
+    fn shape_run(&self, text: &str, request: &ShapingRequest, face: &FontFace) -> ShapedRun {
+        let run = request.run;
         let characters = text.chars().collect::<Vec<_>>();
         let boundaries = grapheme_boundaries(text);
         let mut glyphs = boundaries
@@ -431,17 +514,21 @@ impl TextRun {
         shaping_runs_for_font_runs(&self.text, &self.font_runs)
     }
 
+    pub fn shaping_requests(&self) -> Vec<ShapingRequest> {
+        shaping_requests_for_runs(&self.text, &self.shaping_runs())
+    }
+
     pub fn shape_with_backend<B: ShapingBackend>(
         &self,
         fallback: &FontFallbackChain,
         backend: &B,
     ) -> Vec<ShapedRun> {
-        self.shaping_runs()
+        self.shaping_requests()
             .into_iter()
-            .filter_map(|run| {
+            .filter_map(|request| {
                 fallback
-                    .face(run.face)
-                    .map(|face| backend.shape_run(&self.text, run, face))
+                    .face(request.run.face)
+                    .map(|face| backend.shape_run(&self.text, &request, face))
             })
             .collect()
     }
@@ -573,6 +660,97 @@ fn shaping_runs_for_font_runs(text: &str, fonts: &[FontRun]) -> Vec<ShapingRun> 
     }
 
     runs
+}
+
+fn shaping_requests_for_runs(text: &str, runs: &[ShapingRun]) -> Vec<ShapingRequest> {
+    let boundaries = grapheme_boundaries(text);
+    let mut requests = Vec::new();
+
+    for run in runs.iter().copied() {
+        let mut request_start = run.range.start;
+        let mut current_script = None;
+
+        for window in boundaries.windows(2) {
+            let cluster_start = window[0];
+            let cluster_end = window[1];
+            if cluster_start < run.range.start || cluster_end > run.range.end {
+                continue;
+            }
+
+            let cluster_script =
+                shaping_script_for_range(text, TextRange::new(cluster_start, cluster_end));
+            if matches!(cluster_script, ShapingScript::Common) {
+                continue;
+            }
+
+            match current_script {
+                Some(script) if script != cluster_script => {
+                    let request_run = ShapingRun {
+                        range: TextRange::new(request_start, cluster_start),
+                        face: run.face,
+                        level: run.level,
+                    };
+                    let mut request = ShapingRequest::bootstrap(text, request_run);
+                    request.script = script;
+                    requests.push(request);
+                    request_start = cluster_start;
+                    current_script = Some(cluster_script);
+                }
+                None => current_script = Some(cluster_script),
+                Some(_) => {}
+            }
+        }
+
+        if request_start < run.range.end {
+            let request_run = ShapingRun {
+                range: TextRange::new(request_start, run.range.end),
+                face: run.face,
+                level: run.level,
+            };
+            let mut request = ShapingRequest::bootstrap(text, request_run);
+            if let Some(script) = current_script {
+                request.script = script;
+            }
+            requests.push(request);
+        }
+    }
+
+    requests
+}
+
+pub fn shaping_script_for_range(text: &str, range: TextRange) -> ShapingScript {
+    let characters = text.chars().collect::<Vec<_>>();
+    let Some(slice) = characters.get(range.start..range.end) else {
+        return ShapingScript::Unknown;
+    };
+    slice
+        .iter()
+        .copied()
+        .find_map(shaping_script_for_character)
+        .unwrap_or(ShapingScript::Common)
+}
+
+fn shaping_script_for_character(character: char) -> Option<ShapingScript> {
+    let code = character as u32;
+    if is_extended_pictographic(character) || is_regional_indicator(character) {
+        Some(ShapingScript::Emoji)
+    } else if is_common_font_character(character) || character.is_ascii_digit() {
+        None
+    } else if matches!(code, 0x0041..=0x024f) {
+        Some(ShapingScript::Latin)
+    } else if matches!(code, 0x0400..=0x052f) {
+        Some(ShapingScript::Cyrillic)
+    } else if matches!(code, 0x0590..=0x05ff) {
+        Some(ShapingScript::Hebrew)
+    } else if matches!(code, 0x0600..=0x08ff | 0xfb50..=0xfdff | 0xfe70..=0xfefc) {
+        Some(ShapingScript::Arabic)
+    } else if matches!(code, 0x2e80..=0x9fff | 0xf900..=0xfaff) {
+        Some(ShapingScript::Han)
+    } else if is_grapheme_extend(character) {
+        None
+    } else {
+        Some(ShapingScript::Unknown)
+    }
 }
 
 pub fn paragraph_direction(text: &str) -> TextDirection {
@@ -2111,7 +2289,13 @@ mod tests {
         let backend = FixedTextShaper::default();
         let shaped = runs
             .iter()
-            .map(|run| backend.shape_run(text, *run, fallback.face(run.face).unwrap()))
+            .map(|run| {
+                backend.shape_run(
+                    text,
+                    &ShapingRequest::bootstrap(text, *run),
+                    fallback.face(run.face).unwrap(),
+                )
+            })
             .collect::<Vec<_>>();
         assert_eq!(shaped.len(), 3);
         assert_eq!(shaped[0].glyphs[0].id, GlyphId::new('a' as u32));
@@ -2142,7 +2326,11 @@ mod tests {
             face: face.id,
             level: BidiLevel::new(0),
         };
-        let shaped = FixedTextShaper::default().shape_run("ab", run, &face);
+        let shaped = FixedTextShaper::default().shape_run(
+            "ab",
+            &ShapingRequest::bootstrap("ab", run),
+            &face,
+        );
         assert_eq!(shaped.metrics, metrics);
         assert_eq!(shaped.advance, 22.0);
         assert_eq!(
@@ -2161,8 +2349,11 @@ mod tests {
         let fallback = FontFallbackChain::default();
         let run = shaping_runs(text, &fallback)[0];
         assert_eq!(run.direction(), TextDirection::Rtl);
-        let shaped =
-            FixedTextShaper::default().shape_run(text, run, fallback.face(run.face).unwrap());
+        let shaped = FixedTextShaper::default().shape_run(
+            text,
+            &ShapingRequest::bootstrap(text, run),
+            fallback.face(run.face).unwrap(),
+        );
         assert_eq!(shaped.glyphs.len(), 2);
         assert_eq!(shaped.glyphs[0].source, TextRange::new(1, 2));
         assert_eq!(shaped.glyphs[1].source, TextRange::new(0, 1));
@@ -2179,5 +2370,116 @@ mod tests {
         assert_eq!(shaped[2].run.face, FontFaceId::new(2));
         assert_eq!(shaped[1].run.direction(), TextDirection::Rtl);
         assert!(shaped.iter().all(|segment| !segment.glyphs.is_empty()));
+    }
+
+    #[test]
+    fn shaping_request_infers_script_without_changing_source_range() {
+        let text = "abc Привет שלום مرحبا 世界 👩🏽\u{200d}💻";
+        let fallback = FontFallbackChain::default();
+        let run = TextRun::with_fallback(text.into(), &fallback);
+        let requests = run.shaping_requests();
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.script == ShapingScript::Latin)
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.script == ShapingScript::Cyrillic)
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.script == ShapingScript::Hebrew)
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.script == ShapingScript::Arabic)
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.script == ShapingScript::Han)
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.script == ShapingScript::Emoji)
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.run.range.start < request.run.range.end)
+        );
+    }
+
+    #[test]
+    fn language_tag_has_deterministic_und_default_and_normalization() {
+        assert_eq!(LanguageTag::default().as_str(), "und");
+        assert_eq!(LanguageTag::new("").as_str(), "und");
+        assert_eq!(LanguageTag::new("RU-ru").as_str(), "ru-ru");
+    }
+
+    #[test]
+    fn shaping_request_carries_features_and_variation_coordinates() {
+        let run = ShapingRun {
+            range: TextRange::new(0, 3),
+            face: FontFaceId::new(0),
+            level: BidiLevel::new(0),
+        };
+        let mut request = ShapingRequest::bootstrap("abc", run);
+        request.language = LanguageTag::new("en");
+        request.features.push(OpenTypeFeature {
+            tag: OpenTypeTag::from_bytes(*b"liga"),
+            value: 1,
+        });
+        request.variations.push(VariationCoordinate {
+            axis: OpenTypeTag::from_bytes(*b"wght"),
+            value: 650.0,
+        });
+        assert_eq!(request.script, ShapingScript::Latin);
+        assert_eq!(request.language.as_str(), "en");
+        assert_eq!(
+            request.features[0].tag.value(),
+            u32::from_be_bytes(*b"liga")
+        );
+        assert_eq!(
+            request.variations[0].axis.value(),
+            u32::from_be_bytes(*b"wght")
+        );
+    }
+
+    #[test]
+    fn backend_boundary_accepts_metadata_without_changing_bootstrap_geometry() {
+        let fallback = FontFallbackChain::default();
+        let run = shaping_runs("abc", &fallback)[0];
+        let face = fallback.face(run.face).unwrap();
+        let backend = FixedTextShaper::default();
+        let baseline = backend.shape_run("abc", &ShapingRequest::bootstrap("abc", run), face);
+        let mut configured = ShapingRequest::bootstrap("abc", run);
+        configured.language = LanguageTag::new("en");
+        configured.features.push(OpenTypeFeature {
+            tag: OpenTypeTag::from_bytes(*b"kern"),
+            value: 1,
+        });
+        configured.variations.push(VariationCoordinate {
+            axis: OpenTypeTag::from_bytes(*b"wght"),
+            value: 700.0,
+        });
+        let shaped = backend.shape_run("abc", &configured, face);
+        assert_eq!(baseline, shaped);
+    }
+
+    #[test]
+    fn common_ascii_punctuation_and_digits_do_not_create_script_boundaries() {
+        let fallback = FontFallbackChain::default();
+        let run = TextRun::with_fallback("abc-123 Привет".into(), &fallback);
+        let requests = run.shaping_requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].script, ShapingScript::Latin);
+        assert_eq!(requests[1].script, ShapingScript::Cyrillic);
+        assert_eq!(requests[0].run.range.end, requests[1].run.range.start);
     }
 }

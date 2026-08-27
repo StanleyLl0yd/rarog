@@ -403,3 +403,7 @@ R0 now derives scalar-indexed `ShapingRun` segments by intersecting logical bidi
 
 R0 now separates shaping segmentation from shaping execution. `ShapingBackend` receives one `ShapingRun` plus its selected `FontFace` and returns a `ShapedRun` containing positioned glyph IDs, per-glyph advances/offsets, and scalar-indexed source-cluster mapping. The deterministic `FixedTextShaper` implements this contract as the bootstrap backend while the existing aggregate `ShapedText` remains the line-breaking input. A future OpenType backend can therefore replace glyph generation without owning bidi, font fallback, source identity, fragmentation, or retained-paint policy.
 
+### Shaping request metadata
+
+R0 now carries backend-neutral shaping metadata in `ShapingRequest`. Every request preserves one resolved `ShapingRun` and adds script classification, a normalized language tag, OpenType feature settings, and variation-axis coordinates. Bootstrap requests infer script deterministically from the scalar-indexed source range and default language to `und`; feature and variation vectors are empty unless the caller explicitly configures them. The deterministic bootstrap backend accepts this metadata but intentionally ignores feature/variation semantics, leaving those decisions to a future OpenType implementation behind the same `ShapingBackend` boundary.
+
