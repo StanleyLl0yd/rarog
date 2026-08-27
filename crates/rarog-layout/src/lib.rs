@@ -83,6 +83,45 @@ pub struct ShapedText {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GlyphId(u32);
+
+impl GlyphId {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GlyphOffset {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PositionedGlyph {
+    pub id: GlyphId,
+    pub source: TextRange,
+    pub advance: f32,
+    pub offset: GlyphOffset,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapedRun {
+    pub run: ShapingRun,
+    pub glyphs: Vec<PositionedGlyph>,
+    pub advance: f32,
+    pub metrics: FontMetrics,
+}
+
+pub trait ShapingBackend {
+    fn shape_run(&self, text: &str, run: ShapingRun, face: &FontFace) -> ShapedRun;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FontFaceId(u16);
 
 impl FontFaceId {
@@ -289,6 +328,45 @@ impl Default for FixedTextShaper {
     }
 }
 
+impl ShapingBackend for FixedTextShaper {
+    fn shape_run(&self, text: &str, run: ShapingRun, face: &FontFace) -> ShapedRun {
+        let characters = text.chars().collect::<Vec<_>>();
+        let boundaries = grapheme_boundaries(text);
+        let mut glyphs = boundaries
+            .windows(2)
+            .filter_map(|window| {
+                let start = window[0];
+                let end = window[1];
+                if start < run.range.start || end > run.range.end {
+                    return None;
+                }
+                let slice = &characters[start..end];
+                let mandatory = slice.iter().copied().any(is_mandatory_break);
+                let glyph_id = slice
+                    .first()
+                    .copied()
+                    .map(|character| GlyphId::new(character as u32))
+                    .unwrap_or_else(|| GlyphId::new(0));
+                Some(PositionedGlyph {
+                    id: glyph_id,
+                    source: TextRange::new(start, end),
+                    advance: if mandatory { 0.0 } else { face.advance },
+                    offset: GlyphOffset::default(),
+                })
+            })
+            .collect::<Vec<_>>();
+        if run.direction() == TextDirection::Rtl {
+            glyphs.reverse();
+        }
+        ShapedRun {
+            advance: glyphs.iter().map(|glyph| glyph.advance).sum(),
+            glyphs,
+            run,
+            metrics: face.metrics,
+        }
+    }
+}
+
 impl TextShaper for FixedTextShaper {
     fn shape(&self, text: &str) -> ShapedText {
         let characters = text.chars().collect::<Vec<_>>();
@@ -351,6 +429,21 @@ impl TextRun {
 
     pub fn shaping_runs(&self) -> Vec<ShapingRun> {
         shaping_runs_for_font_runs(&self.text, &self.font_runs)
+    }
+
+    pub fn shape_with_backend<B: ShapingBackend>(
+        &self,
+        fallback: &FontFallbackChain,
+        backend: &B,
+    ) -> Vec<ShapedRun> {
+        self.shaping_runs()
+            .into_iter()
+            .filter_map(|run| {
+                fallback
+                    .face(run.face)
+                    .map(|face| backend.shape_run(&self.text, run, face))
+            })
+            .collect()
     }
 
     pub fn character_count(&self) -> usize {
@@ -2008,5 +2101,83 @@ mod tests {
         assert_eq!(segments[0].direction(), TextDirection::Ltr);
         assert_eq!(segments[1].direction(), TextDirection::Rtl);
         assert_eq!(segments[2].direction(), TextDirection::Ltr);
+    }
+
+    #[test]
+    fn shaping_backend_returns_glyph_ids_advances_offsets_and_source_mapping() {
+        let text = "a👩🏽\u{200d}💻b";
+        let fallback = FontFallbackChain::default();
+        let runs = shaping_runs(text, &fallback);
+        let backend = FixedTextShaper::default();
+        let shaped = runs
+            .iter()
+            .map(|run| backend.shape_run(text, *run, fallback.face(run.face).unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(shaped.len(), 3);
+        assert_eq!(shaped[0].glyphs[0].id, GlyphId::new('a' as u32));
+        assert_eq!(shaped[0].glyphs[0].source, TextRange::new(0, 1));
+        assert_eq!(shaped[1].glyphs.len(), 1);
+        assert_eq!(shaped[1].glyphs[0].source, TextRange::new(1, 5));
+        assert_eq!(shaped[1].glyphs[0].offset, GlyphOffset::default());
+        assert_eq!(shaped[2].glyphs[0].source, TextRange::new(5, 6));
+        assert_eq!(shaped.iter().map(|run| run.advance).sum::<f32>(), 24.0);
+    }
+
+    #[test]
+    fn shaping_backend_uses_selected_face_metrics_and_advance() {
+        let metrics = FontMetrics {
+            ascent: 10.0,
+            descent: 3.0,
+            line_gap: 2.0,
+        };
+        let face = FontFace {
+            id: FontFaceId::new(42),
+            family: FontFamily("Custom".into()),
+            coverage: FontCoverage::LastResort,
+            metrics,
+            advance: 11.0,
+        };
+        let run = ShapingRun {
+            range: TextRange::new(0, 2),
+            face: face.id,
+            level: BidiLevel::new(0),
+        };
+        let shaped = FixedTextShaper::default().shape_run("ab", run, &face);
+        assert_eq!(shaped.metrics, metrics);
+        assert_eq!(shaped.advance, 22.0);
+        assert_eq!(
+            shaped
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.advance)
+                .collect::<Vec<_>>(),
+            vec![11.0, 11.0]
+        );
+    }
+
+    #[test]
+    fn rtl_shaping_run_returns_visual_glyph_order_with_logical_source_mapping() {
+        let text = "אב";
+        let fallback = FontFallbackChain::default();
+        let run = shaping_runs(text, &fallback)[0];
+        assert_eq!(run.direction(), TextDirection::Rtl);
+        let shaped =
+            FixedTextShaper::default().shape_run(text, run, fallback.face(run.face).unwrap());
+        assert_eq!(shaped.glyphs.len(), 2);
+        assert_eq!(shaped.glyphs[0].source, TextRange::new(1, 2));
+        assert_eq!(shaped.glyphs[1].source, TextRange::new(0, 1));
+    }
+
+    #[test]
+    fn text_run_can_shape_all_segments_through_backend_boundary() {
+        let fallback = FontFallbackChain::default();
+        let run = TextRun::with_fallback("abc שלום 世界".into(), &fallback);
+        let shaped = run.shape_with_backend(&fallback, &FixedTextShaper::default());
+        assert_eq!(shaped.len(), 3);
+        assert_eq!(shaped[0].run.face, FontFaceId::new(0));
+        assert_eq!(shaped[1].run.face, FontFaceId::new(1));
+        assert_eq!(shaped[2].run.face, FontFaceId::new(2));
+        assert_eq!(shaped[1].run.direction(), TextDirection::Rtl);
+        assert!(shaped.iter().all(|segment| !segment.glyphs.is_empty()));
     }
 }
