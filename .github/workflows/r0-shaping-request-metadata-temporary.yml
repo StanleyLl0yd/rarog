@@ -20,7 +20,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Apply
-        run: python tools/r0_shaping_request_metadata_apply.py
+        run: |
+          python tools/r0_shaping_request_metadata_apply.py
+          python tools/r0_shaping_request_metadata_fix.py
       - name: Format
         run: cargo fmt --all
       - name: Check
