@@ -88,7 +88,7 @@ computed style + invalidation keys
 persistent engine dirty state
   ├─ paint-only computed-style change → reuse geometry + retained paint update
   ├─ footprint-safe geometry change → subtree Fragment relayout
-  ├─ vertical-footprint geometry change → retain Layout Tree + rebuild Fragment Tree
+  ├─ vertical-footprint geometry change → retain Layout Tree + flow-aware suffix relayout
   └─ structure/text/display-membership change → deterministic full rebuild
   ↓
 derived Layout Tree
@@ -181,16 +181,16 @@ The current reuse path is intentionally conservative:
 2. recompute affected element styles for `id`, `class` and inline `style` mutations;
 3. patch paint-only changes onto retained Layout/Fragment state;
 4. for geometry changes that preserve vertical flow footprint, rebuild only the affected Fragment subtree from its parent's content-box containing block;
-5. if height or vertical margin/padding/border can move following siblings, retain the Layout Tree but rebuild the whole Fragment Tree;
-6. structural mutations, text changes, display-membership changes or unprovable cases use the deterministic full-rebuild fallback.
+5. if height or vertical margin/padding/border can move following siblings, retain the Layout Tree, find the earliest root block-flow child containing a dirty node, preserve the preceding Fragment prefix, and rebuild that child plus all following siblings;
+6. if the dirty nodes cannot be mapped safely to the current root flow, fall back to whole-Fragment-Tree geometry relayout; structural mutations, text changes, display-membership changes or other unprovable cases use the deterministic full-rebuild fallback.
 
 The geometry-affecting comparison includes width, height, margin, border width, padding and `display`. Background and border color remain paint-only values. The current subtree-safety rule deliberately treats only vertical footprint as the hard flow boundary because the bootstrap text path does not wrap yet. This rule must become formatting-context-aware before it can represent general CSS incremental reflow.
 
 Paint now retains unaffected display-list ranges when an affected fragment subtree already has a stable command range. If that range cannot be patched safely, the engine regenerates the display list. Damage is still derived by stable display-item identity. The persistent software framebuffer is then cleared and rerasterized only inside the resulting damage rectangles, with commands clipped to each damaged rectangle.
 
-This proves narrower retained work boundaries and pixel-equivalent damage rasterization, **not a measured end-to-end performance win**. General ancestor/sibling reflow, fragmentation-aware retained painting, stacking/clip/transform-aware damage and compositor integration remain later work.
+This proves narrower retained work boundaries and pixel-equivalent damage rasterization, **not a measured end-to-end performance win**. Nested formatting-context-local reflow, fragmentation-aware retained painting, stacking/clip/transform-aware damage and compositor integration remain later work.
 
-See ADR-0009.
+See ADR-0009 and ADR-0010.
 
 ## Layout and Fragment Tree
 
@@ -275,7 +275,7 @@ The software framebuffer enforces a checked R0 pixel budget before allocation an
 
 This is not a cryptographic hash and must never be used for security decisions. It is a small deterministic regression fingerprint for R0.
 
-The stateful incremental tests add invariants for paint-only geometry preservation, footprint-safe subtree relayout, whole-Fragment-Tree fallback when vertical flow can move siblings, retained display-list replacement, and damage-scoped raster output equivalence with a full reraster.
+The stateful incremental tests add invariants for paint-only geometry preservation, footprint-safe subtree relayout, root-flow ancestor/sibling-aware vertical reflow with full-render equivalence, conservative whole-Fragment-Tree fallback, retained display-list replacement, and damage-scoped raster output equivalence with a full reraster.
 
 ## Important separation
 

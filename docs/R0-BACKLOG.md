@@ -79,7 +79,7 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] text run abstraction (without committing to a shaping backend)
 - [x] first geometry-affecting incremental relayout from a retained Layout Tree
 - [x] first subtree-local incremental relayout for geometry changes that preserve vertical flow footprint
-- [ ] ancestor/sibling-aware local reflow for vertical-footprint changes
+- [x] first ancestor/sibling-aware local reflow for vertical-footprint changes in the root block-flow context
 - [ ] fragmentation cases that produce multiple fragments per layout node
 
 ### Required invariant
@@ -158,7 +158,7 @@ peak temporary memory
 persistent document memory
 ```
 
-Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `subtree relayout`, `geometry relayout`, `full rebuild`) and how many nodes were dirtied/patched.
+Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `subtree relayout`, `flow relayout`, `geometry relayout`, `full rebuild`) and how many nodes were dirtied/patched.
 
 R0 may use wall-clock timers; later milestones replace these with a structured tracing system.
 
@@ -174,6 +174,6 @@ Given a committed HTML fixture, repeated runs on the same architecture/toolchain
 6. an identical framebuffer hash;
 7. an identical combined deterministic render-signature hash.
 
-The stateful R0 path must also prove paint-only reuse, footprint-safe subtree relayout, deterministic whole-Fragment-Tree fallback for geometry that can move siblings, and a deterministic full rebuild for structural changes.
+The stateful R0 path must also prove paint-only reuse, footprint-safe subtree relayout, ancestor/sibling-aware root-flow reflow for vertical-footprint changes with full-render equivalence, conservative whole-Fragment-Tree geometry fallback, and a deterministic full rebuild for structural changes.
 
 The same deterministic test must pass in the Windows-primary CI lane. Only after the R0 pipeline and remaining bootstrap interfaces are stable do we start R1 standards work.

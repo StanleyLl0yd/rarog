@@ -31,7 +31,7 @@ computed style + invalidation keys
 persistent dirty state
    ├─ paint-only style change → reuse Layout/Fragment geometry + retained paint update
    ├─ footprint-safe geometry change → subtree Fragment relayout
-   ├─ vertical-footprint geometry change → retain Layout Tree + rebuild Fragment Tree
+   ├─ vertical-footprint geometry change → retain Layout Tree + flow-aware suffix relayout
    └─ structural/text/display-membership change → deterministic full rebuild
    ↓
 layout tree
@@ -51,7 +51,7 @@ The current R0 foundation includes:
 - user-agent, author `<style>` and inline style origins with deterministic source order/specificity handling;
 - selector invalidation keys plus DOM-mutation-to-style/layout/paint dirty primitives;
 - persistent engine-owned dirty state across mutations and renders;
-- a stateful `RenderSession` with paint-only reuse, footprint-safe subtree Fragment relayout, whole-Fragment-Tree geometry fallback from a retained Layout Tree, and conservative full rebuild for structural/text/display-membership changes;
+- a stateful `RenderSession` with paint-only reuse, footprint-safe subtree Fragment relayout, flow-aware vertical suffix relayout from a retained Layout Tree, whole-Fragment-Tree fallback when local flow mapping is not provably safe, and conservative full rebuild for structural/text/display-membership changes;
 - explicit containing-block, intrinsic-size and text-run abstractions in the bootstrap layout path;
 - separate DOM, layout-node and fragment identities;
 - a derived/disposable Fragment Tree and explicit content/padding/border/margin boxes;
@@ -62,7 +62,7 @@ The current R0 foundation includes:
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
 - CI with Windows as the primary platform lane, Linux as a portability lane and an explicit Rust 1.85 MSRV check; CI actions are pinned to immutable revisions.
 
-The incremental experiment is intentionally narrow. It now proves paint-only retained updates, subtree-local Fragment relayout for geometry changes that preserve vertical flow footprint, whole-Fragment-Tree relayout when vertical flow may move siblings, and damage-scoped software raster updates. It does **not** yet claim general CSS incremental reflow, fragmentation-aware retained painting, standards-complete invalidation or measured performance gains.
+The incremental experiment is intentionally narrow. It now proves paint-only retained updates, subtree-local Fragment relayout for geometry changes that preserve vertical flow footprint, ancestor/sibling-aware suffix reflow for vertical-footprint changes in the current root block flow, conservative whole-Fragment-Tree fallback when that mapping is not safe, and damage-scoped software raster updates. It does **not** yet claim general CSS incremental reflow, nested formatting-context-local propagation, fragmentation-aware retained painting, standards-complete invalidation or measured performance gains.
 
 ## Platform strategy
 
@@ -97,7 +97,7 @@ cargo test --workspace
 cargo test -p rarog-engine deterministic_render_snapshot_and_hash
 cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
 cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_tree
-cargo test -p rarog-engine vertical_geometry_change_uses_full_fragment_relayout
+cargo test -p rarog-engine vertical_geometry_change_reflows_ancestors_and_following_siblings
 cargo test -p rarog-paint retained_display_patch_preserves_unrelated_items
 cargo test -p rarog-paint damage_raster_matches_full_raster
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
