@@ -176,6 +176,38 @@ pub fn replace_display_items_for_fragment(
     replace_display_items(list, &previous_items, &current_items)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplayRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl DisplayRange {
+    pub fn len(self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.start >= self.end
+    }
+}
+
+impl DisplayList {
+    pub fn contiguous_range_for_ids(&self, ids: &[DisplayItemId]) -> Option<DisplayRange> {
+        if ids.is_empty() || ids.len() > self.command_ids.len() {
+            return None;
+        }
+        let start = self
+            .command_ids
+            .windows(ids.len())
+            .position(|window| window == ids)?;
+        Some(DisplayRange {
+            start,
+            end: start + ids.len(),
+        })
+    }
+}
+
 fn replace_display_items(
     list: &mut DisplayList,
     previous: &DisplayList,
@@ -184,47 +216,23 @@ fn replace_display_items(
     if previous.command_ids.is_empty() {
         return current.command_ids.is_empty();
     }
-
-    let removed = previous
-        .command_ids
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    if !list.command_ids.iter().any(|id| removed.contains(id)) {
+    if !previous.has_balanced_structure() || !current.has_balanced_structure() {
         return false;
     }
 
-    let mut command_ids = Vec::with_capacity(
-        list.command_ids.len() - previous.command_ids.len().min(list.command_ids.len())
-            + current.command_ids.len(),
-    );
-    let mut commands = Vec::with_capacity(command_ids.capacity());
-    let mut inserted = false;
-
-    for (id, command) in list
-        .command_ids
-        .iter()
-        .copied()
-        .zip(list.commands.iter().copied())
-    {
-        if removed.contains(&id) {
-            if !inserted {
-                command_ids.extend_from_slice(&current.command_ids);
-                commands.extend_from_slice(&current.commands);
-                inserted = true;
-            }
-            continue;
-        }
-        command_ids.push(id);
-        commands.push(command);
-    }
-
-    if !inserted {
+    let Some(range) = list.contiguous_range_for_ids(&previous.command_ids) else {
+        return false;
+    };
+    if range.len() != previous.command_ids.len() {
         return false;
     }
-    list.command_ids = command_ids;
-    list.commands = commands;
-    true
+
+    list.command_ids
+        .splice(range.start..range.end, current.command_ids.iter().copied());
+    list.commands
+        .splice(range.start..range.end, current.commands.iter().copied());
+
+    list.has_unique_ids() && list.has_balanced_structure()
 }
 
 fn collect(fragment: &Fragment, list: &mut DisplayList) {
@@ -657,6 +665,99 @@ mod tests {
     fn unchanged_display_list_has_no_damage() {
         let list = single_fill(1, Rect::new(0.0, 0.0, 10.0, 10.0), Color::BLACK);
         assert!(DamageRegion::between(Some(&list), &list).rects.is_empty());
+    }
+
+    #[test]
+    fn retained_range_requires_exact_contiguous_ids() {
+        let list = DisplayList {
+            command_ids: vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+            ],
+            commands: vec![
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(1.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(2.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+            ],
+        };
+        assert_eq!(
+            list.contiguous_range_for_ids(&[DisplayItemId::test(2), DisplayItemId::test(3)]),
+            Some(DisplayRange { start: 1, end: 3 })
+        );
+        assert_eq!(
+            list.contiguous_range_for_ids(&[DisplayItemId::test(1), DisplayItemId::test(3)]),
+            None
+        );
+    }
+
+    #[test]
+    fn retained_patch_rejects_noncontiguous_previous_items() {
+        let mut list = DisplayList {
+            command_ids: vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+            ],
+            commands: vec![
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(1.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(2.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+            ],
+        };
+        let previous = DisplayList {
+            command_ids: vec![DisplayItemId::test(1), DisplayItemId::test(3)],
+            commands: vec![list.commands[0], list.commands[2]],
+        };
+        let current = previous.clone();
+        assert!(!replace_display_items(&mut list, &previous, &current));
+    }
+
+    #[test]
+    fn retained_patch_preserves_balanced_structural_scopes() {
+        let mut list = DisplayList::default();
+        list.push(
+            DisplayItemId::test(1),
+            DisplayCommand::PushStackingContext {
+                id: StackingContextId(1),
+            },
+        );
+        list.push(
+            DisplayItemId::test(2),
+            DisplayCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                color: Color::BLACK,
+            },
+        );
+        list.push(DisplayItemId::test(3), DisplayCommand::PopStackingContext);
+
+        let previous = list.clone();
+        let mut current = previous.clone();
+        current.commands[1] = DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 3.0, 2.0),
+            color: Color::BLACK,
+        };
+        assert!(replace_display_items(&mut list, &previous, &current));
+        assert!(list.has_balanced_structure());
+        assert_eq!(list, current);
     }
 
     #[test]
