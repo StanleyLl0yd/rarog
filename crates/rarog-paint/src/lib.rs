@@ -23,12 +23,17 @@ impl DisplayItemId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StackingContextId(pub u64);
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DisplayCommand {
     FillRect { rect: Rect, color: Color },
     TextPlaceholder { rect: Rect, color: Color },
     PushClip { rect: Rect },
     PopClip,
+    PushStackingContext { id: StackingContextId },
+    PopStackingContext,
 }
 
 impl DisplayCommand {
@@ -37,12 +42,18 @@ impl DisplayCommand {
             Self::FillRect { rect, .. }
             | Self::TextPlaceholder { rect, .. }
             | Self::PushClip { rect } => Some(rect),
-            Self::PopClip => None,
+            Self::PopClip | Self::PushStackingContext { .. } | Self::PopStackingContext => None,
         }
     }
 
-    fn is_clip(self) -> bool {
-        matches!(self, Self::PushClip { .. } | Self::PopClip)
+    fn is_structural(self) -> bool {
+        matches!(
+            self,
+            Self::PushClip { .. }
+                | Self::PopClip
+                | Self::PushStackingContext { .. }
+                | Self::PopStackingContext
+        )
     }
 }
 
@@ -65,6 +76,34 @@ impl DisplayList {
             .collect::<BTreeSet<_>>()
             .len()
             == self.command_ids.len()
+    }
+
+    pub fn has_balanced_structure(&self) -> bool {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Scope {
+            Clip,
+            Stacking,
+        }
+
+        let mut scopes = Vec::new();
+        for command in &self.commands {
+            match command {
+                DisplayCommand::PushClip { .. } => scopes.push(Scope::Clip),
+                DisplayCommand::PushStackingContext { .. } => scopes.push(Scope::Stacking),
+                DisplayCommand::PopClip => {
+                    if scopes.pop() != Some(Scope::Clip) {
+                        return false;
+                    }
+                }
+                DisplayCommand::PopStackingContext => {
+                    if scopes.pop() != Some(Scope::Stacking) {
+                        return false;
+                    }
+                }
+                DisplayCommand::FillRect { .. } | DisplayCommand::TextPlaceholder { .. } => {}
+            }
+        }
+        scopes.is_empty()
     }
 
     pub fn snapshot(&self) -> String {
@@ -97,6 +136,15 @@ impl DisplayList {
                 DisplayCommand::PopClip => {
                     output.push_str(&format!("{}|pop-clip\n", display_item_id_snapshot(*id)))
                 }
+                DisplayCommand::PushStackingContext { id: context } => output.push_str(&format!(
+                    "{}|push-stacking-context|{}\n",
+                    display_item_id_snapshot(*id),
+                    context.0
+                )),
+                DisplayCommand::PopStackingContext => output.push_str(&format!(
+                    "{}|pop-stacking-context\n",
+                    display_item_id_snapshot(*id)
+                )),
             }
         }
         output
@@ -111,6 +159,10 @@ pub fn build_display_list_for_fragment(fragment: &Fragment) -> DisplayList {
     let mut list = DisplayList::default();
     collect(fragment, &mut list);
     assert!(list.has_unique_ids(), "display item IDs must be unique");
+    assert!(
+        list.has_balanced_structure(),
+        "display list structural scopes must be balanced"
+    );
     list
 }
 
@@ -315,12 +367,12 @@ impl DamageRegion {
             .commands
             .iter()
             .copied()
-            .any(DisplayCommand::is_clip)
+            .any(DisplayCommand::is_structural)
             || current
                 .commands
                 .iter()
                 .copied()
-                .any(DisplayCommand::is_clip)
+                .any(DisplayCommand::is_structural)
         {
             let mut damage = Self::default();
             for command in previous.commands.iter().chain(&current.commands) {
@@ -450,6 +502,10 @@ impl Framebuffer {
     }
 
     pub fn rasterize(&mut self, list: &DisplayList) {
+        assert!(
+            list.has_balanced_structure(),
+            "display list structural scopes must be balanced"
+        );
         let framebuffer_clip = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
         let mut clips = vec![framebuffer_clip];
         for command in &list.commands {
@@ -470,6 +526,8 @@ impl Framebuffer {
                         clips.pop();
                     }
                 }
+                DisplayCommand::PushStackingContext { .. } | DisplayCommand::PopStackingContext => {
+                }
             }
         }
     }
@@ -480,7 +538,12 @@ impl Framebuffer {
         damage: &DamageRegion,
         background: Color,
     ) {
-        if list.commands.iter().copied().any(DisplayCommand::is_clip) {
+        if list
+            .commands
+            .iter()
+            .copied()
+            .any(DisplayCommand::is_structural)
+        {
             self.fill_rect(
                 Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
                 background,
@@ -494,7 +557,10 @@ impl Framebuffer {
                 let (rect, color) = match *command {
                     DisplayCommand::FillRect { rect, color }
                     | DisplayCommand::TextPlaceholder { rect, color } => (rect, color),
-                    DisplayCommand::PushClip { .. } | DisplayCommand::PopClip => continue,
+                    DisplayCommand::PushClip { .. }
+                    | DisplayCommand::PopClip
+                    | DisplayCommand::PushStackingContext { .. }
+                    | DisplayCommand::PopStackingContext => continue,
                 };
                 if let Some(clipped) = intersection(rect, *damaged) {
                     self.fill_rect(clipped, color);
@@ -865,6 +931,124 @@ mod display_identity_hardening_tests {
             },
             Color::WHITE,
         );
+        full.rasterize(&current);
+        assert_eq!(incremental.pixels, full.pixels);
+    }
+
+    #[test]
+    fn stacking_context_commands_have_deterministic_snapshots() {
+        let mut list = DisplayList::default();
+        list.push(
+            DisplayItemId::test(20),
+            DisplayCommand::PushStackingContext {
+                id: StackingContextId(42),
+            },
+        );
+        list.push(DisplayItemId::test(21), DisplayCommand::PopStackingContext);
+
+        assert_eq!(
+            list.snapshot(),
+            "20:20:0|push-stacking-context|42\n21:21:0|pop-stacking-context\n"
+        );
+        assert!(list.has_balanced_structure());
+    }
+
+    #[test]
+    fn structural_scopes_must_be_properly_nested() {
+        let mut valid = DisplayList::default();
+        valid.push(
+            DisplayItemId::test(1),
+            DisplayCommand::PushStackingContext {
+                id: StackingContextId(1),
+            },
+        );
+        valid.push(
+            DisplayItemId::test(2),
+            DisplayCommand::PushClip {
+                rect: Rect::new(0.0, 0.0, 4.0, 4.0),
+            },
+        );
+        valid.push(DisplayItemId::test(3), DisplayCommand::PopClip);
+        valid.push(DisplayItemId::test(4), DisplayCommand::PopStackingContext);
+        assert!(valid.has_balanced_structure());
+
+        let mut invalid = valid.clone();
+        invalid.commands.swap(2, 3);
+        assert!(!invalid.has_balanced_structure());
+    }
+
+    #[test]
+    fn stacking_context_boundaries_preserve_current_raster_output() {
+        let rect = Rect::new(1.0, 1.0, 3.0, 3.0);
+        let mut plain = DisplayList::default();
+        plain.push(
+            DisplayItemId::test(1),
+            DisplayCommand::FillRect {
+                rect,
+                color: Color::BLACK,
+            },
+        );
+
+        let mut stacked = DisplayList::default();
+        stacked.push(
+            DisplayItemId::test(2),
+            DisplayCommand::PushStackingContext {
+                id: StackingContextId(9),
+            },
+        );
+        stacked.push(
+            DisplayItemId::test(3),
+            DisplayCommand::FillRect {
+                rect,
+                color: Color::BLACK,
+            },
+        );
+        stacked.push(DisplayItemId::test(4), DisplayCommand::PopStackingContext);
+
+        let size = Size {
+            width: 6.0,
+            height: 6.0,
+        };
+        let mut plain_fb = Framebuffer::new(size, Color::WHITE);
+        plain_fb.rasterize(&plain);
+        let mut stacked_fb = Framebuffer::new(size, Color::WHITE);
+        stacked_fb.rasterize(&stacked);
+        assert_eq!(plain_fb.pixels, stacked_fb.pixels);
+    }
+
+    #[test]
+    fn damage_raster_with_stacking_contexts_matches_full_raster() {
+        let mut previous = DisplayList::default();
+        previous.push(
+            DisplayItemId::test(1),
+            DisplayCommand::PushStackingContext {
+                id: StackingContextId(1),
+            },
+        );
+        previous.push(
+            DisplayItemId::test(2),
+            DisplayCommand::FillRect {
+                rect: Rect::new(1.0, 1.0, 4.0, 4.0),
+                color: Color::BLACK,
+            },
+        );
+        previous.push(DisplayItemId::test(3), DisplayCommand::PopStackingContext);
+
+        let mut current = previous.clone();
+        current.commands[1] = DisplayCommand::FillRect {
+            rect: Rect::new(1.0, 1.0, 4.0, 4.0),
+            color: Color::rgb(0, 0, 255),
+        };
+        let damage = DamageRegion::between(Some(&previous), &current);
+
+        let size = Size {
+            width: 6.0,
+            height: 6.0,
+        };
+        let mut incremental = Framebuffer::new(size, Color::WHITE);
+        incremental.rasterize(&previous);
+        incremental.rasterize_damage(&current, &damage, Color::WHITE);
+        let mut full = Framebuffer::new(size, Color::WHITE);
         full.rasterize(&current);
         assert_eq!(incremental.pixels, full.pixels);
     }
