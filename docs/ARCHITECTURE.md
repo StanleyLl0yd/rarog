@@ -395,3 +395,7 @@ R0 now exposes explicit `TextDirection`, `BidiLevel`, and `BidiRun` values. Para
 
 R0 now models font selection explicitly through `FontFaceId`, `FontFamily`, `FontFace`, `FontFallbackChain`, and scalar-indexed `FontRun` values. Fallback selection occurs only on grapheme-cluster boundaries, so combining sequences and emoji ZWJ clusters cannot be split between faces. The deterministic bootstrap chain covers Latin/Cyrillic, Hebrew/Arabic, CJK, emoji, and a mandatory LastResort face. These are architectural coverage classes rather than bundled fonts; a platform font database and real shaping backend can replace the selector without changing source, bidi, fragment, or retained-paint identities.
 
+### Shaping segmentation foundation
+
+R0 now derives scalar-indexed `ShapingRun` segments by intersecting logical bidi runs with grapheme-safe font fallback runs. Every shaping segment has exactly one source range, one `FontFaceId`, and one `BidiLevel`/direction, and adjacent segments with identical shaping state are coalesced. This is the handoff boundary for a future OpenType shaper: a real backend can shape each segment independently without changing DOM, source ranges, line breaking, fragment identity, or retained paint.
+
