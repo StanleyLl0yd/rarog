@@ -255,62 +255,6 @@ fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
             .any(|child| layout_node_contains(child, dom_node))
 }
 
-pub fn relayout_fragment_flow(
-    tree: &LayoutTree,
-    fragments: &mut FragmentTree,
-    dirty_nodes: &[NodeId],
-) -> bool {
-    if dirty_nodes.is_empty() || tree.root.children.len() != fragments.root.children.len() {
-        return false;
-    }
-
-    let Some(start_index) = tree
-        .root
-        .children
-        .iter()
-        .enumerate()
-        .filter(|(_, child)| {
-            dirty_nodes
-                .iter()
-                .any(|dirty| layout_node_contains(child, *dirty))
-        })
-        .map(|(index, _)| index)
-        .min()
-    else {
-        return false;
-    };
-
-    let containing_block = ContainingBlock {
-        origin: fragments.root.boxes.content_box.origin,
-        available: fragments.root.boxes.content_box.size,
-    };
-    let mut cursor_y = if start_index == 0 {
-        containing_block.origin.y
-    } else {
-        let previous = &fragments.root.children[start_index - 1];
-        previous.boxes.margin_box.origin.y + previous.boxes.margin_box.size.height
-    };
-    let next_id = max_fragment_id(&fragments.root).saturating_add(1);
-    let mut builder = FragmentBuilder { next_id };
-    let mut rebuilt = Vec::with_capacity(tree.root.children.len() - start_index);
-
-    for child in &tree.root.children[start_index..] {
-        rebuilt.push(builder.layout_node(child, containing_block, &mut cursor_y));
-    }
-
-    fragments.root.children.truncate(start_index);
-    fragments.root.children.extend(rebuilt);
-    true
-}
-
-fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
-    node.dom_node == Some(dom_node)
-        || node
-            .children
-            .iter()
-            .any(|child| layout_node_contains(child, dom_node))
-}
-
 fn find_layout_node(node: &LayoutNode, dom_node: NodeId) -> Option<&LayoutNode> {
     if node.dom_node == Some(dom_node) {
         return Some(node);

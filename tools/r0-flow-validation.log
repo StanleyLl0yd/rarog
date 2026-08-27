@@ -3,41 +3,156 @@
 [1m[92m    Checking[0m rarog-css v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-css)
 [1m[92m    Checking[0m rarog-html v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-html)
 [1m[92m    Checking[0m rarog-layout v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-layout)
-[1m[91merror[E0428][0m[1m: the name `relayout_fragment_flow` is defined multiple times[0m
-   [1m[94m--> [0mcrates/rarog-layout/src/lib.rs:258:1
-    [1m[94m|[0m
-[1m[94m202[0m [1m[94m|[0m [1m[94m/[0m pub fn relayout_fragment_flow(
-[1m[94m203[0m [1m[94m|[0m [1m[94m|[0m     tree: &LayoutTree,
-[1m[94m204[0m [1m[94m|[0m [1m[94m|[0m     fragments: &mut FragmentTree,
-[1m[94m205[0m [1m[94m|[0m [1m[94m|[0m     dirty_nodes: &[NodeId],
-[1m[94m...[0m   [1m[94m|[0m
-[1m[94m247[0m [1m[94m|[0m [1m[94m|[0m     true
-[1m[94m248[0m [1m[94m|[0m [1m[94m|[0m }
-    [1m[94m|[0m [1m[94m|_-[0m [1m[94mprevious definition of the value `relayout_fragment_flow` here[0m
-[1m[94m...[0m
-[1m[94m258[0m [1m[94m|[0m [1m[91m/[0m pub fn relayout_fragment_flow(
-[1m[94m259[0m [1m[94m|[0m [1m[91m|[0m     tree: &LayoutTree,
-[1m[94m260[0m [1m[94m|[0m [1m[91m|[0m     fragments: &mut FragmentTree,
-[1m[94m261[0m [1m[94m|[0m [1m[91m|[0m     dirty_nodes: &[NodeId],
-[1m[94m...[0m   [1m[91m|[0m
-[1m[94m303[0m [1m[94m|[0m [1m[91m|[0m     true
-[1m[94m304[0m [1m[94m|[0m [1m[91m|[0m }
-    [1m[94m|[0m [1m[91m|_^[0m [1m[91m`relayout_fragment_flow` redefined here[0m
-    [1m[94m|[0m
-    [1m[94m= [0m[1mnote[0m: `relayout_fragment_flow` must be defined only once in the value namespace of this module
+[1m[92m    Checking[0m rarog-paint v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-paint)
+[1m[92m    Checking[0m rarog-engine v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-engine)
+[1m[92m    Checking[0m rarog-shell v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-shell)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
+[1m[92m    Checking[0m rarog-dom v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-dom)
+[1m[92m    Checking[0m rarog-types v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-types)
+[1m[92m    Checking[0m rarog-css v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-css)
+[1m[92m    Checking[0m rarog-html v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-html)
+[1m[92m    Checking[0m rarog-layout v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-layout)
+[1m[92m    Checking[0m rarog-paint v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-paint)
+[1m[92m    Checking[0m rarog-engine v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-engine)
+[1m[92m    Checking[0m rarog-shell v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-shell)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.44s
+[1m[92m   Compiling[0m rarog-dom v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-dom)
+[1m[92m   Compiling[0m rarog-types v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-types)
+[1m[92m   Compiling[0m rarog-css v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-css)
+[1m[92m   Compiling[0m rarog-html v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-html)
+[1m[92m   Compiling[0m rarog-layout v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-layout)
+[1m[92m   Compiling[0m rarog-paint v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-paint)
+[1m[92m   Compiling[0m rarog-engine v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-engine)
+[1m[92m   Compiling[0m rarog-shell v0.1.0 (/home/runner/work/rarog/rarog/crates/rarog-shell)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 1.18s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/rarog_css-dcbaeeabaab5b9f1)
 
-[1m[91merror[E0428][0m[1m: the name `layout_node_contains` is defined multiple times[0m
-   [1m[94m--> [0mcrates/rarog-layout/src/lib.rs:306:1
-    [1m[94m|[0m
-[1m[94m250[0m [1m[94m|[0m fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
-    [1m[94m|[0m [1m[94m--------------------------------------------------------------------[0m [1m[94mprevious definition of the value `layout_node_contains` here[0m
-[1m[94m...[0m
-[1m[94m306[0m [1m[94m|[0m fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
-    [1m[94m|[0m [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91m`layout_node_contains` redefined here[0m
-    [1m[94m|[0m
-    [1m[94m= [0m[1mnote[0m: `layout_node_contains` must be defined only once in the value namespace of this module
+running 6 tests
+test tests::dom_mutations_produce_granular_dirty_flags ... ok
+test tests::cascade_prefers_specific_rule_then_inline_style ... ok
+test tests::later_rule_wins_when_specificity_is_equal ... ok
+test tests::selector_representation_tracks_specificity_and_matching ... ok
+test tests::parses_css_edge_shorthand ... ok
+test tests::style_element_becomes_an_author_stylesheet ... ok
 
-[1mFor more information about this error, try `rustc --explain E0428`.[0m
-[1m[91merror[0m: could not compile `rarog-layout` (lib test) due to 2 previous errors
-[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
-[1m[91merror[0m: could not compile `rarog-layout` (lib) due to 2 previous errors
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/rarog_dom-9e0d24d5657778db)
+
+running 9 tests
+test tests::append_preserves_parent_child_relationship ... ok
+test tests::attribute_and_text_mutations_advance_generation_only_when_changed ... ok
+test tests::cycle_is_rejected_without_mutating_the_tree ... ok
+test tests::document_root_cannot_be_reparented_or_detached ... ok
+test tests::reparent_updates_both_sides_of_the_relationship ... ok
+test tests::mutation_history_can_be_pruned_after_consumption ... ok
+test tests::mutation_log_is_generation_ordered_and_queryable ... ok
+test tests::snapshot_is_stable_for_the_same_arena ... ok
+test tests::text_nodes_cannot_become_parents ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/rarog_engine-7d1838254355fb38)
+
+running 12 tests
+test tests::author_stylesheet_cascade_reaches_rendering ... ok
+test tests::damage_is_empty_when_display_list_is_unchanged ... ok
+test tests::box_model_reaches_paint_without_layout_drawing_directly ... ok
+test tests::dirty_state_persists_until_render_consumes_it ... ok
+test tests::geometry_change_relayouts_without_rebuilding_layout_tree ... ok
+test tests::render_session_prunes_consumed_mutation_history ... ok
+test tests::structural_change_still_falls_back_to_full_rebuild ... ok
+test tests::paint_only_update_reuses_layout_and_fragment_geometry ... ok
+test tests::unrelated_attribute_change_does_not_rebuild_render_state ... ok
+test tests::deterministic_render_snapshot_and_hash ... ok
+test tests::vertical_geometry_change_reflows_ancestors_and_following_siblings ... ok
+test tests::bootstrap_pipeline_produces_commands_and_fragments ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/rarog_html-6df0dfbbb07b8148)
+
+running 1 test
+test tests::parsed_document_preserves_dom_invariants ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/rarog_layout-899eae5d33adc5d6)
+
+running 7 tests
+test tests::author_stylesheet_participates_in_layout ... ok
+test tests::display_none_nodes_do_not_enter_the_layout_or_fragment_trees ... ok
+test tests::box_model_tracks_margin_border_padding_and_content_boxes ... ok
+test tests::nested_boxes_use_parent_content_as_containing_block ... ok
+test tests::layout_identity_is_distinct_and_fragments_point_back_to_it ... ok
+test tests::text_runs_expose_intrinsic_sizes ... ok
+test tests::snapshots_are_deterministic ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/rarog_paint-f2067305fbfb87a3)
+
+running 6 tests
+test tests::damage_raster_matches_full_raster ... ok
+test tests::damage_tracks_changed_display_items ... ok
+test tests::framebuffer_hash_is_stable ... ok
+test tests::framebuffer_rejects_unbounded_allocations ... ok
+test tests::retained_display_patch_preserves_unrelated_items ... ok
+test tests::unchanged_display_list_has_no_damage ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/rarog_shell-83e927f87f591351)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/rarog_types-dd37bb8565383687)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rarog_css
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rarog_dom
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rarog_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rarog_html
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rarog_layout
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rarog_paint
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rarog_types
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
