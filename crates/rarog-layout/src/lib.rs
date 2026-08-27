@@ -349,6 +349,10 @@ impl TextRun {
         }
     }
 
+    pub fn shaping_runs(&self) -> Vec<ShapingRun> {
+        shaping_runs_for_font_runs(&self.text, &self.font_runs)
+    }
+
     pub fn character_count(&self) -> usize {
         self.text.chars().count()
     }
@@ -413,6 +417,69 @@ impl BidiLevel {
 pub struct BidiRun {
     pub range: TextRange,
     pub level: BidiLevel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShapingRun {
+    pub range: TextRange,
+    pub face: FontFaceId,
+    pub level: BidiLevel,
+}
+
+impl ShapingRun {
+    pub const fn direction(self) -> TextDirection {
+        self.level.direction()
+    }
+}
+
+pub fn shaping_runs(text: &str, fallback: &FontFallbackChain) -> Vec<ShapingRun> {
+    let fonts = font_runs(text, fallback);
+    shaping_runs_for_font_runs(text, &fonts)
+}
+
+fn shaping_runs_for_font_runs(text: &str, fonts: &[FontRun]) -> Vec<ShapingRun> {
+    let bidi = bidi_runs(text);
+    let mut runs: Vec<ShapingRun> = Vec::new();
+    let mut bidi_index = 0usize;
+    let mut font_index = 0usize;
+
+    while bidi_index < bidi.len() && font_index < fonts.len() {
+        let bidi_run = bidi[bidi_index];
+        let font_run = fonts[font_index];
+        let start = bidi_run.range.start.max(font_run.range.start);
+        let end = bidi_run.range.end.min(font_run.range.end);
+
+        if start < end {
+            debug_assert!(is_grapheme_boundary(text, start));
+            debug_assert!(is_grapheme_boundary(text, end));
+            let run = ShapingRun {
+                range: TextRange::new(start, end),
+                face: font_run.face,
+                level: bidi_run.level,
+            };
+            if let Some(previous) = runs.last_mut() {
+                if previous.face == run.face
+                    && previous.level == run.level
+                    && previous.range.end == run.range.start
+                {
+                    previous.range.end = run.range.end;
+                } else {
+                    runs.push(run);
+                }
+            } else {
+                runs.push(run);
+            }
+        }
+
+        if bidi_run.range.end <= font_run.range.end {
+            bidi_index += 1;
+        }
+        if font_run.range.end <= bidi_run.range.end {
+            font_index += 1;
+        }
+    }
+
+    runs
 }
 
 pub fn paragraph_direction(text: &str) -> TextDirection {
@@ -1855,5 +1922,91 @@ mod tests {
         assert_eq!(run.font_runs[0].range, TextRange::new(0, 4));
         assert_eq!(run.font_runs[1].range, TextRange::new(4, 8));
         assert_eq!(run.character_count(), 8);
+    }
+
+    #[test]
+    fn shaping_runs_intersect_bidi_and_font_boundaries() {
+        let chain = FontFallbackChain::default();
+        let runs = shaping_runs("abc שלום 世界", &chain);
+        assert_eq!(
+            runs,
+            vec![
+                ShapingRun {
+                    range: TextRange::new(0, 4),
+                    face: FontFaceId::new(0),
+                    level: BidiLevel::new(0),
+                },
+                ShapingRun {
+                    range: TextRange::new(4, 9),
+                    face: FontFaceId::new(1),
+                    level: BidiLevel::new(1),
+                },
+                ShapingRun {
+                    range: TextRange::new(9, 11),
+                    face: FontFaceId::new(2),
+                    level: BidiLevel::new(0),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn shaping_runs_split_bidi_even_when_font_face_is_shared() {
+        let metrics = FontMetrics {
+            ascent: 14.0,
+            descent: 4.0,
+            line_gap: 0.0,
+        };
+        let chain = FontFallbackChain {
+            faces: vec![FontFace {
+                id: FontFaceId::new(9),
+                family: FontFamily("Shared LastResort".into()),
+                coverage: FontCoverage::LastResort,
+                metrics,
+                advance: 8.0,
+            }],
+        };
+        let runs = shaping_runs("abc שלום", &chain);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].face, FontFaceId::new(9));
+        assert_eq!(runs[1].face, FontFaceId::new(9));
+        assert_eq!(runs[0].level, BidiLevel::new(0));
+        assert_eq!(runs[1].level, BidiLevel::new(1));
+    }
+
+    #[test]
+    fn shaping_runs_split_font_fallback_inside_one_bidi_direction() {
+        let runs = shaping_runs("abc 世界", &FontFallbackChain::default());
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].level, BidiLevel::new(0));
+        assert_eq!(runs[1].level, BidiLevel::new(0));
+        assert_eq!(runs[0].face, FontFaceId::new(0));
+        assert_eq!(runs[1].face, FontFaceId::new(2));
+    }
+
+    #[test]
+    fn shaping_runs_preserve_grapheme_safe_source_ranges() {
+        let text = "a👩🏽\u{200d}💻אב";
+        let runs = shaping_runs(text, &FontFallbackChain::default());
+        assert_eq!(grapheme_boundaries(text), vec![0, 1, 5, 6, 7]);
+        assert!(runs.iter().all(|run| {
+            is_grapheme_boundary(text, run.range.start) && is_grapheme_boundary(text, run.range.end)
+        }));
+        assert_eq!(runs.first().unwrap().range.start, 0);
+        assert_eq!(runs.last().unwrap().range.end, text.chars().count());
+        assert!(
+            runs.windows(2)
+                .all(|pair| pair[0].range.end == pair[1].range.start)
+        );
+    }
+
+    #[test]
+    fn text_run_exposes_stable_shaping_segments() {
+        let run = TextRun::new("abc שלום 世界".into());
+        let segments = run.shaping_runs();
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].direction(), TextDirection::Ltr);
+        assert_eq!(segments[1].direction(), TextDirection::Rtl);
+        assert_eq!(segments[2].direction(), TextDirection::Ltr);
     }
 }
