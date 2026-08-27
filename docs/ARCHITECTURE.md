@@ -263,6 +263,8 @@ Text measurement is separated from layout through `TextShaper`, `ShapedText`, `G
 
 Line breaking now consumes explicit Unicode-aware break opportunities. R0 recognizes mandatory Unicode separators, breakable Unicode whitespace, hyphen opportunities, non-breaking spaces, and basic CJK ideographic boundaries. This is intentionally a deterministic UAX #14-oriented bootstrap subset, not a claim of full Unicode Line Breaking Algorithm conformance.
 
+Grapheme safety is enforced before shaping and line breaking: `TextRange` remains scalar-index based, while `GlyphCluster` may cover multiple scalar values. The deterministic R0 classifier keeps combining marks, variation selectors, emoji modifiers, CRLF, regional-indicator pairs, and basic emoji ZWJ sequences indivisible. This is a UAX #29-oriented bootstrap subset rather than full conformance.
+
 Damage is computed by comparing previous and current display lists by item ID:
 
 - unchanged item and command → no damage;
