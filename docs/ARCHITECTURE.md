@@ -391,3 +391,7 @@ It is not a standards claim. A small end-to-end pipeline lets us replace parsing
 
 R0 now exposes explicit `TextDirection`, `BidiLevel`, and `BidiRun` values. Paragraph direction is derived from the first strong character and mixed strong-direction spans are represented as scalar-indexed runs. `visual_bidi_runs()` performs deterministic level-based run reordering while leaving grapheme, shaping, line-breaking, fragment, and retained-paint identities unchanged. This is a UAX #9-oriented bootstrap boundary, not full Unicode Bidirectional Algorithm conformance.
 
+### Font fallback foundation
+
+R0 now models font selection explicitly through `FontFaceId`, `FontFamily`, `FontFace`, `FontFallbackChain`, and scalar-indexed `FontRun` values. Fallback selection occurs only on grapheme-cluster boundaries, so combining sequences and emoji ZWJ clusters cannot be split between faces. The deterministic bootstrap chain covers Latin/Cyrillic, Hebrew/Arabic, CJK, emoji, and a mandatory LastResort face. These are architectural coverage classes rather than bundled fonts; a platform font database and real shaping backend can replace the selector without changing source, bidi, fragment, or retained-paint identities.
+

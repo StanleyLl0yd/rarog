@@ -82,6 +82,190 @@ pub struct ShapedText {
     pub metrics: FontMetrics,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FontFaceId(u16);
+
+impl FontFaceId {
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u16 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontFamily(pub String);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontCoverage {
+    LatinCyrillic,
+    HebrewArabic,
+    Cjk,
+    Emoji,
+    LastResort,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontFace {
+    pub id: FontFaceId,
+    pub family: FontFamily,
+    pub coverage: FontCoverage,
+    pub metrics: FontMetrics,
+    pub advance: f32,
+}
+
+impl FontFace {
+    pub fn covers(&self, character: char) -> bool {
+        let code = character as u32;
+        if is_grapheme_extend(character)
+            || character.is_whitespace()
+            || character.is_ascii_punctuation()
+            || matches!(code, 0x2000..=0x206f)
+        {
+            return true;
+        }
+        match self.coverage {
+            FontCoverage::LatinCyrillic => {
+                character.is_ascii_alphanumeric()
+                    || matches!(code, 0x00a0..=0x024f | 0x0370..=0x052f)
+            }
+            FontCoverage::HebrewArabic => {
+                matches!(code, 0x0590..=0x08ff | 0xfb1d..=0xfdff | 0xfe70..=0xfefc)
+            }
+            FontCoverage::Cjk => {
+                matches!(code, 0x2e80..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff)
+            }
+            FontCoverage::Emoji => {
+                is_extended_pictographic(character) || is_regional_indicator(character)
+            }
+            FontCoverage::LastResort => true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontFallbackChain {
+    pub faces: Vec<FontFace>,
+}
+
+impl Default for FontFallbackChain {
+    fn default() -> Self {
+        let metrics = FontMetrics {
+            ascent: 14.0,
+            descent: 4.0,
+            line_gap: 0.0,
+        };
+        Self {
+            faces: vec![
+                FontFace {
+                    id: FontFaceId::new(0),
+                    family: FontFamily("Rarog Sans".into()),
+                    coverage: FontCoverage::LatinCyrillic,
+                    metrics,
+                    advance: 8.0,
+                },
+                FontFace {
+                    id: FontFaceId::new(1),
+                    family: FontFamily("Rarog RTL".into()),
+                    coverage: FontCoverage::HebrewArabic,
+                    metrics,
+                    advance: 8.0,
+                },
+                FontFace {
+                    id: FontFaceId::new(2),
+                    family: FontFamily("Rarog CJK".into()),
+                    coverage: FontCoverage::Cjk,
+                    metrics,
+                    advance: 8.0,
+                },
+                FontFace {
+                    id: FontFaceId::new(3),
+                    family: FontFamily("Rarog Emoji".into()),
+                    coverage: FontCoverage::Emoji,
+                    metrics,
+                    advance: 8.0,
+                },
+                FontFace {
+                    id: FontFaceId::new(4),
+                    family: FontFamily("Rarog LastResort".into()),
+                    coverage: FontCoverage::LastResort,
+                    metrics,
+                    advance: 8.0,
+                },
+            ],
+        }
+    }
+}
+
+impl FontFallbackChain {
+    pub fn face(&self, id: FontFaceId) -> Option<&FontFace> {
+        self.faces.iter().find(|face| face.id == id)
+    }
+
+    pub fn select_face_for_range(&self, text: &str, range: TextRange) -> Option<FontFaceId> {
+        let characters = text.chars().collect::<Vec<_>>();
+        let slice = characters.get(range.start..range.end)?;
+        self.faces
+            .iter()
+            .find(|face| {
+                slice
+                    .iter()
+                    .copied()
+                    .all(|character| face.covers(character))
+            })
+            .map(|face| face.id)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontRun {
+    pub range: TextRange,
+    pub face: FontFaceId,
+}
+
+fn is_common_font_character(character: char) -> bool {
+    let code = character as u32;
+    is_grapheme_extend(character)
+        || character.is_whitespace()
+        || character.is_ascii_punctuation()
+        || matches!(code, 0x2000..=0x206f)
+}
+
+pub fn font_runs(text: &str, chain: &FontFallbackChain) -> Vec<FontRun> {
+    let boundaries = grapheme_boundaries(text);
+    if boundaries.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut runs: Vec<FontRun> = Vec::new();
+    for window in boundaries.windows(2) {
+        let range = TextRange::new(window[0], window[1]);
+        let characters = text.chars().collect::<Vec<_>>();
+        let common = characters[range.start..range.end]
+            .iter()
+            .copied()
+            .all(is_common_font_character);
+        let inherited = common && !runs.is_empty();
+        let face = if inherited {
+            runs.last().map(|run| run.face)
+        } else {
+            chain.select_face_for_range(text, range)
+        }
+        .or_else(|| chain.faces.last().map(|face| face.id))
+        .expect("font fallback chain must contain at least one face");
+        if let Some(previous) = runs.last_mut() {
+            if previous.face == face && previous.range.end == range.start {
+                previous.range.end = range.end;
+                continue;
+            }
+        }
+        runs.push(FontRun { range, face });
+    }
+    runs
+}
+
 pub trait TextShaper {
     fn shape(&self, text: &str) -> ShapedText;
 }
@@ -142,19 +326,26 @@ pub struct IntrinsicSizes {
 pub struct TextRun {
     pub text: String,
     pub shaped: ShapedText,
+    pub font_runs: Vec<FontRun>,
     pub advance: f32,
     pub line_height: f32,
 }
 
 impl TextRun {
     pub fn new(text: String) -> Self {
+        Self::with_fallback(text, &FontFallbackChain::default())
+    }
+
+    pub fn with_fallback(text: String, fallback: &FontFallbackChain) -> Self {
         let shaper = FixedTextShaper::default();
         let shaped = shaper.shape(&text);
+        let font_runs = font_runs(&text, fallback);
         Self {
             text,
             advance: shaped.advance,
             line_height: shaped.metrics.line_height(),
             shaped,
+            font_runs,
         }
     }
 
@@ -1596,5 +1787,73 @@ mod tests {
                 .all(|run| run.range.end <= "a e\u{301} שלום".chars().count())
         );
         assert_eq!(grapheme_boundaries("e\u{301}"), vec![0, 2]);
+    }
+
+    #[test]
+    fn font_fallback_keeps_latin_and_cyrillic_in_primary_face() {
+        let chain = FontFallbackChain::default();
+        let runs = font_runs("Hello Привет", &chain);
+        assert_eq!(
+            runs,
+            vec![FontRun {
+                range: TextRange::new(0, 12),
+                face: FontFaceId::new(0)
+            }]
+        );
+    }
+
+    #[test]
+    fn font_fallback_splits_mixed_scripts_into_stable_runs() {
+        let chain = FontFallbackChain::default();
+        let runs = font_runs("abc שלום 世界", &chain);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0].face, FontFaceId::new(0));
+        assert_eq!(runs[1].face, FontFaceId::new(1));
+        assert_eq!(runs[2].face, FontFaceId::new(2));
+        assert_eq!(runs[0].range, TextRange::new(0, 4));
+        assert_eq!(runs[1].range, TextRange::new(4, 9));
+        assert_eq!(runs[2].range, TextRange::new(9, 11));
+    }
+
+    #[test]
+    fn font_fallback_never_splits_grapheme_clusters() {
+        let chain = FontFallbackChain::default();
+        let text = "a👩🏽\u{200d}💻b";
+        let runs = font_runs(text, &chain);
+        assert_eq!(grapheme_boundaries(text), vec![0, 1, 5, 6]);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(
+            runs[1],
+            FontRun {
+                range: TextRange::new(1, 5),
+                face: FontFaceId::new(3)
+            }
+        );
+    }
+
+    #[test]
+    fn font_fallback_has_deterministic_last_resort() {
+        let chain = FontFallbackChain::default();
+        let runs = font_runs("\u{10300}", &chain);
+        assert_eq!(
+            runs,
+            vec![FontRun {
+                range: TextRange::new(0, 1),
+                face: FontFaceId::new(4)
+            }]
+        );
+        assert_eq!(
+            chain.face(FontFaceId::new(4)).unwrap().family.0,
+            "Rarog LastResort"
+        );
+    }
+
+    #[test]
+    fn text_run_exposes_font_runs_without_changing_source_ranges() {
+        let run = TextRun::new("abc שלום".into());
+        assert_eq!(run.font_runs.len(), 2);
+        assert_eq!(run.font_runs[0].range, TextRange::new(0, 4));
+        assert_eq!(run.font_runs[1].range, TextRange::new(4, 8));
+        assert_eq!(run.character_count(), 8);
     }
 }
