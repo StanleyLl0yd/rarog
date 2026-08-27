@@ -56,6 +56,73 @@ pub struct LineBox {
     pub text_range: TextRange,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontMetrics {
+    pub ascent: f32,
+    pub descent: f32,
+    pub line_gap: f32,
+}
+
+impl FontMetrics {
+    pub fn line_height(self) -> f32 {
+        self.ascent + self.descent + self.line_gap
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphCluster {
+    pub source: TextRange,
+    pub advance: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapedText {
+    pub clusters: Vec<GlyphCluster>,
+    pub advance: f32,
+    pub metrics: FontMetrics,
+}
+
+pub trait TextShaper {
+    fn shape(&self, text: &str) -> ShapedText;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FixedTextShaper {
+    pub advance: f32,
+    pub metrics: FontMetrics,
+}
+
+impl Default for FixedTextShaper {
+    fn default() -> Self {
+        Self {
+            advance: 8.0,
+            metrics: FontMetrics {
+                ascent: 14.0,
+                descent: 4.0,
+                line_gap: 0.0,
+            },
+        }
+    }
+}
+
+impl TextShaper for FixedTextShaper {
+    fn shape(&self, text: &str) -> ShapedText {
+        let clusters = text
+            .chars()
+            .enumerate()
+            .map(|(index, _)| GlyphCluster {
+                source: TextRange::new(index, index + 1),
+                advance: self.advance,
+            })
+            .collect::<Vec<_>>();
+        ShapedText {
+            advance: clusters.iter().map(|cluster| cluster.advance).sum(),
+            clusters,
+            metrics: self.metrics,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct IntrinsicSizes {
     pub min_content: f32,
@@ -65,32 +132,45 @@ pub struct IntrinsicSizes {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextRun {
     pub text: String,
+    pub shaped: ShapedText,
     pub advance: f32,
     pub line_height: f32,
 }
 
 impl TextRun {
     pub fn new(text: String) -> Self {
-        let advance = text.chars().count() as f32 * 8.0;
+        let shaper = FixedTextShaper::default();
+        let shaped = shaper.shape(&text);
         Self {
             text,
-            advance,
-            line_height: 18.0,
+            advance: shaped.advance,
+            line_height: shaped.metrics.line_height(),
+            shaped,
         }
     }
 
     pub fn character_count(&self) -> usize {
-        self.text.chars().count()
+        self.shaped.clusters.len()
+    }
+
+    pub fn advance_for_range(&self, range: TextRange) -> f32 {
+        self.shaped
+            .clusters
+            .iter()
+            .filter(|cluster| {
+                cluster.source.start >= range.start && cluster.source.end <= range.end
+            })
+            .map(|cluster| cluster.advance)
+            .sum()
     }
 
     pub fn intrinsic_sizes(&self) -> IntrinsicSizes {
+        let shaper = FixedTextShaper::default();
         let longest_word = self
             .text
             .split_whitespace()
-            .map(|word| word.chars().count())
-            .max()
-            .unwrap_or(0) as f32
-            * 8.0;
+            .map(|word| shaper.shape(word).advance)
+            .fold(0.0, f32::max);
         IntrinsicSizes {
             min_content: longest_word,
             max_content: self.advance,
@@ -102,36 +182,30 @@ pub trait LineBreaker {
     fn break_text(&self, run: &TextRun, available_width: f32) -> Vec<TextRange>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FixedAdvanceLineBreaker {
-    pub advance: f32,
-}
-
-impl Default for FixedAdvanceLineBreaker {
-    fn default() -> Self {
-        Self { advance: 8.0 }
-    }
-}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FixedAdvanceLineBreaker;
 
 impl LineBreaker for FixedAdvanceLineBreaker {
     fn break_text(&self, run: &TextRun, available_width: f32) -> Vec<TextRange> {
-        let character_count = run.character_count();
-        if character_count == 0 {
+        if run.shaped.clusters.is_empty() {
             return vec![TextRange::new(0, 0)];
         }
-        let advance = self.advance.max(f32::EPSILON);
-        let characters_per_line = if available_width >= advance {
-            (available_width / advance).floor().max(1.0) as usize
-        } else {
-            character_count
-        };
+        let first_advance = run.shaped.clusters[0].advance.max(f32::EPSILON);
+        if available_width < first_advance {
+            return vec![TextRange::new(0, run.character_count())];
+        }
         let mut ranges = Vec::new();
         let mut start = 0;
-        while start < character_count {
-            let end = (start + characters_per_line).min(character_count);
-            ranges.push(TextRange::new(start, end));
-            start = end;
+        let mut width = 0.0;
+        for cluster in &run.shaped.clusters {
+            if cluster.source.start > start && width + cluster.advance > available_width {
+                ranges.push(TextRange::new(start, cluster.source.start));
+                start = cluster.source.start;
+                width = 0.0;
+            }
+            width += cluster.advance;
         }
+        ranges.push(TextRange::new(start, run.character_count()));
         ranges
     }
 }
@@ -561,11 +635,11 @@ impl FragmentBuilder {
         cursor_y: &mut f32,
     ) -> Vec<Fragment> {
         let available_width = containing_block.available.width.max(0.0);
-        let line_breaker = FixedAdvanceLineBreaker::default();
+        let line_breaker = FixedAdvanceLineBreaker;
         let ranges = line_breaker.break_text(run, available_width);
         let mut fragments = Vec::with_capacity(ranges.len());
         for (ordinal, text_range) in ranges.into_iter().enumerate() {
-            let width = (text_range.len() as f32 * line_breaker.advance).min(available_width);
+            let width = run.advance_for_range(text_range).min(available_width);
             let rect = Rect::new(containing_block.origin.x, *cursor_y, width, run.line_height);
             *cursor_y += run.line_height;
             let line_box = LineBox {
@@ -989,7 +1063,7 @@ mod tests {
 
     #[test]
     fn fixed_advance_line_breaker_returns_stable_text_ranges() {
-        let breaker = FixedAdvanceLineBreaker::default();
+        let breaker = FixedAdvanceLineBreaker;
         let run = TextRun::new("abcdefg".into());
         assert_eq!(
             breaker.break_text(&run, 24.0),
@@ -997,6 +1071,38 @@ mod tests {
                 TextRange::new(0, 3),
                 TextRange::new(3, 6),
                 TextRange::new(6, 7),
+            ]
+        );
+    }
+
+    #[test]
+    fn fixed_text_shaper_exposes_clusters_and_font_metrics() {
+        let shaper = FixedTextShaper::default();
+        let shaped = shaper.shape("abc");
+        assert_eq!(shaped.advance, 24.0);
+        assert_eq!(shaped.metrics.line_height(), 18.0);
+        assert_eq!(shaped.clusters.len(), 3);
+        assert_eq!(shaped.clusters[0].source, TextRange::new(0, 1));
+        assert_eq!(shaped.clusters[2].source, TextRange::new(2, 3));
+    }
+
+    #[test]
+    fn line_breaker_consumes_shaped_cluster_advances() {
+        let mut run = TextRun::new("abc".into());
+        run.shaped.clusters[1].advance = 16.0;
+        run.advance = run
+            .shaped
+            .clusters
+            .iter()
+            .map(|cluster| cluster.advance)
+            .sum();
+        let breaker = FixedAdvanceLineBreaker;
+        assert_eq!(
+            breaker.break_text(&run, 16.0),
+            vec![
+                TextRange::new(0, 1),
+                TextRange::new(1, 2),
+                TextRange::new(2, 3)
             ]
         );
     }
