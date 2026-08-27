@@ -261,6 +261,8 @@ Text fragmentation now records explicit source-character `TextRange` values and 
 
 Text measurement is separated from layout through `TextShaper`, `ShapedText`, `GlyphCluster`, and `FontMetrics`. The bootstrap shaper emits one fixed-advance cluster per source character, while line breaking consumes cluster advances rather than assuming character width. This keeps shaping/font selection replaceable and makes variable-width or multi-codepoint clusters possible without redesigning the fragment contract.
 
+Line breaking now consumes explicit Unicode-aware break opportunities. R0 recognizes mandatory Unicode separators, breakable Unicode whitespace, hyphen opportunities, non-breaking spaces, and basic CJK ideographic boundaries. This is intentionally a deterministic UAX #14-oriented bootstrap subset, not a claim of full Unicode Line Breaking Algorithm conformance.
+
 Damage is computed by comparing previous and current display lists by item ID:
 
 - unchanged item and command → no damage;

@@ -110,9 +110,13 @@ impl TextShaper for FixedTextShaper {
         let clusters = text
             .chars()
             .enumerate()
-            .map(|(index, _)| GlyphCluster {
+            .map(|(index, character)| GlyphCluster {
                 source: TextRange::new(index, index + 1),
-                advance: self.advance,
+                advance: if is_mandatory_break(character) {
+                    0.0
+                } else {
+                    self.advance
+                },
             })
             .collect::<Vec<_>>();
         ShapedText {
@@ -182,33 +186,145 @@ pub trait LineBreaker {
     fn break_text(&self, run: &TextRun, available_width: f32) -> Vec<TextRange>;
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FixedAdvanceLineBreaker;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakKind {
+    Soft,
+    Mandatory,
+}
 
-impl LineBreaker for FixedAdvanceLineBreaker {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BreakOpportunity {
+    pub index: usize,
+    pub kind: BreakKind,
+}
+
+pub fn unicode_break_opportunities(text: &str) -> Vec<BreakOpportunity> {
+    let characters = text.chars().collect::<Vec<_>>();
+    let mut opportunities = Vec::new();
+    for (index, character) in characters.iter().copied().enumerate() {
+        let boundary = index + 1;
+        if is_mandatory_break(character) {
+            opportunities.push(BreakOpportunity {
+                index: boundary,
+                kind: BreakKind::Mandatory,
+            });
+            continue;
+        }
+        let next = characters.get(boundary).copied();
+        if is_breakable_whitespace(character)
+            || character == '-'
+            || (is_cjk_ideograph(character) && next.is_some_and(is_cjk_ideograph))
+        {
+            opportunities.push(BreakOpportunity {
+                index: boundary,
+                kind: BreakKind::Soft,
+            });
+        }
+    }
+    opportunities
+}
+
+fn is_mandatory_break(character: char) -> bool {
+    matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+fn is_breakable_whitespace(character: char) -> bool {
+    character.is_whitespace()
+        && !is_mandatory_break(character)
+        && !matches!(character, '\u{00a0}' | '\u{202f}')
+}
+
+fn is_cjk_ideograph(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x2fa1f
+    )
+}
+
+fn is_non_breaking_boundary(text: &str, index: usize) -> bool {
+    let characters = text.chars().collect::<Vec<_>>();
+    let previous = index.checked_sub(1).and_then(|value| characters.get(value));
+    let next = characters.get(index);
+    previous
+        .into_iter()
+        .chain(next)
+        .any(|character| matches!(character, '\u{00a0}' | '\u{202f}'))
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UnicodeLineBreaker;
+
+impl LineBreaker for UnicodeLineBreaker {
     fn break_text(&self, run: &TextRun, available_width: f32) -> Vec<TextRange> {
         if run.shaped.clusters.is_empty() {
             return vec![TextRange::new(0, 0)];
         }
-        let first_advance = run.shaped.clusters[0].advance.max(f32::EPSILON);
-        if available_width < first_advance {
-            return vec![TextRange::new(0, run.character_count())];
-        }
+
+        let opportunities = unicode_break_opportunities(&run.text);
         let mut ranges = Vec::new();
-        let mut start = 0;
+        let mut line_start = 0;
+        let mut last_soft = None;
         let mut width = 0.0;
+
         for cluster in &run.shaped.clusters {
-            if cluster.source.start > start && width + cluster.advance > available_width {
-                ranges.push(TextRange::new(start, cluster.source.start));
-                start = cluster.source.start;
-                width = 0.0;
-            }
             width += cluster.advance;
+            let boundary = cluster.source.end;
+            let opportunity = opportunities
+                .iter()
+                .find(|opportunity| opportunity.index == boundary)
+                .copied();
+
+            if matches!(
+                opportunity.map(|value| value.kind),
+                Some(BreakKind::Mandatory)
+            ) {
+                ranges.push(TextRange::new(line_start, boundary));
+                line_start = boundary;
+                last_soft = None;
+                width = 0.0;
+                continue;
+            }
+
+            if available_width.is_finite() && available_width >= 0.0 && width > available_width {
+                let emergency = cluster.source.start;
+                let break_at = last_soft.filter(|value| *value > line_start).or_else(|| {
+                    (emergency > line_start && !is_non_breaking_boundary(&run.text, emergency))
+                        .then_some(emergency)
+                });
+                if let Some(break_at) = break_at {
+                    ranges.push(TextRange::new(line_start, break_at));
+                    line_start = break_at;
+                    width = run.advance_for_range(TextRange::new(line_start, boundary));
+                    last_soft = opportunities
+                        .iter()
+                        .filter(|value| {
+                            value.kind == BreakKind::Soft
+                                && value.index > line_start
+                                && value.index < boundary
+                        })
+                        .map(|value| value.index)
+                        .next_back();
+                }
+            }
+
+            if matches!(opportunity.map(|value| value.kind), Some(BreakKind::Soft))
+                && boundary > line_start
+            {
+                last_soft = Some(boundary);
+            }
         }
-        ranges.push(TextRange::new(start, run.character_count()));
+
+        if line_start < run.character_count() {
+            ranges.push(TextRange::new(line_start, run.character_count()));
+        }
+        if ranges.is_empty() {
+            ranges.push(TextRange::new(0, 0));
+        }
         ranges
     }
 }
+
+pub type FixedAdvanceLineBreaker = UnicodeLineBreaker;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContainingBlock {
@@ -635,7 +751,7 @@ impl FragmentBuilder {
         cursor_y: &mut f32,
     ) -> Vec<Fragment> {
         let available_width = containing_block.available.width.max(0.0);
-        let line_breaker = FixedAdvanceLineBreaker;
+        let line_breaker = UnicodeLineBreaker;
         let ranges = line_breaker.break_text(run, available_width);
         let mut fragments = Vec::with_capacity(ranges.len());
         for (ordinal, text_range) in ranges.into_iter().enumerate() {
@@ -1063,7 +1179,7 @@ mod tests {
 
     #[test]
     fn fixed_advance_line_breaker_returns_stable_text_ranges() {
-        let breaker = FixedAdvanceLineBreaker;
+        let breaker = UnicodeLineBreaker;
         let run = TextRun::new("abcdefg".into());
         assert_eq!(
             breaker.break_text(&run, 24.0),
@@ -1096,7 +1212,7 @@ mod tests {
             .iter()
             .map(|cluster| cluster.advance)
             .sum();
-        let breaker = FixedAdvanceLineBreaker;
+        let breaker = UnicodeLineBreaker;
         assert_eq!(
             breaker.break_text(&run, 16.0),
             vec![
@@ -1104,6 +1220,69 @@ mod tests {
                 TextRange::new(1, 2),
                 TextRange::new(2, 3)
             ]
+        );
+    }
+
+    #[test]
+    fn unicode_break_opportunities_cover_whitespace_hyphen_cjk_and_mandatory_breaks() {
+        assert_eq!(
+            unicode_break_opportunities("a b-c中日\nq"),
+            vec![
+                BreakOpportunity {
+                    index: 2,
+                    kind: BreakKind::Soft
+                },
+                BreakOpportunity {
+                    index: 4,
+                    kind: BreakKind::Soft
+                },
+                BreakOpportunity {
+                    index: 6,
+                    kind: BreakKind::Soft
+                },
+                BreakOpportunity {
+                    index: 8,
+                    kind: BreakKind::Mandatory
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unicode_line_breaker_prefers_legal_soft_breaks() {
+        let run = TextRun::new("hello world".into());
+        let breaker = UnicodeLineBreaker;
+        assert_eq!(
+            breaker.break_text(&run, 48.0),
+            vec![TextRange::new(0, 6), TextRange::new(6, 11)]
+        );
+    }
+
+    #[test]
+    fn unicode_line_breaker_preserves_non_breaking_spaces() {
+        let run = TextRun::new("a\u{00a0}b".into());
+        let breaker = UnicodeLineBreaker;
+        assert_eq!(breaker.break_text(&run, 8.0), vec![TextRange::new(0, 3)]);
+    }
+
+    #[test]
+    fn unicode_line_breaker_honors_mandatory_breaks() {
+        let run = TextRun::new("ab\ncd".into());
+        let breaker = UnicodeLineBreaker;
+        assert_eq!(
+            breaker.break_text(&run, 200.0),
+            vec![TextRange::new(0, 3), TextRange::new(3, 5)]
+        );
+        assert_eq!(run.shaped.clusters[2].advance, 0.0);
+    }
+
+    #[test]
+    fn unicode_line_breaker_allows_cjk_breaks_without_spaces() {
+        let run = TextRun::new("中文测试".into());
+        let breaker = UnicodeLineBreaker;
+        assert_eq!(
+            breaker.break_text(&run, 16.0),
+            vec![TextRange::new(0, 2), TextRange::new(2, 4)]
         );
     }
 }
