@@ -21,14 +21,18 @@ jobs:
       - name: Finalize docs and validate
         shell: bash
         run: |
-          set -e
-          python tools/r0_finalize_flow_docs.py
-          cargo fmt --all
-          cargo check --workspace --all-targets
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
+          set +e
+          python tools/r0_finalize_flow_docs.py > tools/r0-flow-finalize.log 2>&1
+          status=$?
+          if [ $status -eq 0 ]; then cargo fmt --all >> tools/r0-flow-finalize.log 2>&1; status=$?; fi
+          if [ $status -eq 0 ]; then cargo check --workspace --all-targets >> tools/r0-flow-finalize.log 2>&1; status=$?; fi
+          if [ $status -eq 0 ]; then cargo clippy --workspace --all-targets -- -D warnings >> tools/r0-flow-finalize.log 2>&1; status=$?; fi
+          if [ $status -eq 0 ]; then cargo test --workspace >> tools/r0-flow-finalize.log 2>&1; status=$?; fi
+          cat tools/r0-flow-finalize.log
           git config user.name "Stanley Lloyd"
           git config user.email "131160519+StanleyLl0yd@users.noreply.github.com"
-          git add README.md docs/ARCHITECTURE.md docs/R0-BACKLOG.md .github/workflows/ci.yml
-          git commit -m "Document flow-aware local reflow" || exit 0
+          git add tools/r0-flow-finalize.log
+          if [ $status -eq 0 ]; then git add README.md docs/ARCHITECTURE.md docs/R0-BACKLOG.md .github/workflows/ci.yml; fi
+          git commit -m "Finalize flow-aware local reflow docs" || true
           git push origin HEAD:r0-flow-aware-local-reflow
+          exit $status
