@@ -259,6 +259,8 @@ Fragment identity is explicitly one-to-many with layout identity. A layout node 
 
 Text fragmentation now records explicit source-character `TextRange` values and `LineBox` geometry. Line breaking is isolated behind the `LineBreaker` abstraction; R0 uses a deterministic fixed-advance implementation so future shaping, font metrics, bidi, and standards line breaking can replace policy without changing fragment identity or retained-paint contracts.
 
+Text measurement is separated from layout through `TextShaper`, `ShapedText`, `GlyphCluster`, and `FontMetrics`. The bootstrap shaper emits one fixed-advance cluster per source character, while line breaking consumes cluster advances rather than assuming character width. This keeps shaping/font selection replaceable and makes variable-width or multi-codepoint clusters possible without redesigning the fragment contract.
+
 Damage is computed by comparing previous and current display lists by item ID:
 
 - unchanged item and command → no damage;
