@@ -185,6 +185,14 @@ For the current simple-selector bootstrap:
 
 These flags are deliberately conservative. `rarog-engine` persists them in `DirtyState` across DOM generations until a render update consumes them.
 
+### Relational invalidation and style sharing
+
+R0 now has an explicit `SelectorInvalidationDependencies` boundary for selector relationships that can make a mutation affect nodes other than the mutated element. A dependency records the local trigger key plus a conservative scope: descendants or following siblings. The bootstrap CSS parser still accepts only simple selectors, so it produces no relational dependencies itself; a future standards parser can populate the same rule-level dependency metadata without changing the DOM mutation journal or engine dirty-state API.
+
+Attribute invalidation deliberately keys on the changed attribute category (`id` or `class`) rather than only the post-mutation value. This is necessary because the R0 mutation journal does not retain old attribute values: removing a trigger must invalidate the same dependent nodes as adding it. Structural insert/reparent operations conservatively invalidate affected descendant or sibling subtrees when the corresponding dependency scope exists.
+
+`StyleSharingKey` captures the local inputs that are sufficient for the current bootstrap selector/cascade model: namespace, tag, ID, canonicalized classes and inline style. Local style sharing is considered safe only while the active rule set has no relational dependencies. R0 does not install a process-global computed-style cache; any future cache must be bounded to a document/style-set lifetime and must expand or disable its key when inheritance, pseudo-state, relational selectors or other contextual inputs become observable. See ADR-0026.
+
 ## First incremental reuse experiment
 
 R0 now has a stateful `RenderSession` that owns the current document, styles, Layout Tree, Fragment Tree, display list, framebuffer and persistent dirty state.
