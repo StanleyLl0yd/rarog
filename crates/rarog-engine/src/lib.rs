@@ -98,8 +98,12 @@ impl DirtyState {
         self.entries.is_empty()
     }
 
-    pub fn capture(&mut self, document: &Document) {
-        let delta = InvalidationSet::from_document_since(document, self.through_generation);
+    pub fn capture(&mut self, document: &Document, styles: &StyleSet) {
+        let delta = InvalidationSet::from_document_since_with_styles(
+            document,
+            self.through_generation,
+            styles,
+        );
         for (node, flags) in delta.entries {
             let current = self.entries.entry(node).or_default();
             current.style |= flags.style;
@@ -249,7 +253,7 @@ impl RenderSession {
             .mutation_records_since(from_generation)
             .map(|record| record.kind.clone())
             .collect::<Vec<_>>();
-        self.dirty.capture(&self.document);
+        self.dirty.capture(&self.document, &self.styles);
         let through_generation = self.dirty.through_generation();
         let dirty_nodes = self.dirty.entries().len();
 
@@ -657,7 +661,8 @@ mod tests {
         let mut dirty = DirtyState::clean_at(document.generation());
 
         document.set_attribute(node, "class", "hot").unwrap();
-        dirty.capture(&document);
+        let styles = StyleSet::for_document(&document);
+        dirty.capture(&document, &styles);
 
         assert_eq!(dirty.through_generation(), document.generation());
         assert_eq!(

@@ -63,8 +63,8 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] DOM-mutation-to-style/layout/paint invalidation primitives
 - [x] persistent dirty state survives across DOM mutations until a render consumes it
 - [x] non-finite bootstrap CSS lengths are rejected before computed geometry
-- [ ] style sharing/cache design note
-- [ ] descendant/sibling selector invalidation dependencies
+- [x] style sharing/cache design note
+- [x] descendant/sibling selector invalidation dependencies
 - [ ] standards-oriented CSS tokenizer/parser adapter
 
 ## P0 — layout
