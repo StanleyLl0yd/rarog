@@ -1,4 +1,7 @@
-use super::{IncrementalReport, RenderError, RenderObservability, RenderOptions, RenderSession};
+use super::{
+    IncrementalReport, RenderError, RenderObservability, RenderOptions, RenderSession,
+    validate_viewport_size,
+};
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
@@ -448,32 +451,29 @@ impl View {
 
     pub fn render(&mut self, viewport: Size) -> Result<ViewFrame<'_>, EngineError> {
         self.validate_viewport(viewport)?;
-        let loaded = self.loaded.as_ref().ok_or(EngineError::NoDocumentLoaded)?;
-        let had_session = self.session.is_some();
-        let rebuild = self.viewport != Some(viewport) || !had_session;
+        if self.loaded.is_none() {
+            return Err(EngineError::NoDocumentLoaded);
+        }
 
-        let status = if rebuild {
-            self.session = Some(RenderSession::new(
-                &loaded.source,
-                RenderOptions {
-                    viewport,
-                    background: self.options.background,
-                },
-            )?);
-            self.viewport = Some(viewport);
-            if had_session {
+        let status = match self.session.as_mut() {
+            Some(session) if self.viewport != Some(viewport) => {
+                session.resize(viewport)?;
                 FrameStatus::ViewportRebuild
-            } else {
+            }
+            Some(session) => FrameStatus::Incremental(session.update()),
+            None => {
+                let loaded = self.loaded.as_ref().ok_or(EngineError::NoDocumentLoaded)?;
+                self.session = Some(RenderSession::new(
+                    &loaded.source,
+                    RenderOptions {
+                        viewport,
+                        background: self.options.background,
+                    },
+                )?);
                 FrameStatus::Initial
             }
-        } else {
-            let report = self
-                .session
-                .as_mut()
-                .expect("non-rebuild path has an active render session")
-                .update();
-            FrameStatus::Incremental(report)
         };
+        self.viewport = Some(viewport);
 
         self.shared.event_sink.on_event(&ViewEvent::FrameRendered {
             view: self.id,
@@ -517,6 +517,7 @@ pub struct ViewFrame<'a> {
 }
 
 fn viewport_pixel_count(size: Size) -> Result<u64, RenderError> {
+    validate_viewport_size(size)?;
     if !size.width.is_finite() || !size.height.is_finite() {
         return Err(RenderError::Framebuffer(FramebufferError::NonFiniteSize));
     }
@@ -639,6 +640,38 @@ mod tests {
     }
 
     #[test]
+    fn viewport_change_reuses_session_and_reports_rebuild_observability() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div>Rarog</div>", BaseUrl::about_blank())
+            .unwrap();
+
+        view.render(Size {
+            width: 160.0,
+            height: 90.0,
+        })
+        .unwrap();
+        let frame = view
+            .render(Size {
+                width: 220.0,
+                height: 120.0,
+            })
+            .unwrap();
+
+        assert_eq!(frame.status, FrameStatus::ViewportRebuild);
+        assert_eq!(frame.framebuffer.width, 220);
+        assert_eq!(frame.framebuffer.height, 120);
+        assert_eq!(
+            frame
+                .full_observability
+                .expect("viewport rebuild exposes observability")
+                .timings
+                .parse,
+            std::time::Duration::ZERO
+        );
+    }
+
+    #[test]
     fn load_html_enforces_source_budget_before_parsing() {
         let engine = Engine::builder()
             .resource_budget(ResourceBudget {
@@ -677,6 +710,22 @@ mod tests {
                 pixels: 110,
                 limit: 100
             })
+        ));
+    }
+
+    #[test]
+    fn negative_viewport_is_rejected_before_rendering() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div>x</div>", BaseUrl::about_blank())
+            .unwrap();
+
+        assert!(matches!(
+            view.render(Size {
+                width: -1.0,
+                height: 10.0,
+            }),
+            Err(EngineError::Render(RenderError::InvalidViewportSize))
         ));
     }
 
