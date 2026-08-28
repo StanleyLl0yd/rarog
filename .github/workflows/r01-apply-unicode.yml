@@ -6,6 +6,7 @@ on:
       - r0.1/complete-hardening
     paths:
       - tools/r01_unicode.py
+      - tools/r01_unicode_regressions.py
       - .github/workflows/r01-apply-unicode.yml
 
 permissions:
@@ -27,6 +28,7 @@ jobs:
         run: |
           sed -i 's/^    """,$/    "",/' tools/r01_unicode.py
           python tools/r01_unicode.py
+          python tools/r01_unicode_regressions.py
           cargo fmt --all
       - name: Check workspace
         run: cargo check --workspace --all-targets
@@ -40,7 +42,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm tools/r01_unicode.py .github/workflows/r01-apply-unicode.yml
+          rm tools/r01_unicode.py tools/r01_unicode_regressions.py .github/workflows/r01-apply-unicode.yml
           git add -A
           git commit -m 'R0.1: use standards Unicode data backends'
           git push origin HEAD:r0.1/complete-hardening
