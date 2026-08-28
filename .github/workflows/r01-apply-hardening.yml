@@ -7,6 +7,7 @@ on:
     paths:
       - tools/r01_complete_dom.py
       - tools/r01_complete_resources.py
+      - tools/r01_complete_callers.py
       - .github/workflows/r01-apply-hardening.yml
 
 permissions:
@@ -28,6 +29,7 @@ jobs:
         run: |
           python tools/r01_complete_dom.py
           python tools/r01_complete_resources.py
+          python tools/r01_complete_callers.py
           cargo fmt --all
       - name: Check workspace
         run: cargo check --workspace --all-targets
@@ -35,7 +37,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm tools/r01_complete_dom.py tools/r01_complete_resources.py .github/workflows/r01-apply-hardening.yml
+          rm tools/r01_complete_dom.py tools/r01_complete_resources.py tools/r01_complete_callers.py .github/workflows/r01-apply-hardening.yml
           git add -A
           git commit -m 'R0.1: add connectedness and structural render budgets'
           git push origin HEAD:r0.1/complete-hardening
