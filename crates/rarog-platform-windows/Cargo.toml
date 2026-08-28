@@ -1,0 +1,12 @@
+[package]
+name = "rarog-platform-windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-platform = { path = "../rarog-platform" }
+
+[lints]
+workspace = true

@@ -23,6 +23,7 @@ dependencies = [
  "rarog-html",
  "rarog-layout",
  "rarog-paint",
+ "rarog-platform",
  "rarog-types",
 ]
 
@@ -48,6 +49,17 @@ version = "0.1.0"
 dependencies = [
  "rarog-layout",
  "rarog-types",
+]
+
+[[package]]
+name = "rarog-platform"
+version = "0.1.0"
+
+[[package]]
+name = "rarog-platform-windows"
+version = "0.1.0"
+dependencies = [
+ "rarog-platform",
 ]
 
 [[package]]

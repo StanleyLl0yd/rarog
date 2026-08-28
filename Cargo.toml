@@ -7,6 +7,8 @@ members = [
   "crates/rarog-css",
   "crates/rarog-layout",
   "crates/rarog-paint",
+  "crates/rarog-platform",
+  "crates/rarog-platform-windows",
   "crates/rarog-engine",
   "crates/rarog-shell",
 ]

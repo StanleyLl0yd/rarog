@@ -2,6 +2,7 @@ use super::{IncrementalReport, RenderError, RenderOptions, RenderSession};
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
+use rarog_platform::{NullPlatformHost, PlatformCapabilities, PlatformHost};
 use rarog_types::{Color, Size};
 use std::fmt;
 use std::sync::{
@@ -225,6 +226,7 @@ pub struct EngineBuilder {
     budget: ResourceBudget,
     host_policy: Arc<dyn HostPolicy>,
     event_sink: Arc<dyn EventSink>,
+    platform_host: Arc<dyn PlatformHost>,
 }
 
 impl Default for EngineBuilder {
@@ -233,6 +235,7 @@ impl Default for EngineBuilder {
             budget: ResourceBudget::default(),
             host_policy: Arc::new(AllowAllHostPolicy),
             event_sink: Arc::new(NullEventSink),
+            platform_host: Arc::new(NullPlatformHost),
         }
     }
 }
@@ -259,6 +262,14 @@ impl EngineBuilder {
         self
     }
 
+    pub fn platform_host<P>(mut self, host: P) -> Self
+    where
+        P: PlatformHost + 'static,
+    {
+        self.platform_host = Arc::new(host);
+        self
+    }
+
     pub fn build(self) -> Result<Engine, EngineError> {
         if self.budget.max_document_source_bytes == 0
             || self.budget.max_viewport_pixels == 0
@@ -272,6 +283,7 @@ impl EngineBuilder {
                 budget: self.budget,
                 host_policy: self.host_policy,
                 event_sink: self.event_sink,
+                platform_host: self.platform_host,
                 next_view_id: AtomicU64::new(1),
             }),
         })
@@ -282,6 +294,7 @@ struct EngineShared {
     budget: ResourceBudget,
     host_policy: Arc<dyn HostPolicy>,
     event_sink: Arc<dyn EventSink>,
+    platform_host: Arc<dyn PlatformHost>,
     next_view_id: AtomicU64,
 }
 
@@ -297,6 +310,14 @@ impl Engine {
 
     pub fn resource_budget(&self) -> ResourceBudget {
         self.shared.budget
+    }
+
+    pub fn platform_name(&self) -> &'static str {
+        self.shared.platform_host.name()
+    }
+
+    pub fn platform_capabilities(&self) -> PlatformCapabilities {
+        self.shared.platform_host.capabilities()
     }
 
     pub fn create_view(&self, options: ViewOptions) -> Result<View, EngineError> {
@@ -539,6 +560,41 @@ mod tests {
         fn allow_navigation(&self, _view: ViewId, _request: &NavigationRequest) -> bool {
             false
         }
+    }
+
+    struct TestPlatformHost;
+
+    impl PlatformHost for TestPlatformHost {
+        fn name(&self) -> &'static str {
+            "test-platform"
+        }
+
+        fn capabilities(&self) -> PlatformCapabilities {
+            PlatformCapabilities {
+                window_events: true,
+                ..PlatformCapabilities::NONE
+            }
+        }
+    }
+
+    #[test]
+    fn engine_exposes_platform_host_without_platform_specific_types() {
+        let engine = Engine::builder()
+            .platform_host(TestPlatformHost)
+            .build()
+            .unwrap();
+
+        assert_eq!(engine.platform_name(), "test-platform");
+        assert!(
+            engine
+                .platform_capabilities()
+                .supports(rarog_platform::PlatformService::WindowEvents)
+        );
+        assert!(
+            !engine
+                .platform_capabilities()
+                .supports(rarog_platform::PlatformService::GpuCompositor)
+        );
     }
 
     #[test]

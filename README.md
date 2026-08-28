@@ -70,6 +70,8 @@ The incremental experiment is intentionally narrow. It now proves paint-only ret
 
 The engine-owned Web platform code must stay independent of Win32/WinRT/D3D-specific APIs. Windows-specific code will live behind narrow platform adapters so Linux and macOS ports remain possible later without forcing the core architecture to follow the lowest common denominator.
 
+R0 now makes that separation concrete: `rarog-platform` defines the platform-neutral host capability contract and `rarog-platform-windows` is the first target-specific boundary. The Windows crate does not yet advertise windowing, font, IME, accessibility, sandbox or GPU capabilities; those are enabled only when real adapters are implemented.
+
 The first reference browser, **Zorya Browser**, is also planned for Windows first.
 
 ## Workspace
@@ -80,6 +82,8 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-css` — bootstrap stylesheet sources, selectors, cascade, computed style and invalidation primitives
 - `rarog-layout` — derived Layout Tree, Fragment Tree, box model and deterministic snapshots
 - `rarog-paint` — stable display-item IDs, damage tracking, display list and software rasterizer
+- `rarog-platform` — platform-neutral host capability contract
+- `rarog-platform-windows` — Windows-specific host boundary for future adapters
 - `rarog-engine` — stateless rendering plus persistent dirty-state / incremental-session orchestration
 - `rarog-shell` — minimal CLI test shell
 

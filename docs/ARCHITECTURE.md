@@ -337,6 +337,14 @@ The stateful incremental tests add invariants for paint-only geometry preservati
 
 This separation is required for later incremental invalidation, parallelism, process isolation, GPU composition and crash recovery.
 
+## Platform host boundary
+
+R0 isolates host-platform integration behind two crate layers. `rarog-platform` owns the platform-neutral `PlatformHost` and `PlatformCapabilities` contract consumed by `rarog-engine`. `rarog-platform-windows` is the first target-specific host boundary; engine core never depends on that Windows crate.
+
+`EngineBuilder` accepts a platform host and defaults to `NullPlatformHost`, so headless tests and portability lanes do not need to impersonate a desktop integration. The engine exposes only the host name and capability data. No Win32, WinRT, DirectWrite, Direct3D, HWND, COM, or other Windows-specific type enters DOM/HTML/CSS/layout/paint or the embedder API.
+
+The Windows boundary deliberately advertises no concrete service capability in R0. Window/events, font/text, input/IME, accessibility, sandbox/process, and GPU/compositor adapters become capabilities only when real implementations exist. `WindowsPlatformHost::try_new` succeeds only on a Windows compilation target, while the crate itself remains buildable on Linux for portability CI. See ADR-0030.
+
 ## Engine and embedder boundary
 
 R0 exposes `Engine` and `View` above `RenderSession`. `Engine` owns shared host policy, UI-neutral event delivery, resource budgets and stable `ViewId` allocation; each `View` owns one loaded inline document and the render session derived from it. This keeps browser-shell ownership out of DOM/layout/paint crates and gives later process isolation a stable host-facing seam.
