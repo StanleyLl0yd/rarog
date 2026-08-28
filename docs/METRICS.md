@@ -17,6 +17,8 @@ Track separately:
 - real-Web corpus scenario pass rate
 - visual/layout regression count
 
+Focused WPT subsets should begin with the standards-oriented R1 parser/style/layout slices. R6 remains the milestone for the broader WPT dashboard and compatibility program, not the first point at which standards tests are executed.
+
 ## Deterministic correctness
 
 R0 tracks deterministic regression fingerprints before performance claims are allowed. For committed fixtures record/compare:
@@ -30,6 +32,8 @@ R0 tracks deterministic regression fingerprints before performance claims are al
 - combined deterministic render-signature hash.
 
 A changed fingerprint is evidence to investigate, not automatically a regression: intentional rendering changes may update the expected fingerprint after review.
+
+The high-level deterministic and incremental contract is also exercised by the dedicated `rarog-engine` `r01_correctness` integration target so a required CI gate cannot silently disappear because a filtered unit-test name was removed or renamed.
 
 ## Responsiveness
 
@@ -48,13 +52,20 @@ A changed fingerprint is evidence to investigate, not automatically a regression
 - CPU time foreground/background/frozen
 - energy where platform instrumentation exists
 
+R0 currently enforces decoded source-byte and framebuffer-pixel budgets at the embedder boundary. R0.1 expands the resource model toward structural limits and safe deep-tree behavior before hostile content is treated as a production security boundary.
+
 ## Incremental rendering
 
-R0 now has a first stateful incremental experiment. Each `RenderSession` update reports whether it used:
+`RenderSession` reports one of the following update paths:
 
-- `Unchanged` — no render-relevant dirty state remained;
-- `PaintOnlyReuse` — computed paint values changed while existing Layout Tree / Fragment Tree geometry was reused;
-- `FullRebuild` — structure, text or geometry required a conservative rebuild.
+- `Unchanged` — no render-relevant dirty state remains;
+- `PaintOnlyReuse` — computed paint values change while existing Layout Tree and Fragment Tree geometry is retained; affected display-list ranges are patched when a safe retained range exists;
+- `SubtreeRelayout` — footprint-safe geometry is rebuilt for the affected Fragment subtree while the Layout Tree is retained;
+- `FlowRelayout` — a vertical-footprint change retains the Layout Tree and unaffected root-flow prefix while rebuilding the earliest affected root-flow child and following siblings;
+- `GeometryRelayout` — the Layout Tree is retained but Fragment geometry is rebuilt when a narrower incremental mapping cannot be proven safe;
+- `FullRebuild` — structure, text, display membership or another unprovable case uses the deterministic full-rebuild fallback.
+
+Paint retains unaffected display-list ranges when a replacement is structurally valid. The persistent software framebuffer is then updated inside damage rectangles for non-structural display lists. Structural clip/stacking/transform/opacity scopes currently force conservative full-frame raster refreshes where damage-scoped replay is not yet proven safe.
 
 Track:
 
@@ -64,14 +75,13 @@ Track:
 - incremental mode counts and full-rebuild fallback rate;
 - style rules reconsidered per mutation;
 - layout nodes/fragments rebuilt per frame;
-- display items changed per frame;
+- display items retained, replaced and regenerated per frame;
 - damaged pixel area versus viewport area;
+- full-frame raster fallbacks caused by structural display scopes;
 - unnecessary full-document/full-viewport rebuild count;
-- time spent in dirty capture, style comparison, relayout, display-list generation and raster separately.
+- time spent in dirty capture, style comparison, relayout, display-list generation/patching and raster separately.
 
-The current paint-only experiment still rebuilds the display list and rerasterizes the framebuffer. It therefore proves state reuse and correctness boundaries, not a performance win. Retained display-list updates, damage-scoped rasterization and geometry-affecting incremental relayout must be measured separately when implemented.
-
-These numbers are diagnostic until the incremental architecture is mature enough for product targets.
+These numbers remain diagnostic until the incremental architecture and benchmark methodology are mature enough for product targets. Retained state and damage-aware raster correctness do not by themselves establish an end-to-end performance win.
 
 ## Safety/reliability
 
@@ -80,6 +90,8 @@ These numbers are diagnostic until the incremental architecture is mature enough
 - sandbox escapes/security reports
 - OOM recoveries
 - discarded-page restoration failures
+- parser/render no-panic fuzz results
+- resource-budget rejections by category
 
 ## Comparative benchmarks
 

@@ -20,7 +20,7 @@ Before adding a subsystem:
 
 Changes that knowingly reduce site isolation, origin isolation or capability boundaries for performance are not accepted as normal optimizations.
 
-When changing invalidation or incremental rendering, add tests for both the reuse path and the conservative fallback. A paint-only mutation should prove which derived state was reused; a geometry/structure mutation should prove that the fallback still produces correct deterministic output.
+When changing invalidation or incremental rendering, add tests for both the reuse path and the conservative fallback. A paint-only mutation should prove which derived state was reused; a geometry/structure mutation should prove that the fallback still produces correct deterministic output. The dedicated `r01_correctness` integration target is the required high-level regression gate; unit tests remain the place for narrow subsystem invariants.
 
 Before opening a PR, run:
 
@@ -29,12 +29,14 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo test -p rarog-engine deterministic_render_snapshot_and_hash
-cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
-cargo test -p rarog-engine geometry_change_falls_back_to_full_rebuild
+cargo test -p rarog-engine --test r0_exit
+cargo test -p rarog-engine --test p1_exit
+cargo test -p rarog-engine --test r01_correctness
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 
 If a change intentionally alters the deterministic R0 render signature, explain which DOM/style/layout/fragment/display-list behavior changed and why. Do not update a golden hash only to silence CI without understanding the pipeline difference.
 
 GitHub Actions runs the full quality path on Windows and a portability path on Linux. Push CI runs only for `main`; pull requests run the same gates before merge.
+
+Post-R0 hardening and R1 preflight work is tracked in `docs/R0.1-BACKLOG.md` and issue #32. Do not reopen the historical R0 backlog for later milestone work unless an actual Ember invariant is found to be incorrect.
