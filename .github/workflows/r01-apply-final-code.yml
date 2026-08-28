@@ -33,59 +33,57 @@ jobs:
 
           correctness = Path('crates/rarog-engine/tests/r01_correctness.rs')
           text = correctness.read_text(encoding='utf-8')
-          pattern = re.compile(
+          identity_pattern = re.compile(
               r'\s*assert_eq!\(\s*session\.layout\(\)\.fragments\.snapshot\(\),\s*'
               r'fresh\.layout\.fragments\.snapshot\(\)\s*\);\s*'
               r'assert_eq!\(session\.display_list\(\)\.snapshot\(\),\s*'
               r'fresh\.display_list\.snapshot\(\)\);'
           )
-          replacement = '''
+          identity_replacement = '''
               assert_eq!(session.styles().snapshot(), fresh.styles.snapshot());
               assert_eq!(session.layout().tree.snapshot(), fresh.layout.tree.snapshot());
               assert_eq!(session.display_list().len(), fresh.display_list.len());'''
-          text, count = pattern.subn(replacement, text, count=1)
+          text, count = identity_pattern.subn(identity_replacement, text, count=1)
           if count != 1:
               raise SystemExit(f'differential identity assertion replacements={count}')
 
-          old_find = '''        if let Some(dom_node) = document.node(node)
-              && let NodeKind::Element(element) = &dom_node.kind
-              && element.attributes.get("id").map(String::as_str) == Some(id)
-          {
-              return Some(node);
-          }
-          '''
-          new_find = '''        if let Some(dom_node) = document.node(node) {
+          find_pattern = re.compile(
+              r'if let Some\(dom_node\) = document\.node\(node\)\s*'
+              r'&& let NodeKind::Element\(element\) = &dom_node\.kind\s*'
+              r'&& element\.attributes\.get\("id"\)\.map\(String::as_str\) == Some\(id\)\s*'
+              r'\{\s*return Some\(node\);\s*\}'
+          )
+          find_replacement = '''if let Some(dom_node) = document.node(node) {
               if let NodeKind::Element(element) = &dom_node.kind {
                   if element.attributes.get("id").map(String::as_str) == Some(id) {
                       return Some(node);
                   }
               }
-          }
-          '''
-          if old_find not in text:
-              raise SystemExit('external element_with_id let-chain missing')
-          correctness.write_text(text.replace(old_find, new_find), encoding='utf-8')
+          }'''
+          text, count = find_pattern.subn(find_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'external element_with_id replacements={count}')
+          correctness.write_text(text, encoding='utf-8')
 
           engine = Path('crates/rarog-engine/src/lib.rs')
           text = engine.read_text(encoding='utf-8')
-          old_style = '''        if let NodeKind::Element(element) = &current.kind
-              && element.tag_name.as_str() == "style"
-          {
-              return true;
-          }
-          '''
-          new_style = '''        if let NodeKind::Element(element) = &current.kind {
+          style_pattern = re.compile(
+              r'if let NodeKind::Element\(element\) = &current\.kind\s*'
+              r'&& element\.tag_name\.as_str\(\) == "style"\s*'
+              r'\{\s*return true;\s*\}'
+          )
+          style_replacement = '''if let NodeKind::Element(element) = &current.kind {
               if element.tag_name.as_str() == "style" {
                   return true;
               }
-          }
-          '''
-          if old_style not in text:
-              raise SystemExit('style ancestry let-chain missing')
-          text = text.replace(old_style, new_style)
-          if old_find not in text:
-              raise SystemExit('engine element_with_id let-chain missing')
-          engine.write_text(text.replace(old_find, new_find), encoding='utf-8')
+          }'''
+          text, count = style_pattern.subn(style_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'style ancestry replacements={count}')
+          text, count = find_pattern.subn(find_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'engine element_with_id replacements={count}')
+          engine.write_text(text, encoding='utf-8')
           PY
           cargo fmt --all
       - name: Check workspace
