@@ -146,7 +146,7 @@ impl Selector {
         };
 
         if let Some(tag) = &self.tag {
-            if &element.tag_name != tag {
+            if element.tag_name.as_str() != tag {
                 return false;
             }
         }
@@ -478,7 +478,7 @@ fn style_from_winners(winners: &BTreeMap<PropertyId, Winner>) -> ComputedStyle {
 
 fn collect_style_elements(document: &Document, node: NodeId, output: &mut Vec<String>) {
     if let NodeKind::Element(element) = &document.node(node).kind {
-        if element.tag_name == "style" {
+        if element.tag_name.as_str() == "style" {
             let mut text = String::new();
             collect_text(document, node, &mut text);
             if !text.trim().is_empty() {
@@ -881,10 +881,7 @@ mod tests {
         let node = document
             .append_new(
                 document.root(),
-                NodeKind::Element(ElementData {
-                    tag_name: tag.into(),
-                    attributes: attrs,
-                }),
+                NodeKind::Element(ElementData::html(tag).with_attributes(attrs)),
             )
             .unwrap();
         (document, node)
@@ -984,10 +981,7 @@ mod tests {
         let style = document
             .append_new(
                 document.root(),
-                NodeKind::Element(ElementData {
-                    tag_name: "style".into(),
-                    attributes: BTreeMap::new(),
-                }),
+                NodeKind::Element(ElementData::html("style")),
             )
             .unwrap();
         document
@@ -998,10 +992,7 @@ mod tests {
         let target = document
             .append_new(
                 document.root(),
-                NodeKind::Element(ElementData {
-                    tag_name: "div".into(),
-                    attributes,
-                }),
+                NodeKind::Element(ElementData::html("div").with_attributes(attributes)),
             )
             .unwrap();
         (document, target)

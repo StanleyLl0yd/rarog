@@ -132,6 +132,12 @@ incremental reuse or deterministic rebuild
 
 The DOM does not know which selectors, layout nodes or paint items depend on a mutation.
 
+### Element names, namespaces and atoms
+
+R0 stores an explicit `Namespace` on every `ElementData` and represents the local element name with an immutable `Atom`. The bootstrap HTML parser assigns `Namespace::Html` only; SVG/MathML tree-building and namespace switching remain standards-parser work. Non-HTML namespaces can already be represented by the DOM without encoding namespace state into tag-name strings.
+
+`Atom` is the semantic boundary for frequently repeated engine-owned names. Its R0 storage is a cheap cloneable `Arc<str>` handle, not a process-global interning table. The long-term strategy is document/process-scoped canonical interning behind the same boundary once measurements justify it. Text-node contents and attribute values remain ordinary owned strings. A process-global immortal string table is intentionally rejected because it conflicts with bounded lifetimes, site isolation and explicit resource budgets. See ADR-0024.
+
 ## Style source, selector and cascade boundary
 
 R0 has explicit bootstrap representations for:

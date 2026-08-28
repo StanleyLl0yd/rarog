@@ -1,8 +1,85 @@
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::ops::Deref;
+use std::sync::Arc;
 
 pub type NodeId = usize;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Atom(Arc<str>);
+
+impl Atom {
+    pub fn new(value: impl AsRef<str>) -> Self {
+        Self(Arc::from(value.as_ref()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl From<&str> for Atom {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for Atom {
+    fn from(value: String) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl AsRef<str> for Atom {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for Atom {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Deref for Atom {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for Atom {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Namespace {
+    Html,
+    Svg,
+    MathMl,
+    Other(Atom),
+}
+
+impl Namespace {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Html => "html",
+            Self::Svg => "svg",
+            Self::MathMl => "mathml",
+            Self::Other(namespace) => namespace.as_str(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeKind {
@@ -13,8 +90,28 @@ pub enum NodeKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ElementData {
-    pub tag_name: String,
+    pub namespace: Namespace,
+    pub tag_name: Atom,
     pub attributes: BTreeMap<String, String>,
+}
+
+impl ElementData {
+    pub fn new(namespace: Namespace, tag_name: impl Into<Atom>) -> Self {
+        Self {
+            namespace,
+            tag_name: tag_name.into(),
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn html(tag_name: impl Into<Atom>) -> Self {
+        Self::new(Namespace::Html, tag_name)
+    }
+
+    pub fn with_attributes(mut self, attributes: BTreeMap<String, String>) -> Self {
+        self.attributes = attributes;
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -359,11 +456,16 @@ impl Document {
                         })
                         .collect::<Vec<_>>()
                         .join(";");
-                    format!(
-                        "element:{}[{}]",
-                        escape_snapshot(&element.tag_name),
-                        attributes
-                    )
+                    let name = if element.namespace == Namespace::Html {
+                        escape_snapshot(element.tag_name.as_str())
+                    } else {
+                        format!(
+                            "{}:{}",
+                            escape_snapshot(element.namespace.as_str()),
+                            escape_snapshot(element.tag_name.as_str())
+                        )
+                    };
+                    format!("element:{name}[{attributes}]")
                 }
             };
             output.push_str(&format!(
@@ -507,10 +609,7 @@ mod tests {
     use super::*;
 
     fn element(name: &str) -> NodeKind {
-        NodeKind::Element(ElementData {
-            tag_name: name.into(),
-            attributes: BTreeMap::new(),
-        })
+        NodeKind::Element(ElementData::html(name))
     }
 
     #[test]
@@ -660,18 +759,34 @@ mod tests {
             Err(MutationError::CannotReparentRoot)
         );
     }
+
+    #[test]
+    fn element_namespace_and_atom_identity_are_explicit() {
+        let mut doc = Document::new();
+        let name = Atom::from("circle");
+        let cloned = name.clone();
+        assert!(name.ptr_eq(&cloned));
+
+        let node = doc
+            .append_new(
+                doc.root(),
+                NodeKind::Element(ElementData::new(Namespace::Svg, name)),
+            )
+            .unwrap();
+        let NodeKind::Element(element) = &doc.node(node).kind else {
+            panic!("expected element");
+        };
+        assert_eq!(element.namespace, Namespace::Svg);
+        assert_eq!(element.tag_name.as_str(), "circle");
+        assert!(doc.snapshot().contains("element:svg:circle[]"));
+    }
 }
 
 #[cfg(test)]
 mod mutation_stress_tests {
     use super::*;
-    use std::collections::BTreeMap;
-
     fn element(name: &str) -> NodeKind {
-        NodeKind::Element(ElementData {
-            tag_name: name.into(),
-            attributes: BTreeMap::new(),
-        })
+        NodeKind::Element(ElementData::html(name))
     }
 
     fn next(seed: &mut u64) -> u64 {

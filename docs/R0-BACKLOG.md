@@ -34,8 +34,8 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] generation-ordered mutation records for invalidation consumers
 - [x] mutation-history pruning/checkpoint after the active engine consumer advances
 - [x] engine-owned mutation facade prevents session callers from pruning mutation history
-- [ ] element namespace representation
-- [ ] interned atom/string strategy ADR
+- [x] element namespace representation
+- [x] interned atom/string strategy ADR
 
 ### Exit condition
 

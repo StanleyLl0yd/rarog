@@ -1714,10 +1714,7 @@ mod tests {
             attributes.insert("style".into(), style.into());
         }
 
-        NodeKind::Element(ElementData {
-            tag_name: name.into(),
-            attributes,
-        })
+        NodeKind::Element(ElementData::html(name).with_attributes(attributes))
     }
 
     #[test]
@@ -1750,10 +1747,7 @@ mod tests {
         attributes.insert("class".into(), "card".into());
         doc.append_new(
             doc.root(),
-            NodeKind::Element(ElementData {
-                tag_name: "div".into(),
-                attributes,
-            }),
+            NodeKind::Element(ElementData::html("div").with_attributes(attributes)),
         )
         .unwrap();
 
