@@ -633,7 +633,7 @@ tests = """    #[test]
         );
         framebuffer.rasterize(&list);
         assert_eq!(
-            framebuffer.pixels[(1 * 6 + 2) as usize],
+            framebuffer.pixels[8],
             Color::rgb(127, 127, 127)
         );
         assert_eq!(framebuffer.pixels[0], Color::WHITE);
