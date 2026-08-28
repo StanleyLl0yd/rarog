@@ -1,0 +1,143 @@
+name: One-time R0 P1 hardening validation
+
+on:
+  push:
+    paths:
+      - .github/workflows/r0-p1-hardening-temporary.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-p1-exit-hardening
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Apply hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'missing marker: {label}')
+              return text.replace(old, new, 1)
+
+          lib = Path('crates/rarog-engine/src/lib.rs')
+          text = lib.read_text()
+          text = replace_once(
+              text,
+              '''    framebuffer: Framebuffer,\n    dirty: DirtyState,\n}\n''',
+              '''    framebuffer: Framebuffer,\n    dirty: DirtyState,\n    observability: RenderObservability,\n}\n''',
+              'RenderSession fields',
+          )
+          text = replace_once(
+              text,
+              '''            framebuffer: output.framebuffer,\n            dirty: DirtyState::clean_at(generation),\n        })\n''',
+              '''            framebuffer: output.framebuffer,\n            dirty: DirtyState::clean_at(generation),\n            observability: output.observability,\n        })\n''',
+              'RenderSession init',
+          )
+          text = replace_once(
+              text,
+              '''    pub fn dirty_state(&self) -> &DirtyState {\n        &self.dirty\n    }\n\n    pub fn update(&mut self) -> IncrementalReport {\n''',
+              '''    pub fn dirty_state(&self) -> &DirtyState {\n        &self.dirty\n    }\n\n    pub fn observability(&self) -> RenderObservability {\n        self.observability\n    }\n\n    pub fn update(&mut self) -> IncrementalReport {\n''',
+              'RenderSession observability accessor',
+          )
+          lib.write_text(text)
+
+          embedder = Path('crates/rarog-engine/src/embedder.rs')
+          text = embedder.read_text()
+          text = replace_once(
+              text,
+              'use super::{IncrementalReport, RenderError, RenderOptions, RenderSession};\n',
+              'use super::{IncrementalReport, RenderError, RenderObservability, RenderOptions, RenderSession};\n',
+              'embedder import',
+          )
+          text = replace_once(
+              text,
+              '''        Ok(ViewFrame {\n            framebuffer: session.framebuffer(),\n            display_list: session.display_list(),\n            damage: session.damage(),\n            status,\n        })\n''',
+              '''        let full_observability = match status {\n            FrameStatus::Initial | FrameStatus::ViewportRebuild => Some(session.observability()),\n            FrameStatus::Incremental(_) => None,\n        };\n        Ok(ViewFrame {\n            framebuffer: session.framebuffer(),\n            display_list: session.display_list(),\n            damage: session.damage(),\n            status,\n            full_observability,\n        })\n''',
+              'ViewFrame construction',
+          )
+          text = replace_once(
+              text,
+              '''pub struct ViewFrame<'a> {\n    pub framebuffer: &'a Framebuffer,\n    pub display_list: &'a DisplayList,\n    pub damage: &'a DamageRegion,\n    pub status: FrameStatus,\n}\n''',
+              '''pub struct ViewFrame<'a> {\n    pub framebuffer: &'a Framebuffer,\n    pub display_list: &'a DisplayList,\n    pub damage: &'a DamageRegion,\n    pub status: FrameStatus,\n    pub full_observability: Option<RenderObservability>,\n}\n''',
+              'ViewFrame fields',
+          )
+          old = '''        {\n            let frame = view.render(viewport).unwrap();\n            assert_eq!(frame.status, FrameStatus::Initial);\n            assert!(!frame.display_list.commands.is_empty());\n        }\n\n        let frame = view.render(viewport).unwrap();\n        assert!(matches!(\n            frame.status,\n            FrameStatus::Incremental(IncrementalReport {\n                mode: IncrementalMode::Unchanged,\n                ..\n            })\n        ));\n'''
+          new = '''        {\n            let frame = view.render(viewport).unwrap();\n            assert_eq!(frame.status, FrameStatus::Initial);\n            assert!(!frame.display_list.commands.is_empty());\n            let observability = frame\n                .full_observability\n                .expect("initial frame exposes full render observability");\n            assert_eq!(\n                observability.counters.display_commands,\n                frame.display_list.commands.len()\n            );\n        }\n\n        let frame = view.render(viewport).unwrap();\n        assert!(matches!(\n            frame.status,\n            FrameStatus::Incremental(IncrementalReport {\n                mode: IncrementalMode::Unchanged,\n                ..\n            })\n        ));\n        assert_eq!(frame.full_observability, None);\n'''
+          text = replace_once(text, old, new, 'embedder observability test')
+          embedder.write_text(text)
+
+          p1 = Path('crates/rarog-engine/tests/p1_exit.rs')
+          p1.write_text('''use rarog_engine::{\n    BaseUrl, Engine, EngineError, FrameStatus, HostPolicy, NavigationRequest, RequestDisposition,\n    ResourceBudget, ViewId, ViewOptions,\n};\nuse rarog_types::Size;\n\nstruct BlockNavigation;\n\nimpl HostPolicy for BlockNavigation {\n    fn allow_navigation(&self, _view: ViewId, _request: &NavigationRequest) -> bool {\n        false\n    }\n}\n\n#[test]\nfn p1_engine_view_contract_enforces_budgets_and_exposes_observability() {\n    let engine = Engine::builder()\n        .resource_budget(ResourceBudget {\n            max_document_source_bytes: 32,\n            max_viewport_pixels: 20_000,\n        })\n        .build()\n        .expect("valid P1 resource budget");\n    let first_id = engine\n        .create_view(ViewOptions::default())\n        .expect("first view")\n        .id();\n    let mut view = engine\n        .create_view(ViewOptions::default())\n        .expect("second view");\n    assert_ne!(first_id, view.id());\n\n    assert_eq!(\n        view.load_html("x".repeat(33), BaseUrl::about_blank()),\n        Err(EngineError::DocumentSourceLimitExceeded {\n            bytes: 33,\n            limit: 32,\n        })\n    );\n\n    view.load_html("<div>Rarog</div>", BaseUrl::about_blank())\n        .expect("fixture fits source budget");\n    assert!(matches!(\n        view.render(Size {\n            width: 201.0,\n            height: 100.0,\n        }),\n        Err(EngineError::ViewportPixelLimitExceeded {\n            pixels: 20_100,\n            limit: 20_000,\n        })\n    ));\n\n    let viewport = Size {\n        width: 160.0,\n        height: 90.0,\n    };\n    {\n        let frame = view.render(viewport).expect("initial P1 frame");\n        assert_eq!(frame.status, FrameStatus::Initial);\n        let observability = frame\n            .full_observability\n            .expect("full frame metrics must reach the embedder");\n        assert_eq!(\n            observability.counters.display_commands,\n            frame.display_list.commands.len()\n        );\n        assert!(observability.counters.dom_nodes > 0);\n        assert!(observability.counters.fragments > 0);\n    }\n\n    let frame = view.render(viewport).expect("incremental P1 frame");\n    assert!(matches!(frame.status, FrameStatus::Incremental(_)));\n    assert_eq!(frame.full_observability, None);\n}\n\n#[test]\nfn p1_navigation_contract_obeys_host_policy() {\n    let engine = Engine::builder()\n        .host_policy(BlockNavigation)\n        .build()\n        .expect("engine with host policy");\n    let view = engine\n        .create_view(ViewOptions::default())\n        .expect("policy test view");\n\n    assert_eq!(\n        view.navigate(NavigationRequest::new("https://example.test/")),\n        RequestDisposition::Blocked\n    );\n}\n''')
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          marker = '''      - name: R0 exit gate\n        run: cargo test -p rarog-engine --test r0_exit\n'''
+          replacement = marker + '''      - name: P1 embedder exit gate\n        run: cargo test -p rarog-engine --test p1_exit\n'''
+          if text.count(marker) != 2:
+              raise SystemExit(f'expected two R0 exit gates, found {text.count(marker)}')
+          text = text.replace(marker, replacement)
+          ci.write_text(text)
+
+          backlog = Path('docs/R0-BACKLOG.md')
+          text = backlog.read_text()
+          text = replace_once(
+              text,
+              'The R0 exit contract is checked by `cargo test -p rarog-engine --test r0_exit` and documented in `docs/R0-EXIT.md`.\n',
+              'The R0 renderer exit contract is checked by `cargo test -p rarog-engine --test r0_exit`; the host-facing P1 contract is checked by `cargo test -p rarog-engine --test p1_exit`. Both are documented in `docs/R0-EXIT.md`.\n',
+              'backlog exit gate intro',
+          )
+          text = replace_once(
+              text,
+              '''- [x] wall-clock stage timings for parse/style/layout-tree/fragment/paint-list/raster/total\n- [x] structural render counters for DOM/layout/fragments/display commands/damage\n- [x] incremental mode plus dirty/patched-node reporting\n- [x] dependency-free R0 benchmark harness with no performance thresholds or claims\n''',
+              '''- [x] wall-clock stage timings for parse/style/layout-tree/fragment/paint-list/raster/total\n- [x] structural render counters for DOM/layout/fragments/display commands/damage\n- [x] full-frame observability reaches the `Engine`/`View` embedder boundary\n- [x] incremental mode plus dirty/patched-node reporting\n- [x] dependency-free R0 benchmark harness with no performance thresholds or claims\n- [x] dedicated P1 embedder-contract CI gate\n''',
+              'observability checklist',
+          )
+          backlog.write_text(text)
+
+          exit_doc = Path('docs/R0-EXIT.md')
+          text = exit_doc.read_text()
+          text = replace_once(
+              text,
+              '''### Embedder boundary\n\n`Engine` and `View` sit above `RenderSession`. Navigation/resource requests can be forwarded or blocked without implementing a network stack, callbacks do not assume a UI toolkit, and source/viewport resource budgets are enforced at the host-facing boundary.\n''',
+              '''### Embedder boundary\n\n`Engine` and `View` sit above `RenderSession`. Navigation/resource requests can be forwarded or blocked without implementing a network stack, callbacks do not assume a UI toolkit, and source/viewport resource budgets are enforced at the host-facing boundary. Full-render observability is preserved through `RenderSession` and exposed on initial and viewport-rebuild `ViewFrame`s; incremental frames expose their path, dirty/patched counts and elapsed time through `FrameStatus`.\n''',
+              'exit embedder section',
+          )
+          text = replace_once(
+              text,
+              '''`crates/rarog-engine/tests/r0_exit.rs` provides an explicit milestone gate. It verifies that the R0 backlog has no unchecked checklist entries and re-checks the deterministic end-to-end render contract. Both Windows-primary and Linux-portability CI run it. The existing workspace, determinism, incremental, correctness-hardening, bootstrap-render and MSRV gates remain authoritative as well.\n''',
+              '''`crates/rarog-engine/tests/r0_exit.rs` provides the renderer milestone gate. It verifies that the R0 backlog has no unchecked checklist entries and re-checks the deterministic end-to-end render contract. `crates/rarog-engine/tests/p1_exit.rs` independently exercises the host-facing `Engine`/`View` contract, including resource budgets, unique view identities, host policy and full-frame observability. Windows-primary and Linux-portability CI run both gates. The existing workspace, determinism, incremental, correctness-hardening, bootstrap-render and MSRV gates remain authoritative as well.\n''',
+              'exit automated gate section',
+          )
+          exit_doc.write_text(text)
+          PY
+      - name: Format
+        run: cargo fmt --all
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Exit gates
+        run: |
+          cargo test -p rarog-engine --test r0_exit
+          cargo test -p rarog-engine --test p1_exit
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          git config user.name "Stanley Lloyd"
+          git config user.email "131160519+StanleyLl0yd@users.noreply.github.com"
+          git add crates/rarog-engine/src/lib.rs crates/rarog-engine/src/embedder.rs crates/rarog-engine/tests/p1_exit.rs .github/workflows/ci.yml docs/R0-BACKLOG.md docs/R0-EXIT.md
+          git commit -m "R0: harden P1 embedder exit contract"
+          git push origin HEAD:r0-p1-exit-hardening
