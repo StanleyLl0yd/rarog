@@ -84,6 +84,13 @@ jobs:
           if count != 1:
               raise SystemExit(f'engine element_with_id replacements={count}')
           engine.write_text(text, encoding='utf-8')
+
+          bench = Path('crates/rarog-engine/examples/r0_bench.rs')
+          text = bench.read_text(encoding='utf-8')
+          text, count = find_pattern.subn(find_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'benchmark element_with_id replacements={count}')
+          bench.write_text(text, encoding='utf-8')
           PY
           cargo fmt --all
       - name: Check workspace
