@@ -138,6 +138,14 @@ R0 stores an explicit `Namespace` on every `ElementData` and represents the loca
 
 `Atom` is the semantic boundary for frequently repeated engine-owned names. Its R0 storage is a cheap cloneable `Arc<str>` handle, not a process-global interning table. The long-term strategy is document/process-scoped canonical interning behind the same boundary once measurements justify it. Text-node contents and attribute values remain ordinary owned strings. A process-global immortal string table is intentionally rejected because it conflicts with bounded lifetimes, site isolation and explicit resource budgets. See ADR-0024.
 
+## HTML parsing boundary
+
+`rarog-html` exposes a decoded streaming-input contract independently of the bootstrap parser implementation. `StreamingInput` accepts UTF-8 chunks and closes explicitly; source spans in parser diagnostics are UTF-8 byte offsets in that decoded stream. Transport bytes and encoding detection/decoding stay outside this R0 interface.
+
+Recoverable syntax problems produce deterministic `ParseDiagnostic` records with a code, severity, source span and message. Contract failures that prevent parsing from starting or completing use `Result::Err`. The legacy `parse(&str) -> Document` entry point remains a convenience wrapper, while `parse_with_diagnostics` and `parse_stream` expose the reporting boundary.
+
+The R0 implementation buffers chunks until end of input and then runs the bootstrap parser. This proves ownership and reporting contracts only; it does **not** claim incremental tokenization or WHATWG HTML conformance. R1 replaces the bootstrap algorithm behind the adapter with a standards-oriented tokenizer/tree builder without leaking implementation-specific token or node types into DOM/layout callers. See ADR-0025.
+
 ## Style source, selector and cascade boundary
 
 R0 has explicit bootstrap representations for:

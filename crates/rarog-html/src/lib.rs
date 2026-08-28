@@ -66,7 +66,9 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InputNotClosed => formatter.write_str("streaming HTML input must be closed before parsing"),
+            Self::InputNotClosed => {
+                formatter.write_str("streaming HTML input must be closed before parsing")
+            }
         }
     }
 }
@@ -195,7 +197,9 @@ fn parse_buffer(input: &str) -> ParseOutput {
                         diagnostics.push(diagnostic(
                             ParseDiagnosticCode::MismatchedEndTag,
                             span,
-                            format!("end tag </{closing_tag}> closes <{open_tag}> in bootstrap parser"),
+                            format!(
+                                "end tag </{closing_tag}> closes <{open_tag}> in bootstrap parser"
+                            ),
                         ));
                     }
                     stack.pop();
@@ -218,7 +222,9 @@ fn parse_buffer(input: &str) -> ParseOutput {
                     let id = document
                         .append_new(
                             parent,
-                            NodeKind::Element(ElementData::html(tag.clone()).with_attributes(attributes)),
+                            NodeKind::Element(
+                                ElementData::html(tag.clone()).with_attributes(attributes),
+                            ),
                         )
                         .expect("bootstrap parser only appends to valid parents");
                     if !self_closing && !matches_void(document.node(id)) {
@@ -232,7 +238,10 @@ fn parse_buffer(input: &str) -> ParseOutput {
             }
             i = end + 1;
         } else {
-            let next = input[i..].find('<').map(|offset| i + offset).unwrap_or(bytes.len());
+            let next = input[i..]
+                .find('<')
+                .map(|offset| i + offset)
+                .unwrap_or(bytes.len());
             let text = input[i..next]
                 .split_whitespace()
                 .collect::<Vec<_>>()
@@ -397,7 +406,10 @@ mod tests {
         let mut input = StreamingInput::new();
         input.feed("<div>x</div>").unwrap();
 
-        assert!(matches!(parse_stream(input), Err(ParseError::InputNotClosed)));
+        assert!(matches!(
+            parse_stream(input),
+            Err(ParseError::InputNotClosed)
+        ));
     }
 
     #[test]
