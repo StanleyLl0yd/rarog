@@ -476,7 +476,7 @@ fn collect_border(fragment: &Fragment, list: &mut DisplayList) {
 fn item_id(fragment: &Fragment, slot: u8) -> DisplayItemId {
     let source = fragment
         .dom_node
-        .map(|node| node as u64)
+        .map(|node| node.index() as u64)
         .unwrap_or_else(|| (1_u64 << 63) | fragment.layout_node.index() as u64);
     DisplayItemId {
         source,
