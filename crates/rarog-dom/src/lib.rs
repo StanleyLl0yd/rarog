@@ -683,7 +683,7 @@ mod tests {
         assert_eq!(doc.mutation_record_count(), 1);
         assert_eq!(doc.mutation_records_since(consumed).unwrap().count(), 1);
         assert_eq!(
-            doc.mutation_records_since(consumed - 1).unwrap_err(),
+            doc.mutation_records_since(consumed - 1).err().unwrap(),
             MutationHistoryError::RequestedBeforeFloor {
                 requested: consumed - 1,
                 floor: consumed,

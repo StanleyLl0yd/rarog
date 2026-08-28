@@ -227,7 +227,7 @@ fn parse_buffer(input: &str) -> ParseOutput {
                             ),
                         )
                         .expect("bootstrap parser only appends to valid parents");
-                    if !self_closing && !matches_void(document.node(id)) {
+                    if !self_closing && document.node(id).is_some_and(|node| !matches_void(node)) {
                         stack.push(OpenElement {
                             node: id,
                             tag_name: Some(tag),
