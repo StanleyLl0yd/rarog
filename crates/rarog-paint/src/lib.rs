@@ -806,7 +806,7 @@ impl Framebuffer {
             .copied()
             .any(DisplayCommand::is_structural)
         {
-            self.fill_rect(
+            self.clear_rect(
                 Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
                 background,
             );
@@ -814,7 +814,7 @@ impl Framebuffer {
             return;
         }
         for damaged in &damage.rects {
-            self.fill_rect(*damaged, background);
+            self.clear_rect(*damaged, background);
             for command in &list.commands {
                 let (rect, color) = match *command {
                     DisplayCommand::FillRect { rect, color }
@@ -848,6 +848,22 @@ impl Framebuffer {
             for x in x0..x1 {
                 let index = (y * self.width + x) as usize;
                 self.pixels[index] = blend_over(self.pixels[index], color);
+            }
+        }
+    }
+
+    fn clear_rect(&mut self, rect: Rect, color: Color) {
+        let x0 = rect.origin.x.floor().max(0.0) as u32;
+        let y0 = rect.origin.y.floor().max(0.0) as u32;
+        let x1 = (rect.origin.x + rect.size.width)
+            .ceil()
+            .clamp(0.0, self.width as f32) as u32;
+        let y1 = (rect.origin.y + rect.size.height)
+            .ceil()
+            .clamp(0.0, self.height as f32) as u32;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                self.pixels[(y * self.width + x) as usize] = color;
             }
         }
     }
@@ -1120,6 +1136,22 @@ mod tests {
         assert_eq!(list.commands[2], first_command);
         assert_eq!(list.commands[3], replacement);
         assert!(list.has_balanced_structure());
+    }
+
+    #[test]
+    fn damage_clear_overwrites_with_transparent_background() {
+        let size = Size {
+            width: 2.0,
+            height: 2.0,
+        };
+        let mut framebuffer = Framebuffer::new(size, Color::BLACK);
+        let damage = DamageRegion {
+            rects: vec![Rect::new(0.0, 0.0, 1.0, 1.0)],
+        };
+        framebuffer.rasterize_damage(&DisplayList::default(), &damage, Color::TRANSPARENT);
+
+        assert_eq!(framebuffer.pixels[0], Color::TRANSPARENT);
+        assert_eq!(framebuffer.pixels[1], Color::BLACK);
     }
 
     #[test]
