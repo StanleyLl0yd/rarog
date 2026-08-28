@@ -35,7 +35,7 @@ jobs:
       - name: P1 embedder exit gate
         run: cargo test -p rarog-engine --test p1_exit
       - name: R0.1 render correctness gate
-        run: cargo test -p rarog-engine --test render_correctness
+        run: cargo test -p rarog-engine --test r01_correctness
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -65,6 +65,6 @@ jobs:
       - name: P1 embedder exit gate
         run: cargo test -p rarog-engine --test p1_exit
       - name: R0.1 render correctness gate
-        run: cargo test -p rarog-engine --test render_correctness
+        run: cargo test -p rarog-engine --test r01_correctness
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
