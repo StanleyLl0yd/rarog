@@ -8,7 +8,10 @@ fn r1_wpt_focus_manifest_is_nonempty_and_directory_scoped() {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .collect::<Vec<_>>();
 
-    assert!(!entries.is_empty(), "R1 WPT focus manifest must not be empty");
+    assert!(
+        !entries.is_empty(),
+        "R1 WPT focus manifest must not be empty"
+    );
     assert!(
         entries.iter().all(|entry| entry.ends_with('/')),
         "R1 WPT preflight entries must be directory-scoped"
