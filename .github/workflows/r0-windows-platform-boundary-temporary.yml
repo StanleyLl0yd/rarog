@@ -1,0 +1,128 @@
+name: One-time Windows platform boundary validation
+
+on:
+  push:
+    paths:
+      - .github/workflows/r0-windows-platform-boundary-temporary.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-windows-platform-boundary
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Apply platform boundary integration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'missing marker: {label}')
+              return text.replace(old, new, 1)
+
+          path = Path('crates/rarog-engine/src/embedder.rs')
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''use rarog_paint::{\n    DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,\n};\nuse rarog_types::{Color, Size};\n''',
+              '''use rarog_paint::{\n    DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,\n};\nuse rarog_platform::{NullPlatformHost, PlatformCapabilities, PlatformHost};\nuse rarog_types::{Color, Size};\n''',
+              'embedder imports',
+          )
+          text = replace_once(
+              text,
+              '''pub struct EngineBuilder {\n    budget: ResourceBudget,\n    host_policy: Arc<dyn HostPolicy>,\n    event_sink: Arc<dyn EventSink>,\n}\n''',
+              '''pub struct EngineBuilder {\n    budget: ResourceBudget,\n    host_policy: Arc<dyn HostPolicy>,\n    event_sink: Arc<dyn EventSink>,\n    platform_host: Arc<dyn PlatformHost>,\n}\n''',
+              'EngineBuilder fields',
+          )
+          text = replace_once(
+              text,
+              '''        Self {\n            budget: ResourceBudget::default(),\n            host_policy: Arc::new(AllowAllHostPolicy),\n            event_sink: Arc::new(NullEventSink),\n        }\n''',
+              '''        Self {\n            budget: ResourceBudget::default(),\n            host_policy: Arc::new(AllowAllHostPolicy),\n            event_sink: Arc::new(NullEventSink),\n            platform_host: Arc::new(NullPlatformHost),\n        }\n''',
+              'EngineBuilder default',
+          )
+          text = replace_once(
+              text,
+              '''    pub fn event_sink<E>(mut self, sink: E) -> Self\n    where\n        E: EventSink + 'static,\n    {\n        self.event_sink = Arc::new(sink);\n        self\n    }\n\n    pub fn build(self) -> Result<Engine, EngineError> {\n''',
+              '''    pub fn event_sink<E>(mut self, sink: E) -> Self\n    where\n        E: EventSink + 'static,\n    {\n        self.event_sink = Arc::new(sink);\n        self\n    }\n\n    pub fn platform_host<P>(mut self, host: P) -> Self\n    where\n        P: PlatformHost + 'static,\n    {\n        self.platform_host = Arc::new(host);\n        self\n    }\n\n    pub fn build(self) -> Result<Engine, EngineError> {\n''',
+              'platform_host builder method',
+          )
+          text = replace_once(
+              text,
+              '''                budget: self.budget,\n                host_policy: self.host_policy,\n                event_sink: self.event_sink,\n                next_view_id: AtomicU64::new(1),\n''',
+              '''                budget: self.budget,\n                host_policy: self.host_policy,\n                event_sink: self.event_sink,\n                platform_host: self.platform_host,\n                next_view_id: AtomicU64::new(1),\n''',
+              'EngineShared construction',
+          )
+          text = replace_once(
+              text,
+              '''struct EngineShared {\n    budget: ResourceBudget,\n    host_policy: Arc<dyn HostPolicy>,\n    event_sink: Arc<dyn EventSink>,\n    next_view_id: AtomicU64,\n}\n''',
+              '''struct EngineShared {\n    budget: ResourceBudget,\n    host_policy: Arc<dyn HostPolicy>,\n    event_sink: Arc<dyn EventSink>,\n    platform_host: Arc<dyn PlatformHost>,\n    next_view_id: AtomicU64,\n}\n''',
+              'EngineShared fields',
+          )
+          text = replace_once(
+              text,
+              '''    pub fn resource_budget(&self) -> ResourceBudget {\n        self.shared.budget\n    }\n\n    pub fn create_view(&self, options: ViewOptions) -> Result<View, EngineError> {\n''',
+              '''    pub fn resource_budget(&self) -> ResourceBudget {\n        self.shared.budget\n    }\n\n    pub fn platform_name(&self) -> &'static str {\n        self.shared.platform_host.name()\n    }\n\n    pub fn platform_capabilities(&self) -> PlatformCapabilities {\n        self.shared.platform_host.capabilities()\n    }\n\n    pub fn create_view(&self, options: ViewOptions) -> Result<View, EngineError> {\n''',
+              'Engine platform getters',
+          )
+          text = replace_once(
+              text,
+              '''    struct BlockNavigation;\n\n    impl HostPolicy for BlockNavigation {\n        fn allow_navigation(&self, _view: ViewId, _request: &NavigationRequest) -> bool {\n            false\n        }\n    }\n\n    #[test]\n    fn engine_view_loads_renders_and_reuses_session() {\n''',
+              '''    struct BlockNavigation;\n\n    impl HostPolicy for BlockNavigation {\n        fn allow_navigation(&self, _view: ViewId, _request: &NavigationRequest) -> bool {\n            false\n        }\n    }\n\n    struct TestPlatformHost;\n\n    impl PlatformHost for TestPlatformHost {\n        fn name(&self) -> &'static str {\n            "test-platform"\n        }\n\n        fn capabilities(&self) -> PlatformCapabilities {\n            PlatformCapabilities {\n                window_events: true,\n                ..PlatformCapabilities::NONE\n            }\n        }\n    }\n\n    #[test]\n    fn engine_exposes_platform_host_without_platform_specific_types() {\n        let engine = Engine::builder()\n            .platform_host(TestPlatformHost)\n            .build()\n            .unwrap();\n\n        assert_eq!(engine.platform_name(), "test-platform");\n        assert!(\n            engine\n                .platform_capabilities()\n                .supports(rarog_platform::PlatformService::WindowEvents)\n        );\n        assert!(!\n            engine\n                .platform_capabilities()\n                .supports(rarog_platform::PlatformService::GpuCompositor)\n        );\n    }\n\n    #[test]\n    fn engine_view_loads_renders_and_reuses_session() {\n''',
+              'embedder platform test',
+          )
+          path.write_text(text)
+
+          path = Path('docs/R0-BACKLOG.md')
+          text = path.read_text()
+          text = text.replace('- [ ] Windows host/platform crate boundary', '- [x] Windows host/platform crate boundary', 1)
+          path.write_text(text)
+
+          path = Path('docs/ARCHITECTURE.md')
+          text = path.read_text()
+          anchor = '## Engine and embedder boundary\n'
+          section = '''## Platform host boundary\n\nR0 isolates host-platform integration behind two crate layers. `rarog-platform` owns the platform-neutral `PlatformHost` and `PlatformCapabilities` contract consumed by `rarog-engine`. `rarog-platform-windows` is the first target-specific host boundary; engine core never depends on that Windows crate.\n\n`EngineBuilder` accepts a platform host and defaults to `NullPlatformHost`, so headless tests and portability lanes do not need to impersonate a desktop integration. The engine exposes only the host name and capability data. No Win32, WinRT, DirectWrite, Direct3D, HWND, COM, or other Windows-specific type enters DOM/HTML/CSS/layout/paint or the embedder API.\n\nThe Windows boundary deliberately advertises no concrete service capability in R0. Window/events, font/text, input/IME, accessibility, sandbox/process, and GPU/compositor adapters become capabilities only when real implementations exist. `WindowsPlatformHost::try_new` succeeds only on a Windows compilation target, while the crate itself remains buildable on Linux for portability CI. See ADR-0030.\n\n'''
+          if '## Platform host boundary\n' not in text:
+              if anchor not in text:
+                  raise SystemExit('architecture platform anchor missing')
+              text = text.replace(anchor, section + anchor, 1)
+          path.write_text(text)
+
+          path = Path('README.md')
+          text = path.read_text()
+          platform_anchor = '''The engine-owned Web platform code must stay independent of Win32/WinRT/D3D-specific APIs. Windows-specific code will live behind narrow platform adapters so Linux and macOS ports remain possible later without forcing the core architecture to follow the lowest common denominator.\n\n'''
+          platform_addition = platform_anchor + '''R0 now makes that separation concrete: `rarog-platform` defines the platform-neutral host capability contract and `rarog-platform-windows` is the first target-specific boundary. The Windows crate does not yet advertise windowing, font, IME, accessibility, sandbox or GPU capabilities; those are enabled only when real adapters are implemented.\n\n'''
+          if '`rarog-platform` defines the platform-neutral host capability contract' not in text:
+              text = replace_once(text, platform_anchor, platform_addition, 'README platform strategy')
+          workspace_anchor = '''- `rarog-paint` — stable display-item IDs, damage tracking, display list and software rasterizer\n- `rarog-engine` — stateless rendering plus persistent dirty-state / incremental-session orchestration\n'''
+          workspace_replacement = '''- `rarog-paint` — stable display-item IDs, damage tracking, display list and software rasterizer\n- `rarog-platform` — platform-neutral host capability contract\n- `rarog-platform-windows` — Windows-specific host boundary for future adapters\n- `rarog-engine` — stateless rendering plus persistent dirty-state / incremental-session orchestration\n'''
+          text = replace_once(text, workspace_anchor, workspace_replacement, 'README workspace')
+          path.write_text(text)
+          PY
+      - name: Format
+        run: cargo fmt --all
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          git config user.name "Stanley Lloyd"
+          git config user.email "131160519+StanleyLl0yd@users.noreply.github.com"
+          git add Cargo.lock crates/rarog-engine/src/embedder.rs docs/R0-BACKLOG.md docs/ARCHITECTURE.md README.md
+          if ! git diff --cached --quiet; then
+            git commit -m "R0: integrate Windows platform boundary"
+            git push origin HEAD:r0-windows-platform-boundary
+          fi
