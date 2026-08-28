@@ -25,12 +25,15 @@ jobs:
           components: rustfmt
       - name: Apply Unicode backends
         run: |
+          sed -i 's/^    """,$/    "",/' tools/r01_unicode.py
           python tools/r01_unicode.py
           cargo fmt --all
       - name: Check workspace
         run: cargo check --workspace --all-targets
       - name: Test layout Unicode regressions
         run: cargo test -p rarog-layout
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal --no-self-update
       - name: Check MSRV layout
         run: cargo +1.85.0 check -p rarog-layout --all-targets
       - name: Commit applied changes
