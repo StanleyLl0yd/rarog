@@ -1,0 +1,40 @@
+name: One-time paint scopes validation
+
+on:
+  push:
+    paths:
+      - .github/workflows/r0-paint-scopes-temporary.yml
+      - tools/apply_paint_scopes.py
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-paint-scopes
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Apply paint scopes foundation
+        run: python tools/apply_paint_scopes.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          git config user.name "Stanley Lloyd"
+          git config user.email "131160519+StanleyLl0yd@users.noreply.github.com"
+          git add crates/rarog-paint/src/lib.rs docs/ARCHITECTURE.md docs/R0-BACKLOG.md docs/adr/ADR-0027-transform-opacity-and-retained-paint-scopes.md
+          git commit -m "R0: add transform opacity and retained paint scopes"
+          git push origin HEAD:r0-paint-scopes
