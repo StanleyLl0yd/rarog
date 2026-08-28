@@ -132,12 +132,12 @@ Win32, WinRT, Direct3D and other Windows-specific APIs must not leak into DOM, H
 - [x] previous-display-list input and damage output for bootstrap rendering
 - [x] stateful R0 `RenderSession` bootstrap for mutation → dirty state → update orchestration
 - [x] fallible render/session construction for invalid or oversized framebuffer viewports
-- [ ] `Engine` object
-- [ ] `View` object
-- [ ] navigation/request interfaces without networking implementation
-- [ ] callbacks/events without UI assumptions
-- [ ] host policy interface
-- [ ] resource budget data model
+- [x] `Engine` object
+- [x] `View` object
+- [x] navigation/request interfaces without networking implementation
+- [x] callbacks/events without UI assumptions
+- [x] host policy interface
+- [x] resource budget data model
 
 Proposed shape:
 

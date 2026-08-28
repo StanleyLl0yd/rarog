@@ -337,6 +337,14 @@ The stateful incremental tests add invariants for paint-only geometry preservati
 
 This separation is required for later incremental invalidation, parallelism, process isolation, GPU composition and crash recovery.
 
+## Engine and embedder boundary
+
+R0 exposes `Engine` and `View` above `RenderSession`. `Engine` owns shared host policy, UI-neutral event delivery, resource budgets and stable `ViewId` allocation; each `View` owns one loaded inline document and the render session derived from it. This keeps browser-shell ownership out of DOM/layout/paint crates and gives later process isolation a stable host-facing seam.
+
+Navigation and subresource loading are contracts only in R0. `NavigationRequest` and `ResourceRequest` are checked by `HostPolicy` and return either `Blocked` or `ForwardToEmbedder`; the engine performs no network I/O. The same actions are surfaced as `ViewEvent` values through `EventSink`, which has no dependency on a UI toolkit or Windows API. An embedder can therefore decide how to obtain bytes and then call `View::load_html` with decoded text and an opaque `BaseUrl`.
+
+`ResourceBudget` begins with enforced document-source and viewport-pixel limits. The viewport limit cannot exceed the lower-level framebuffer safety cap. Memory/cache/background CPU and lifecycle budgets remain future extensions rather than invented R0 accounting. `View::render` creates a stateful render session on first use, reuses it for an unchanged viewport, and performs a deterministic full session rebuild when the viewport changes. See ADR-0029.
+
 ## Script architecture
 
 Rarog 1.x should initially integrate SpiderMonkey through one replaceable abstraction:

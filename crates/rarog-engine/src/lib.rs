@@ -1,3 +1,6 @@
+mod embedder;
+pub use embedder::*;
+
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{

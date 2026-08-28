@@ -1,4 +1,4 @@
-use super::{IncrementalMode, IncrementalReport, RenderError, RenderOptions, RenderSession};
+use super::{IncrementalReport, RenderError, RenderOptions, RenderSession};
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
@@ -193,13 +193,21 @@ impl fmt::Display for EngineError {
         match self {
             Self::InvalidResourceBudget => formatter.write_str("engine resource budget is invalid"),
             Self::DocumentSourceLimitExceeded { bytes, limit } => {
-                write!(formatter, "document source requires {bytes} bytes; limit is {limit}")
+                write!(
+                    formatter,
+                    "document source requires {bytes} bytes; limit is {limit}"
+                )
             }
             Self::ViewportPixelLimitExceeded { pixels, limit } => {
-                write!(formatter, "viewport requires {pixels} pixels; limit is {limit}")
+                write!(
+                    formatter,
+                    "viewport requires {pixels} pixels; limit is {limit}"
+                )
             }
             Self::NoDocumentLoaded => formatter.write_str("view has no loaded document"),
-            Self::ViewIdExhausted => formatter.write_str("engine view identifier space is exhausted"),
+            Self::ViewIdExhausted => {
+                formatter.write_str("engine view identifier space is exhausted")
+            }
             Self::Render(error) => write!(formatter, "{error}"),
         }
     }
@@ -504,6 +512,7 @@ fn viewport_pixel_count(size: Size) -> Result<u64, RenderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::IncrementalMode;
     use std::sync::Mutex;
 
     #[derive(Clone, Default)]
@@ -627,10 +636,8 @@ mod tests {
             .build()
             .unwrap();
         let view = engine.create_view(ViewOptions::default()).unwrap();
-        let request = ResourceRequest::new(
-            "https://example.test/app.css",
-            RequestDestination::Style,
-        );
+        let request =
+            ResourceRequest::new("https://example.test/app.css", RequestDestination::Style);
 
         assert_eq!(
             view.request_resource(request.clone()),
