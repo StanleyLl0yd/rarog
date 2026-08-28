@@ -1,0 +1,55 @@
+name: One-time parsing contracts validation
+
+on:
+  push:
+    paths:
+      - .github/workflows/r0-parsing-contracts-temporary.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: r0-parsing-contracts
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Update architecture
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('docs/ARCHITECTURE.md')
+          text = path.read_text()
+          anchor = '## Style source, selector and cascade boundary\n'
+          section = '''## HTML parsing boundary\n\n`rarog-html` exposes a decoded streaming-input contract independently of the bootstrap parser implementation. `StreamingInput` accepts UTF-8 chunks and closes explicitly; source spans in parser diagnostics are UTF-8 byte offsets in that decoded stream. Transport bytes and encoding detection/decoding stay outside this R0 interface.\n\nRecoverable syntax problems produce deterministic `ParseDiagnostic` records with a code, severity, source span and message. Contract failures that prevent parsing from starting or completing use `Result::Err`. The legacy `parse(&str) -> Document` entry point remains a convenience wrapper, while `parse_with_diagnostics` and `parse_stream` expose the reporting boundary.\n\nThe R0 implementation buffers chunks until end of input and then runs the bootstrap parser. This proves ownership and reporting contracts only; it does **not** claim incremental tokenization or WHATWG HTML conformance. R1 replaces the bootstrap algorithm behind the adapter with a standards-oriented tokenizer/tree builder without leaking implementation-specific token or node types into DOM/layout callers. See ADR-0025.\n\n'''
+          if anchor not in text:
+              raise SystemExit('architecture parsing anchor missing')
+          if '## HTML parsing boundary\n' not in text:
+              text = text.replace(anchor, section + anchor, 1)
+          path.write_text(text)
+          PY
+      - name: Format
+        run: cargo fmt --all
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          git config user.name "Stanley Lloyd"
+          git config user.email "131160519+StanleyLl0yd@users.noreply.github.com"
+          git add crates/rarog-html/src/lib.rs docs/ARCHITECTURE.md docs/R0-BACKLOG.md docs/adr/ADR-0025-html-parsing-boundary.md
+          if ! git diff --cached --quiet; then
+            git commit -m "R0: finalize parsing contracts"
+            git push origin HEAD:r0-parsing-contracts
+          fi
