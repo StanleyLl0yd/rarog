@@ -6,6 +6,7 @@ on:
       - r0.1/complete-hardening
     paths:
       - tools/r01_paint.py
+      - tools/r01_paint_callers.py
       - .github/workflows/r01-apply-paint.yml
 
 permissions:
@@ -26,6 +27,7 @@ jobs:
       - name: Apply paint hardening
         run: |
           python tools/r01_paint.py
+          python tools/r01_paint_callers.py
           cargo fmt --all
       - name: Check workspace
         run: cargo check --workspace --all-targets
@@ -33,7 +35,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm tools/r01_paint.py .github/workflows/r01-apply-paint.yml
+          rm tools/r01_paint.py tools/r01_paint_callers.py .github/workflows/r01-apply-paint.yml
           git add -A
           git commit -m 'R0.1: make paint boundaries invariant-safe'
           git push origin HEAD:r0.1/complete-hardening
