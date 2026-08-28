@@ -479,6 +479,7 @@ impl RenderSession {
             .filter_map(|(node, flags)| flags.style.then_some(*node))
             .collect::<BTreeSet<_>>();
         let mut requires_full_rebuild = mutation_history_lost;
+        let mut stylesheet_sources_changed = mutation_history_lost;
         for mutation in &mutations {
             match mutation {
                 MutationKind::Attribute { node, name }
@@ -489,14 +490,24 @@ impl RenderSession {
                 MutationKind::Attribute { .. } => {}
                 MutationKind::NodeCreated { .. }
                 | MutationKind::ChildAdded { .. }
-                | MutationKind::Reparented { .. }
-                | MutationKind::CharacterData { .. } => {
+                | MutationKind::Reparented { .. } => {
                     requires_full_rebuild = true;
+                    stylesheet_sources_changed = true;
+                }
+                MutationKind::CharacterData { node } => {
+                    requires_full_rebuild = true;
+                    stylesheet_sources_changed |=
+                        node_is_within_style_element(&self.document, *node);
                 }
             }
         }
 
-        let new_styles = StyleSet::for_document(&self.document);
+        let new_styles = if stylesheet_sources_changed {
+            StyleSet::for_document(&self.document)
+        } else {
+            self.styles.clone()
+        };
+        validate_style_limits(&new_styles, self.limits)?;
         let mut style_updates = Vec::new();
         let mut geometry_changed = false;
         let mut subtree_relayout_safe = true;
@@ -856,6 +867,21 @@ fn validate_viewport_size(viewport: Size) -> Result<(), RenderError> {
     Ok(())
 }
 
+fn node_is_within_style_element(document: &Document, mut node: NodeId) -> bool {
+    while let Some(current) = document.node(node) {
+        if let NodeKind::Element(element) = &current.kind {
+            if element.tag_name.as_str() == "style" {
+                return true;
+            }
+        }
+        let Some(parent) = current.parent else {
+            return false;
+        };
+        node = parent;
+    }
+    false
+}
+
 fn layout_style_for_dom(node: &LayoutNode, dom_node: NodeId) -> Option<ComputedStyle> {
     if node.dom_node == Some(dom_node) {
         return Some(node.style);
@@ -958,11 +984,12 @@ mod tests {
 
     fn element_with_id(document: &Document, id: &str) -> NodeId {
         fn find(document: &Document, node: NodeId, id: &str) -> Option<NodeId> {
-            if let Some(dom_node) = document.node(node)
-                && let NodeKind::Element(element) = &dom_node.kind
-                && element.attributes.get("id").map(String::as_str) == Some(id)
-            {
-                return Some(node);
+            if let Some(dom_node) = document.node(node) {
+                if let NodeKind::Element(element) = &dom_node.kind {
+                    if element.attributes.get("id").map(String::as_str) == Some(id) {
+                        return Some(node);
+                    }
+                }
             }
             document
                 .children(node)

@@ -1430,6 +1430,19 @@ mod tests {
     }
 
     #[test]
+    fn nested_transform_order_follows_display_list_push_order() {
+        let rect = Rect::new(1.0, 1.0, 2.0, 2.0);
+        let transformed = transform_rect(
+            rect,
+            &[
+                Transform2D::translation(10.0, 0.0),
+                Transform2D::scale(2.0, 3.0),
+            ],
+        );
+        assert_eq!(transformed, Rect::new(22.0, 3.0, 4.0, 6.0));
+    }
+
+    #[test]
     fn framebuffer_hash_is_stable() {
         let list = single_fill(1, Rect::new(0.0, 0.0, 2.0, 2.0), Color::BLACK);
         let mut framebuffer = Framebuffer::new(
