@@ -30,6 +30,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: R0 exit gate
+        run: cargo test -p rarog-engine --test r0_exit
       - name: Determinism gate
         run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
       - name: Incremental gate
@@ -71,6 +73,8 @@ jobs:
         run: cargo check --workspace --all-targets
       - name: Test
         run: cargo test --workspace
+      - name: R0 exit gate
+        run: cargo test -p rarog-engine --test r0_exit
       - name: Determinism gate
         run: cargo test -p rarog-engine deterministic_render_snapshot_and_hash
       - name: Incremental gate
