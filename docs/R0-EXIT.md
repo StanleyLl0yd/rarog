@@ -32,7 +32,7 @@ R0 establishes separate DOM, layout-node, fragment and display-item identities. 
 
 ### Embedder boundary
 
-`Engine` and `View` sit above `RenderSession`. Navigation/resource requests can be forwarded or blocked without implementing a network stack, callbacks do not assume a UI toolkit, and source/viewport resource budgets are enforced at the host-facing boundary.
+`Engine` and `View` sit above `RenderSession`. Navigation/resource requests can be forwarded or blocked without implementing a network stack, callbacks do not assume a UI toolkit, and source/viewport resource budgets are enforced at the host-facing boundary. Full-render observability is preserved through `RenderSession` and exposed on initial and viewport-rebuild `ViewFrame`s; incremental frames expose their path, dirty/patched counts and elapsed time through `FrameStatus`.
 
 ### Platform boundary
 
@@ -59,7 +59,7 @@ This separation matters: R0 is complete only because its goal is architectural p
 
 ## Automated exit gate
 
-`crates/rarog-engine/tests/r0_exit.rs` provides an explicit milestone gate. It verifies that the R0 backlog has no unchecked checklist entries and re-checks the deterministic end-to-end render contract. Both Windows-primary and Linux-portability CI run it. The existing workspace, determinism, incremental, correctness-hardening, bootstrap-render and MSRV gates remain authoritative as well.
+`crates/rarog-engine/tests/r0_exit.rs` provides the renderer milestone gate. It verifies that the R0 backlog has no unchecked checklist entries and re-checks the deterministic end-to-end render contract. `crates/rarog-engine/tests/p1_exit.rs` independently exercises the host-facing `Engine`/`View` contract, including resource budgets, unique view identities, host policy and full-frame observability. Windows-primary and Linux-portability CI run both gates. The existing workspace, determinism, incremental, correctness-hardening, bootstrap-render and MSRV gates remain authoritative as well.
 
 The R0 backlog is historical scope documentation after exit. New work should be added to `docs/ROADMAP.md` under the appropriate later milestone instead of reopening R0 unless an actual Ember invariant is found to be incorrect.
 

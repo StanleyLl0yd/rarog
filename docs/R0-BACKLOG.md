@@ -6,7 +6,7 @@ R0 has one purpose: prove the shape of the engine with a deterministic end-to-en
 
 Windows is the primary platform lane for R0. Linux remains a portability lane so engine-core code does not accidentally depend on Windows APIs.
 
-The R0 exit contract is checked by `cargo test -p rarog-engine --test r0_exit` and documented in `docs/R0-EXIT.md`.
+The R0 renderer exit contract is checked by `cargo test -p rarog-engine --test r0_exit`; the host-facing P1 contract is checked by `cargo test -p rarog-engine --test p1_exit`. Both are documented in `docs/R0-EXIT.md`.
 
 ## P0 — repository health
 
@@ -158,8 +158,10 @@ Concrete services are intentionally staged after R0:
 
 - [x] wall-clock stage timings for parse/style/layout-tree/fragment/paint-list/raster/total
 - [x] structural render counters for DOM/layout/fragments/display commands/damage
+- [x] full-frame observability reaches the `Engine`/`View` embedder boundary
 - [x] incremental mode plus dirty/patched-node reporting
 - [x] dependency-free R0 benchmark harness with no performance thresholds or claims
+- [x] dedicated P1 embedder-contract CI gate
 
 Allocator-backed peak/persistent byte accounting is deliberately deferred until there is a trustworthy measurement boundary.
 

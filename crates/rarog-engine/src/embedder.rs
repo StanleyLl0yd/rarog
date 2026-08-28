@@ -1,4 +1,4 @@
-use super::{IncrementalReport, RenderError, RenderOptions, RenderSession};
+use super::{IncrementalReport, RenderError, RenderObservability, RenderOptions, RenderSession};
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
@@ -485,11 +485,16 @@ impl View {
             .session
             .as_ref()
             .expect("successful render establishes an active session");
+        let full_observability = match status {
+            FrameStatus::Initial | FrameStatus::ViewportRebuild => Some(session.observability()),
+            FrameStatus::Incremental(_) => None,
+        };
         Ok(ViewFrame {
             framebuffer: session.framebuffer(),
             display_list: session.display_list(),
             damage: session.damage(),
             status,
+            full_observability,
         })
     }
 
@@ -508,6 +513,7 @@ pub struct ViewFrame<'a> {
     pub display_list: &'a DisplayList,
     pub damage: &'a DamageRegion,
     pub status: FrameStatus,
+    pub full_observability: Option<RenderObservability>,
 }
 
 fn viewport_pixel_count(size: Size) -> Result<u64, RenderError> {
@@ -612,6 +618,13 @@ mod tests {
             let frame = view.render(viewport).unwrap();
             assert_eq!(frame.status, FrameStatus::Initial);
             assert!(!frame.display_list.commands.is_empty());
+            let observability = frame
+                .full_observability
+                .expect("initial frame exposes full render observability");
+            assert_eq!(
+                observability.counters.display_commands,
+                frame.display_list.commands.len()
+            );
         }
 
         let frame = view.render(viewport).unwrap();
@@ -622,6 +635,7 @@ mod tests {
                 ..
             })
         ));
+        assert_eq!(frame.full_observability, None);
     }
 
     #[test]
