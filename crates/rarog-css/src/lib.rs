@@ -141,7 +141,10 @@ impl Selector {
     }
 
     pub fn matches(&self, document: &Document, node: NodeId) -> bool {
-        let NodeKind::Element(element) = &document.node(node).kind else {
+        let Some(node) = document.node(node) else {
+            return false;
+        };
+        let NodeKind::Element(element) = &node.kind else {
             return false;
         };
 
@@ -263,7 +266,8 @@ pub struct StyleSharingKey {
 }
 
 pub fn style_sharing_key(document: &Document, node: NodeId) -> Option<StyleSharingKey> {
-    let NodeKind::Element(element) = &document.node(node).kind else {
+    let node = document.node(node)?;
+    let NodeKind::Element(element) = &node.kind else {
         return None;
     };
     Some(StyleSharingKey {
@@ -457,7 +461,10 @@ struct Winner {
 }
 
 pub fn computed_style(document: &Document, node: NodeId, styles: &StyleSet) -> ComputedStyle {
-    let NodeKind::Element(element) = &document.node(node).kind else {
+    let Some(dom_node) = document.node(node) else {
+        return ComputedStyle::default();
+    };
+    let NodeKind::Element(element) = &dom_node.kind else {
         return ComputedStyle::default();
     };
 
@@ -586,7 +593,10 @@ fn style_from_winners(winners: &BTreeMap<PropertyId, Winner>) -> ComputedStyle {
 }
 
 fn collect_style_elements(document: &Document, node: NodeId, output: &mut Vec<String>) {
-    if let NodeKind::Element(element) = &document.node(node).kind {
+    let Some(current) = document.node(node) else {
+        return;
+    };
+    if let NodeKind::Element(element) = &current.kind {
         if element.tag_name.as_str() == "style" {
             let mut text = String::new();
             collect_text(document, node, &mut text);
@@ -597,15 +607,15 @@ fn collect_style_elements(document: &Document, node: NodeId, output: &mut Vec<St
         }
     }
 
-    for child in document.children(node) {
+    for child in document.children(node).unwrap_or(&[]) {
         collect_style_elements(document, *child, output);
     }
 }
 
 fn collect_text(document: &Document, node: NodeId, output: &mut String) {
-    for child in document.children(node) {
-        match &document.node(*child).kind {
-            NodeKind::Text(text) => {
+    for child in document.children(node).unwrap_or(&[]) {
+        match document.node(*child).map(|node| &node.kind) {
+            Some(NodeKind::Text(text)) => {
                 if !output.is_empty() {
                     output.push(' ');
                 }
@@ -912,7 +922,12 @@ impl InvalidationSet {
             through_generation: document.generation(),
         };
 
-        for record in document.mutation_records_since(generation) {
+        let records = match document.mutation_records_since(generation) {
+            Ok(records) => records,
+            Err(_) => return Self::for_stylesheet_change(document),
+        };
+
+        for record in records {
             match &record.kind {
                 MutationKind::NodeCreated { node } => {
                     set.mark(*node, DirtyFlags::STYLE_LAYOUT_PAINT);
@@ -954,7 +969,7 @@ impl InvalidationSet {
                 MutationKind::Attribute { node, name } => {
                     if matches!(name.as_str(), "id" | "class" | "style") {
                         set.mark(*node, DirtyFlags::STYLE_LAYOUT_PAINT);
-                        let parent = document.node(*node).parent;
+                        let parent = document.node(*node).and_then(|node| node.parent);
                         set.mark_ancestors(document, parent, DirtyFlags::LAYOUT_PAINT);
                     }
                     if matches!(name.as_str(), "id" | "class") {
@@ -963,7 +978,7 @@ impl InvalidationSet {
                 }
                 MutationKind::CharacterData { node } => {
                     set.mark(*node, DirtyFlags::LAYOUT_PAINT);
-                    let parent = document.node(*node).parent;
+                    let parent = document.node(*node).and_then(|node| node.parent);
                     set.mark_ancestors(document, parent, DirtyFlags::LAYOUT_PAINT);
                 }
             }
@@ -993,7 +1008,7 @@ impl InvalidationSet {
     fn mark_ancestors(&mut self, document: &Document, mut node: Option<NodeId>, flags: DirtyFlags) {
         while let Some(current) = node {
             self.mark(current, flags);
-            node = document.node(current).parent;
+            node = document.node(current).and_then(|node| node.parent);
         }
     }
 
@@ -1007,12 +1022,12 @@ impl InvalidationSet {
         for dependency in dependencies.for_attribute(attribute) {
             match dependency.scope {
                 SelectorDependencyScope::Descendants => {
-                    for child in document.children(node) {
+                    for child in document.children(node).unwrap_or(&[]) {
                         mark_subtree(document, *child, self, DirtyFlags::STYLE_LAYOUT_PAINT);
                     }
                 }
                 SelectorDependencyScope::FollowingSiblings => {
-                    if let Some(parent) = document.node(node).parent {
+                    if let Some(parent) = document.node(node).and_then(|node| node.parent) {
                         self.mark_following_sibling_subtrees(
                             document,
                             parent,
@@ -1052,7 +1067,9 @@ impl InvalidationSet {
         node: NodeId,
         flags: DirtyFlags,
     ) {
-        let children = document.children(parent);
+        let Some(children) = document.children(parent) else {
+            return;
+        };
         let Some(position) = children.iter().position(|child| *child == node) else {
             self.mark_child_subtrees(document, parent, flags);
             return;
@@ -1063,7 +1080,7 @@ impl InvalidationSet {
     }
 
     fn mark_child_subtrees(&mut self, document: &Document, parent: NodeId, flags: DirtyFlags) {
-        for child in document.children(parent) {
+        for child in document.children(parent).unwrap_or(&[]) {
             mark_subtree(document, *child, self, flags);
         }
     }
@@ -1071,7 +1088,7 @@ impl InvalidationSet {
 
 fn mark_subtree(document: &Document, node: NodeId, set: &mut InvalidationSet, flags: DirtyFlags) {
     set.mark(node, flags);
-    for child in document.children(node) {
+    for child in document.children(node).unwrap_or(&[]) {
         mark_subtree(document, *child, set, flags);
     }
 }

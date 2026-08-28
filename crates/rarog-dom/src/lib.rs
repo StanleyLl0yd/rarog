@@ -167,6 +167,24 @@ pub struct MutationRecord {
     pub kind: MutationKind,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MutationHistoryError {
+    RequestedBeforeFloor { requested: u64, floor: u64 },
+}
+
+impl fmt::Display for MutationHistoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RequestedBeforeFloor { requested, floor } => write!(
+                formatter,
+                "mutation history requested from generation {requested}, but history before {floor} was pruned"
+            ),
+        }
+    }
+}
+
+impl Error for MutationHistoryError {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MutationError {
     InvalidNode(NodeId),
@@ -275,27 +293,32 @@ impl Document {
         id.index() < self.nodes.len()
     }
 
-    pub fn node(&self, id: NodeId) -> &Node {
-        &self.nodes[id.index()]
-    }
-
-    pub fn try_node(&self, id: NodeId) -> Option<&Node> {
+    pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.index())
     }
 
-    pub fn children(&self, id: NodeId) -> &[NodeId] {
-        &self.nodes[id.index()].children
+    pub fn try_node(&self, id: NodeId) -> Option<&Node> {
+        self.node(id)
     }
 
-    pub fn mutation_records_since(&self, generation: u64) -> impl Iterator<Item = &MutationRecord> {
-        assert!(
-            generation >= self.mutation_floor,
-            "mutation history before generation {} was pruned",
-            self.mutation_floor
-        );
-        self.mutations
+    pub fn children(&self, id: NodeId) -> Option<&[NodeId]> {
+        self.node(id).map(|node| node.children.as_slice())
+    }
+
+    pub fn mutation_records_since(
+        &self,
+        generation: u64,
+    ) -> Result<impl Iterator<Item = &MutationRecord>, MutationHistoryError> {
+        if generation < self.mutation_floor {
+            return Err(MutationHistoryError::RequestedBeforeFloor {
+                requested: generation,
+                floor: self.mutation_floor,
+            });
+        }
+        Ok(self
+            .mutations
             .iter()
-            .filter(move |record| record.generation > generation)
+            .filter(move |record| record.generation > generation))
     }
 
     pub fn mutation_history_floor(&self) -> u64 {
@@ -642,8 +665,8 @@ mod tests {
             .append_new(doc.root(), NodeKind::Text("hello".into()))
             .unwrap();
 
-        assert_eq!(doc.node(child).parent, Some(doc.root()));
-        assert_eq!(doc.children(doc.root()), &[child]);
+        assert_eq!(doc.node(child).unwrap().parent, Some(doc.root()));
+        assert_eq!(doc.children(doc.root()).unwrap(), &[child]);
         assert_eq!(doc.validate_invariants(), Ok(()));
     }
 
@@ -658,7 +681,14 @@ mod tests {
         assert_eq!(doc.prune_mutations_through(consumed), 1);
         assert_eq!(doc.mutation_history_floor(), consumed);
         assert_eq!(doc.mutation_record_count(), 1);
-        assert_eq!(doc.mutation_records_since(consumed).count(), 1);
+        assert_eq!(doc.mutation_records_since(consumed).unwrap().count(), 1);
+        assert_eq!(
+            doc.mutation_records_since(consumed - 1).err().unwrap(),
+            MutationHistoryError::RequestedBeforeFloor {
+                requested: consumed - 1,
+                floor: consumed,
+            }
+        );
     }
 
     #[test]
@@ -670,9 +700,9 @@ mod tests {
 
         doc.append_child(second, child).unwrap();
 
-        assert!(doc.children(first).is_empty());
-        assert_eq!(doc.children(second), &[child]);
-        assert_eq!(doc.node(child).parent, Some(second));
+        assert!(doc.children(first).unwrap().is_empty());
+        assert_eq!(doc.children(second).unwrap(), &[child]);
+        assert_eq!(doc.node(child).unwrap().parent, Some(second));
         assert_eq!(doc.validate_invariants(), Ok(()));
     }
 
@@ -708,7 +738,7 @@ mod tests {
             doc.append_child(text, detached),
             Err(MutationError::CannotAppendToText(text))
         );
-        assert_eq!(doc.node(detached).parent, None);
+        assert_eq!(doc.node(detached).unwrap().parent, None);
     }
 
     #[test]
@@ -742,6 +772,7 @@ mod tests {
 
         let records = doc
             .mutation_records_since(generation)
+            .unwrap()
             .cloned()
             .collect::<Vec<_>>();
 
@@ -796,7 +827,7 @@ mod tests {
                 NodeKind::Element(ElementData::new(Namespace::Svg, name)),
             )
             .unwrap();
-        let NodeKind::Element(element) = &doc.node(node).kind else {
+        let NodeKind::Element(element) = &doc.node(node).unwrap().kind else {
             panic!("expected element");
         };
         assert_eq!(element.namespace, Namespace::Svg);
@@ -815,6 +846,7 @@ mod tests {
 #[cfg(test)]
 mod mutation_stress_tests {
     use super::*;
+
     fn element(name: &str) -> NodeKind {
         NodeKind::Element(ElementData::html(name))
     }

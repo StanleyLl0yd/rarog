@@ -348,16 +348,21 @@ impl RenderSession {
     pub fn update(&mut self) -> IncrementalReport {
         let update_started = Instant::now();
         let from_generation = self.dirty.through_generation();
-        let mutations = self
-            .document
-            .mutation_records_since(from_generation)
-            .map(|record| record.kind.clone())
-            .collect::<Vec<_>>();
+        let (mutations, mutation_history_lost) =
+            match self.document.mutation_records_since(from_generation) {
+                Ok(records) => (
+                    records
+                        .map(|record| record.kind.clone())
+                        .collect::<Vec<_>>(),
+                    false,
+                ),
+                Err(_) => (Vec::new(), true),
+            };
         self.dirty.capture(&self.document, &self.styles);
         let through_generation = self.dirty.through_generation();
         let dirty_nodes = self.dirty.entries().len();
 
-        if mutations.is_empty() || dirty_nodes == 0 {
+        if !mutation_history_lost && (mutations.is_empty() || dirty_nodes == 0) {
             self.damage = DamageRegion::default();
             self.dirty.clear();
             self.document.prune_mutations_through(through_generation);
@@ -377,7 +382,7 @@ impl RenderSession {
             .iter()
             .filter_map(|(node, flags)| flags.style.then_some(*node))
             .collect::<BTreeSet<_>>();
-        let mut requires_full_rebuild = false;
+        let mut requires_full_rebuild = mutation_history_lost;
         for mutation in &mutations {
             match mutation {
                 MutationKind::Attribute { node, name }
@@ -734,20 +739,27 @@ mod tests {
     fn first_element(document: &Document) -> NodeId {
         *document
             .children(document.root())
+            .expect("document root is valid")
             .iter()
-            .find(|node| matches!(&document.node(**node).kind, NodeKind::Element(_)))
+            .find(|node| {
+                document
+                    .node(**node)
+                    .is_some_and(|node| matches!(&node.kind, NodeKind::Element(_)))
+            })
             .expect("fixture contains an element")
     }
 
     fn element_with_id(document: &Document, id: &str) -> NodeId {
         fn find(document: &Document, node: NodeId, id: &str) -> Option<NodeId> {
-            if let NodeKind::Element(element) = &document.node(node).kind
+            if let Some(dom_node) = document.node(node)
+                && let NodeKind::Element(element) = &dom_node.kind
                 && element.attributes.get("id").map(String::as_str) == Some(id)
             {
                 return Some(node);
             }
             document
                 .children(node)
+                .unwrap_or(&[])
                 .iter()
                 .find_map(|child| find(document, *child, id))
         }

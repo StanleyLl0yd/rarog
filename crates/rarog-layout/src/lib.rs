@@ -1362,7 +1362,8 @@ impl<'a> LayoutTreeBuilder<'a> {
     }
 
     fn build_node(&mut self, doc: &Document, node: NodeId) -> Option<LayoutNode> {
-        let (kind, style) = match &doc.node(node).kind {
+        let dom_node = doc.node(node)?;
+        let (kind, style) = match &dom_node.kind {
             NodeKind::Document => (LayoutNodeKind::Root, ComputedStyle::default()),
             NodeKind::Text(text) => (
                 LayoutNodeKind::Text(TextRun::new(text.clone())),
@@ -1379,7 +1380,7 @@ impl<'a> LayoutTreeBuilder<'a> {
 
         let id = self.allocate_id();
         let mut children = Vec::new();
-        for child in doc.children(node) {
+        for child in doc.children(node).unwrap_or(&[]) {
             if let Some(layout_child) = self.build_node(doc, *child) {
                 children.push(layout_child);
             }
