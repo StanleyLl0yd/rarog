@@ -16,10 +16,7 @@ fn foreign_node_reads_are_rejected_without_panicking() {
 fn pruned_mutation_history_is_reported_without_panicking() {
     let mut document = Document::new();
     document
-        .append_new(
-            document.root(),
-            NodeKind::Element(ElementData::html("div")),
-        )
+        .append_new(document.root(), NodeKind::Element(ElementData::html("div")))
         .expect("fixture node is valid");
     let floor = document.generation();
     document.prune_mutations_through(floor);
