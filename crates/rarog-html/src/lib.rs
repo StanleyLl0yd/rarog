@@ -378,8 +378,8 @@ mod tests {
         assert_eq!(output.document.validate_invariants(), Ok(()));
         assert!(output.document.generation() > 0);
         assert!(output.diagnostics.is_empty());
-        let html = output.document.children(output.document.root())[0];
-        let NodeKind::Element(element) = &output.document.node(html).kind else {
+        let html = output.document.children(output.document.root()).unwrap()[0];
+        let NodeKind::Element(element) = &output.document.node(html).unwrap().kind else {
             panic!("expected html element");
         };
         assert_eq!(element.namespace, rarog_dom::Namespace::Html);

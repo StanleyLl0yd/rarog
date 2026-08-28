@@ -461,10 +461,10 @@ struct Winner {
 }
 
 pub fn computed_style(document: &Document, node: NodeId, styles: &StyleSet) -> ComputedStyle {
-    let Some(node) = document.node(node) else {
+    let Some(dom_node) = document.node(node) else {
         return ComputedStyle::default();
     };
-    let NodeKind::Element(element) = &node.kind else {
+    let NodeKind::Element(element) = &dom_node.kind else {
         return ComputedStyle::default();
     };
 
