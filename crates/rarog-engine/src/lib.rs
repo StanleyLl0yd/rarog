@@ -23,12 +23,16 @@ pub struct RenderOptions {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderError {
+    InvalidViewportSize,
     Framebuffer(FramebufferError),
 }
 
 impl std::fmt::Display for RenderError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidViewportSize => {
+                formatter.write_str("viewport dimensions must be non-negative")
+            }
             Self::Framebuffer(error) => write!(formatter, "{error}"),
         }
     }
@@ -284,6 +288,63 @@ impl RenderSession {
         self.observability
     }
 
+    pub fn resize(&mut self, viewport: Size) -> Result<(), RenderError> {
+        validate_viewport_size(viewport)?;
+        let total_started = Instant::now();
+
+        let stage_started = Instant::now();
+        let styles = StyleSet::for_document(&self.document);
+        let style = stage_started.elapsed();
+
+        let stage_started = Instant::now();
+        let tree = build_layout_tree(&self.document, &styles);
+        let layout_tree = stage_started.elapsed();
+
+        let stage_started = Instant::now();
+        let fragments = relayout_tree(&tree, viewport);
+        let fragment = stage_started.elapsed();
+        let layout = LayoutOutput { tree, fragments };
+
+        let stage_started = Instant::now();
+        let display_list = build_display_list(&layout.fragments);
+        let damage = DamageRegion::between(Some(&self.display_list), &display_list);
+        let paint_list = stage_started.elapsed();
+
+        let stage_started = Instant::now();
+        let mut framebuffer = Framebuffer::try_new(viewport, self.options.background)?;
+        framebuffer.rasterize(&display_list);
+        let raster = stage_started.elapsed();
+
+        let generation = self.document.generation();
+        self.document.prune_mutations_through(generation);
+        self.options.viewport = viewport;
+        self.styles = styles;
+        self.layout = layout;
+        self.display_list = display_list;
+        self.damage = damage;
+        self.framebuffer = framebuffer;
+        self.dirty = DirtyState::clean_at(generation);
+        self.observability = RenderObservability {
+            timings: RenderTimings {
+                parse: Duration::ZERO,
+                style,
+                layout_tree,
+                fragment,
+                paint_list,
+                raster,
+                total: total_started.elapsed(),
+            },
+            counters: RenderCounters {
+                dom_nodes: self.document.node_count(),
+                layout_nodes: self.layout.tree.node_count(),
+                fragments: self.layout.fragments.fragment_count(),
+                display_commands: self.display_list.commands.len(),
+                damage_rects: self.damage.rects.len(),
+            },
+        };
+        Ok(())
+    }
+
     pub fn update(&mut self) -> IncrementalReport {
         let update_started = Instant::now();
         let from_generation = self.dirty.through_generation();
@@ -516,6 +577,7 @@ pub fn render_html_against(
     options: RenderOptions,
     previous_display_list: Option<&DisplayList>,
 ) -> Result<RenderOutput, RenderError> {
+    validate_viewport_size(options.viewport)?;
     let total_started = Instant::now();
 
     let stage_started = Instant::now();
@@ -573,6 +635,13 @@ pub fn render_html_against(
         framebuffer,
         observability,
     })
+}
+
+fn validate_viewport_size(viewport: Size) -> Result<(), RenderError> {
+    if viewport.width < 0.0 || viewport.height < 0.0 {
+        return Err(RenderError::InvalidViewportSize);
+    }
+    Ok(())
 }
 
 fn layout_style_for_dom(node: &LayoutNode, dom_node: NodeId) -> Option<ComputedStyle> {
@@ -818,6 +887,40 @@ mod tests {
     }
 
     #[test]
+    fn resize_preserves_current_document_state() {
+        let source =
+            "<div id=\"hero\" style=\"width:80px;height:20px;background:#112233\">Rarog</div>";
+        let expected_source =
+            "<div id=\"hero\" style=\"width:96px;height:20px;background:#445566\">Rarog</div>";
+        let mut session = session(source, deterministic_options());
+        let hero = element_with_id(session.document(), "hero");
+        session
+            .document_mut()
+            .set_attribute(hero, "style", "width:96px;height:20px;background:#445566")
+            .unwrap();
+
+        let resized_options = RenderOptions {
+            viewport: Size {
+                width: 220.0,
+                height: 120.0,
+            },
+            background: Color::WHITE,
+        };
+        session.resize(resized_options.viewport).unwrap();
+        let expected = render_ok(expected_source, resized_options);
+
+        assert_eq!(session.framebuffer().width, 220);
+        assert_eq!(session.framebuffer().height, 120);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(session.document().mutation_record_count(), 0);
+        assert!(session.dirty_state().is_clean());
+        assert_eq!(session.observability().timings.parse, Duration::ZERO);
+    }
+
+    #[test]
     fn paint_only_update_reuses_layout_and_fragment_geometry() {
         let mut session = session(
             "<div style=\"width:80px;height:20px;background:#112233\">Rarog</div>",
@@ -1015,5 +1118,20 @@ mod render_boundary_hardening_tests {
             error,
             RenderError::Framebuffer(FramebufferError::NonFiniteSize)
         ));
+    }
+
+    #[test]
+    fn negative_viewport_is_rejected() {
+        let result = render_html(
+            "<div>x</div>",
+            RenderOptions {
+                viewport: Size {
+                    width: -1.0,
+                    height: 100.0,
+                },
+                background: Color::WHITE,
+            },
+        );
+        assert!(matches!(result, Err(RenderError::InvalidViewportSize)));
     }
 }
