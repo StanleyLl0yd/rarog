@@ -25,6 +25,7 @@ jobs:
           components: rustfmt,clippy
       - name: Apply final preflight code
         run: |
+          sed -i 's/fn opacity_composes_across_nested_scopes()/fn framebuffer_hash_is_stable()/' tools/r01_final_code.py
           python tools/r01_final_code.py
           cargo fmt --all
       - name: Check workspace
