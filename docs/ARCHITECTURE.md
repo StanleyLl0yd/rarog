@@ -273,9 +273,9 @@ The display list remains backend-neutral. R0 `DisplayItemId` values now contain 
 
 Clip commands are explicit backend-neutral display-list operations. R0 rasterization maintains a nested rectangular clip stack. Damage-scoped rasterization conservatively falls back to a full framebuffer refresh whenever clips are present; clip-aware retained damage remains intentionally deferred until stacking and fragmentation semantics are defined.
 
-Stacking contexts are represented as explicit balanced display-list scopes with stable context IDs. R0 does not yet assign CSS stacking order, opacity, transforms, or compositing behavior to these scopes; the representation exists so those semantics can be added without changing the display-list contract again.
+Stacking contexts, transforms and opacity are represented as explicit balanced display-list scopes. `Transform2D` is a backend-neutral affine transform and `Opacity` is a clamped scalar. The R0 software raster path applies nested transforms to rectangular paint bounds, intersects transformed clips in device space and source-over blends opacity-modulated colors. This remains a bootstrap raster model: it does not define CSS transform-origin, stacking order, isolation groups or compositor surfaces.
 
-Retained display-list replacement operates on exact contiguous command ranges rather than unordered ID sets. A patch is accepted only when the previous range is contiguous and both replacement and resulting lists preserve unique IDs and balanced structural scopes.
+Retained display-list replacement operates on exact contiguous command ranges rather than unordered ID sets. A patch is accepted only when the live range still contains the exact previous commands, the range begins and ends in the same outer structural scope state, and the replacement/result preserve unique IDs and balanced clip/stacking/transform/opacity scopes. Because display-item identity includes fragment ordinal, one fragment can be patched inside nested stacking/clip scopes without colliding with sibling fragments from the same source node.
 
 Fragment identity is explicitly one-to-many with layout identity. A layout node may emit multiple fragments, each carrying a stable ordinal within that source node. The R0 proof case uses bootstrap fixed-advance text fragmentation in narrow containing blocks; it is an architectural multiplicity test, not a standards line-breaking implementation. Display-item identity uses the fragment ordinal rather than the ephemeral FragmentId so multiple fragments remain distinct without coupling retained paint to snapshot allocation order.
 
@@ -294,7 +294,7 @@ Damage is computed by comparing previous and current display lists by item ID:
 - removed item → old bounds are damaged;
 - new item → new bounds are damaged.
 
-The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. R0 can replace the stable command range belonging to an affected fragment subtree and preserve unrelated commands; if a stable previous range does not exist, it falls back to display-list regeneration. The software framebuffer clears damaged rectangles to the frame background and replays only command portions intersecting those rectangles. Clip/transform-aware damage, occlusion, stacking-aware retained updates and compositor damage remain later work.
+The current `DamageRegion` intentionally stores conservative rectangles without advanced coalescing. For structural display lists it derives conservative device-space paint bounds through transform and clip scopes; structural damage rasterization still uses a full-frame refresh so correctness does not depend on partial replay across compositing scopes. R0 can replace the stable command range belonging to an affected fragment subtree and preserve unrelated commands; if a stable previous range or structural proof does not exist, it falls back to display-list regeneration. Occlusion, CSS stacking-order semantics, isolated opacity groups and compositor damage remain later work.
 
 See ADR-0008.
 

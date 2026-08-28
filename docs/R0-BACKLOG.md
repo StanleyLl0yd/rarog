@@ -103,11 +103,11 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] stable framebuffer hash
 - [x] clip commands with nested software-raster clip-stack semantics and conservative damage fallback
 - [x] stacking-context representation with explicit balanced display-list scopes
-- [ ] transforms/opacity representation
+- [x] transforms/opacity representation
 - [x] retained display-list replacement experiment for affected fragment subtrees
 - [x] retained display-list v2 uses exact contiguous ranges and preserves clip/stacking scope balance
 - [x] damage-scoped software raster update instead of full framebuffer rerasterization
-- [ ] fragmentation/stacking/clip-aware retained display-list updates
+- [x] fragmentation/stacking/clip-aware retained display-list updates
 
 ## P0 — platform boundary
 
