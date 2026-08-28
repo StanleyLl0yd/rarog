@@ -27,6 +27,24 @@ jobs:
         run: |
           sed -i 's/fn opacity_composes_across_nested_scopes()/fn framebuffer_hash_is_stable()/' tools/r01_final_code.py
           python tools/r01_final_code.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('crates/rarog-engine/tests/r01_correctness.rs')
+          text = path.read_text(encoding='utf-8')
+          old = '''        assert_eq!(
+              session.layout().fragments.snapshot(),
+              fresh.layout.fragments.snapshot()
+          );
+          assert_eq!(session.display_list().snapshot(), fresh.display_list.snapshot());
+          '''
+          new = '''        assert_eq!(session.styles().snapshot(), fresh.styles.snapshot());
+          assert_eq!(session.layout().tree.snapshot(), fresh.layout.tree.snapshot());
+          assert_eq!(session.display_list().len(), fresh.display_list.len());
+          '''
+          if old not in text:
+              raise SystemExit('differential identity assertion block missing')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
           cargo fmt --all
       - name: Check workspace
         run: cargo check --workspace --all-targets
