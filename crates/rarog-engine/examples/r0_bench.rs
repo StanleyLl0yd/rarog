@@ -90,7 +90,7 @@ where
         let mut session = RenderSession::new(FIXTURE, RenderOptions::default()).unwrap();
         let hero = element_with_id(session.document(), "hero");
         mutate(&mut session, hero);
-        let report = session.update();
+        let report = session.update().expect("benchmark update succeeds");
         assert_eq!(report.mode, expected);
         total += report.elapsed;
         black_box(session.framebuffer().stable_hash64());

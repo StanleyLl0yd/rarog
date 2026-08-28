@@ -37,7 +37,7 @@ fn update_style(source: &str, style: &str) -> (RenderSession, IncrementalMode) {
         .document_mut()
         .set_attribute(target, "style", style)
         .expect("style mutation succeeds");
-    let mode = session.update().mode;
+    let mode = session.update().expect("incremental update succeeds").mode;
     (session, mode)
 }
 
@@ -105,7 +105,13 @@ fn vertical_flow_and_structural_fallback_are_preserved() {
         .document_mut()
         .append_new(target, NodeKind::Text("!".into()))
         .expect("structural mutation succeeds");
-    assert_eq!(structural.update().mode, IncrementalMode::FullRebuild);
+    assert_eq!(
+        structural
+            .update()
+            .expect("incremental update succeeds")
+            .mode,
+        IncrementalMode::FullRebuild
+    );
 }
 
 #[test]

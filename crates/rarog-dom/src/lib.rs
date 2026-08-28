@@ -293,6 +293,53 @@ impl Document {
         id.index() < self.nodes.len()
     }
 
+    pub fn is_connected(&self, id: NodeId) -> bool {
+        if !self.contains(id) {
+            return false;
+        }
+        let mut cursor = Some(id);
+        let mut steps = 0usize;
+        while let Some(current) = cursor {
+            if current == self.root {
+                return true;
+            }
+            steps += 1;
+            if steps > self.nodes.len() {
+                return false;
+            }
+            cursor = self.nodes[current.index()].parent;
+        }
+        false
+    }
+
+    pub fn max_depth(&self) -> usize {
+        let mut max_depth = 0usize;
+        let mut stack = vec![(self.root, 1usize)];
+        while let Some((node, depth)) = stack.pop() {
+            max_depth = max_depth.max(depth);
+            if let Some(current) = self.node(node) {
+                stack.extend(
+                    current
+                        .children
+                        .iter()
+                        .copied()
+                        .map(|child| (child, depth + 1)),
+                );
+            }
+        }
+        max_depth
+    }
+
+    pub fn text_scalar_count(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter_map(|node| match &node.kind {
+                NodeKind::Text(text) => Some(text.chars().count()),
+                NodeKind::Document | NodeKind::Element(_) => None,
+            })
+            .fold(0usize, usize::saturating_add)
+    }
+
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.index())
     }
@@ -840,6 +887,25 @@ mod tests {
         let document = Document::new();
         assert_eq!(document.root().index(), 0);
         assert_eq!(document.root().to_string(), "0");
+    }
+
+    #[test]
+    fn connectedness_depth_and_text_accounting_are_iterative_and_explicit() {
+        let mut document = Document::new();
+        let first = document
+            .append_new(document.root(), element("div"))
+            .unwrap();
+        let second = document.append_new(first, element("span")).unwrap();
+        document
+            .append_new(second, NodeKind::Text("Rarog".into()))
+            .unwrap();
+        let detached = document.create_node(element("section")).unwrap();
+
+        assert!(document.is_connected(document.root()));
+        assert!(document.is_connected(second));
+        assert!(!document.is_connected(detached));
+        assert_eq!(document.max_depth(), 4);
+        assert_eq!(document.text_scalar_count(), 5);
     }
 }
 

@@ -21,9 +21,62 @@ pub struct RenderOptions {
     pub background: Color,
 }
 
+pub const DEFAULT_MAX_RENDER_SOURCE_BYTES: usize = 16 * 1024 * 1024;
+pub const DEFAULT_MAX_DOM_NODES: usize = 65_536;
+pub const DEFAULT_MAX_DOM_DEPTH: usize = 512;
+pub const DEFAULT_MAX_TEXT_SCALARS: usize = 4_000_000;
+pub const DEFAULT_MAX_CSS_RULES: usize = 100_000;
+pub const DEFAULT_MAX_FRAGMENTS: usize = 131_072;
+pub const DEFAULT_MAX_DISPLAY_COMMANDS: usize = 524_288;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderLimits {
+    pub max_document_source_bytes: usize,
+    pub max_dom_nodes: usize,
+    pub max_dom_depth: usize,
+    pub max_text_scalars: usize,
+    pub max_css_rules: usize,
+    pub max_fragments: usize,
+    pub max_display_commands: usize,
+}
+
+impl Default for RenderLimits {
+    fn default() -> Self {
+        Self {
+            max_document_source_bytes: DEFAULT_MAX_RENDER_SOURCE_BYTES,
+            max_dom_nodes: DEFAULT_MAX_DOM_NODES,
+            max_dom_depth: DEFAULT_MAX_DOM_DEPTH,
+            max_text_scalars: DEFAULT_MAX_TEXT_SCALARS,
+            max_css_rules: DEFAULT_MAX_CSS_RULES,
+            max_fragments: DEFAULT_MAX_FRAGMENTS,
+            max_display_commands: DEFAULT_MAX_DISPLAY_COMMANDS,
+        }
+    }
+}
+
+impl RenderLimits {
+    pub fn is_valid(self) -> bool {
+        self.max_document_source_bytes > 0
+            && self.max_dom_nodes > 0
+            && self.max_dom_depth > 0
+            && self.max_text_scalars > 0
+            && self.max_css_rules > 0
+            && self.max_fragments > 0
+            && self.max_display_commands > 0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderError {
     InvalidViewportSize,
+    InvalidRenderLimits,
+    DocumentSourceLimitExceeded { bytes: usize, limit: usize },
+    DomNodeLimitExceeded { nodes: usize, limit: usize },
+    DomDepthLimitExceeded { depth: usize, limit: usize },
+    TextScalarLimitExceeded { scalars: usize, limit: usize },
+    CssRuleLimitExceeded { rules: usize, limit: usize },
+    FragmentLimitExceeded { fragments: usize, limit: usize },
+    DisplayCommandLimitExceeded { commands: usize, limit: usize },
     Framebuffer(FramebufferError),
 }
 
@@ -33,6 +86,34 @@ impl std::fmt::Display for RenderError {
             Self::InvalidViewportSize => {
                 formatter.write_str("viewport dimensions must be non-negative")
             }
+            Self::InvalidRenderLimits => formatter.write_str("render limits must be non-zero"),
+            Self::DocumentSourceLimitExceeded { bytes, limit } => write!(
+                formatter,
+                "document source requires {bytes} bytes; limit is {limit}"
+            ),
+            Self::DomNodeLimitExceeded { nodes, limit } => write!(
+                formatter,
+                "document contains {nodes} nodes; limit is {limit}"
+            ),
+            Self::DomDepthLimitExceeded { depth, limit } => {
+                write!(formatter, "document depth is {depth}; limit is {limit}")
+            }
+            Self::TextScalarLimitExceeded { scalars, limit } => write!(
+                formatter,
+                "document contains {scalars} text scalars; limit is {limit}"
+            ),
+            Self::CssRuleLimitExceeded { rules, limit } => write!(
+                formatter,
+                "document contains {rules} CSS rules; limit is {limit}"
+            ),
+            Self::FragmentLimitExceeded { fragments, limit } => write!(
+                formatter,
+                "layout produced {fragments} fragments; limit is {limit}"
+            ),
+            Self::DisplayCommandLimitExceeded { commands, limit } => write!(
+                formatter,
+                "paint produced {commands} display commands; limit is {limit}"
+            ),
             Self::Framebuffer(error) => write!(formatter, "{error}"),
         }
     }
@@ -222,6 +303,7 @@ impl DocumentEditor<'_> {
 
 pub struct RenderSession {
     options: RenderOptions,
+    limits: RenderLimits,
     document: Document,
     styles: StyleSet,
     layout: LayoutOutput,
@@ -234,11 +316,20 @@ pub struct RenderSession {
 
 impl RenderSession {
     pub fn new(source: &str, options: RenderOptions) -> Result<Self, RenderError> {
-        let mut output = render_html(source, options)?;
+        Self::new_with_limits(source, options, RenderLimits::default())
+    }
+
+    pub fn new_with_limits(
+        source: &str,
+        options: RenderOptions,
+        limits: RenderLimits,
+    ) -> Result<Self, RenderError> {
+        let mut output = render_html_with_limits(source, options, limits)?;
         let generation = output.document.generation();
         output.document.prune_mutations_through(generation);
         Ok(Self {
             options,
+            limits,
             document: output.document,
             styles: output.styles,
             layout: output.layout,
@@ -290,10 +381,12 @@ impl RenderSession {
 
     pub fn resize(&mut self, viewport: Size) -> Result<(), RenderError> {
         validate_viewport_size(viewport)?;
+        validate_document_limits(&self.document, self.limits)?;
         let total_started = Instant::now();
 
         let stage_started = Instant::now();
         let styles = StyleSet::for_document(&self.document);
+        validate_style_limits(&styles, self.limits)?;
         let style = stage_started.elapsed();
 
         let stage_started = Instant::now();
@@ -304,9 +397,11 @@ impl RenderSession {
         let fragments = relayout_tree(&tree, viewport);
         let fragment = stage_started.elapsed();
         let layout = LayoutOutput { tree, fragments };
+        validate_layout_limits(&layout, self.limits)?;
 
         let stage_started = Instant::now();
         let display_list = build_display_list(&layout.fragments);
+        validate_display_list_limits(&display_list, self.limits)?;
         let damage = DamageRegion::between(Some(&self.display_list), &display_list);
         let paint_list = stage_started.elapsed();
 
@@ -345,7 +440,8 @@ impl RenderSession {
         Ok(())
     }
 
-    pub fn update(&mut self) -> IncrementalReport {
+    pub fn update(&mut self) -> Result<IncrementalReport, RenderError> {
+        validate_document_limits(&self.document, self.limits)?;
         let update_started = Instant::now();
         let from_generation = self.dirty.through_generation();
         let (mutations, mutation_history_lost) =
@@ -366,14 +462,14 @@ impl RenderSession {
             self.damage = DamageRegion::default();
             self.dirty.clear();
             self.document.prune_mutations_through(through_generation);
-            return IncrementalReport {
+            return Ok(IncrementalReport {
                 mode: IncrementalMode::Unchanged,
                 from_generation,
                 through_generation,
                 dirty_nodes,
                 patched_nodes: 0,
                 elapsed: update_started.elapsed(),
-            };
+            });
         }
 
         let mut style_candidates = self
@@ -548,14 +644,15 @@ impl RenderSession {
 
         self.dirty.clear();
         self.document.prune_mutations_through(through_generation);
-        IncrementalReport {
+        validate_render_state_limits(&self.styles, &self.layout, &self.display_list, self.limits)?;
+        Ok(IncrementalReport {
             mode,
             from_generation,
             through_generation,
             dirty_nodes,
             patched_nodes,
             elapsed: update_started.elapsed(),
-        }
+        })
     }
 
     fn full_rebuild(&mut self, styles: StyleSet) {
@@ -574,7 +671,15 @@ impl RenderSession {
 }
 
 pub fn render_html(source: &str, options: RenderOptions) -> Result<RenderOutput, RenderError> {
-    render_html_against(source, options, None)
+    render_html_with_limits(source, options, RenderLimits::default())
+}
+
+pub fn render_html_with_limits(
+    source: &str,
+    options: RenderOptions,
+    limits: RenderLimits,
+) -> Result<RenderOutput, RenderError> {
+    render_html_against_with_limits(source, options, None, limits)
 }
 
 pub fn render_html_against(
@@ -582,15 +687,40 @@ pub fn render_html_against(
     options: RenderOptions,
     previous_display_list: Option<&DisplayList>,
 ) -> Result<RenderOutput, RenderError> {
+    render_html_against_with_limits(
+        source,
+        options,
+        previous_display_list,
+        RenderLimits::default(),
+    )
+}
+
+pub fn render_html_against_with_limits(
+    source: &str,
+    options: RenderOptions,
+    previous_display_list: Option<&DisplayList>,
+    limits: RenderLimits,
+) -> Result<RenderOutput, RenderError> {
     validate_viewport_size(options.viewport)?;
+    if !limits.is_valid() {
+        return Err(RenderError::InvalidRenderLimits);
+    }
+    if source.len() > limits.max_document_source_bytes {
+        return Err(RenderError::DocumentSourceLimitExceeded {
+            bytes: source.len(),
+            limit: limits.max_document_source_bytes,
+        });
+    }
     let total_started = Instant::now();
 
     let stage_started = Instant::now();
     let document = rarog_html::parse(source);
     let parse = stage_started.elapsed();
+    validate_document_limits(&document, limits)?;
 
     let stage_started = Instant::now();
     let styles = StyleSet::for_document(&document);
+    validate_style_limits(&styles, limits)?;
     let style = stage_started.elapsed();
 
     let stage_started = Instant::now();
@@ -601,9 +731,11 @@ pub fn render_html_against(
     let fragments = relayout_tree(&tree, options.viewport);
     let fragment = stage_started.elapsed();
     let layout = LayoutOutput { tree, fragments };
+    validate_layout_limits(&layout, limits)?;
 
     let stage_started = Instant::now();
     let display_list = build_display_list(&layout.fragments);
+    validate_display_list_limits(&display_list, limits)?;
     let damage = DamageRegion::between(previous_display_list, &display_list);
     let paint_list = stage_started.elapsed();
 
@@ -640,6 +772,81 @@ pub fn render_html_against(
         framebuffer,
         observability,
     })
+}
+
+fn validate_document_limits(document: &Document, limits: RenderLimits) -> Result<(), RenderError> {
+    if !limits.is_valid() {
+        return Err(RenderError::InvalidRenderLimits);
+    }
+    let nodes = document.node_count();
+    if nodes > limits.max_dom_nodes {
+        return Err(RenderError::DomNodeLimitExceeded {
+            nodes,
+            limit: limits.max_dom_nodes,
+        });
+    }
+    let depth = document.max_depth();
+    if depth > limits.max_dom_depth {
+        return Err(RenderError::DomDepthLimitExceeded {
+            depth,
+            limit: limits.max_dom_depth,
+        });
+    }
+    let scalars = document.text_scalar_count();
+    if scalars > limits.max_text_scalars {
+        return Err(RenderError::TextScalarLimitExceeded {
+            scalars,
+            limit: limits.max_text_scalars,
+        });
+    }
+    Ok(())
+}
+
+fn validate_style_limits(styles: &StyleSet, limits: RenderLimits) -> Result<(), RenderError> {
+    let rules = styles.rule_count();
+    if rules > limits.max_css_rules {
+        return Err(RenderError::CssRuleLimitExceeded {
+            rules,
+            limit: limits.max_css_rules,
+        });
+    }
+    Ok(())
+}
+
+fn validate_layout_limits(layout: &LayoutOutput, limits: RenderLimits) -> Result<(), RenderError> {
+    let fragments = layout.fragments.fragment_count();
+    if fragments > limits.max_fragments {
+        return Err(RenderError::FragmentLimitExceeded {
+            fragments,
+            limit: limits.max_fragments,
+        });
+    }
+    Ok(())
+}
+
+fn validate_display_list_limits(
+    display_list: &DisplayList,
+    limits: RenderLimits,
+) -> Result<(), RenderError> {
+    let commands = display_list.commands.len();
+    if commands > limits.max_display_commands {
+        return Err(RenderError::DisplayCommandLimitExceeded {
+            commands,
+            limit: limits.max_display_commands,
+        });
+    }
+    Ok(())
+}
+
+fn validate_render_state_limits(
+    styles: &StyleSet,
+    layout: &LayoutOutput,
+    display_list: &DisplayList,
+    limits: RenderLimits,
+) -> Result<(), RenderError> {
+    validate_style_limits(styles, limits)?;
+    validate_layout_limits(layout, limits)?;
+    validate_display_list_limits(display_list, limits)
 }
 
 fn validate_viewport_size(viewport: Size) -> Result<(), RenderError> {
@@ -794,7 +1001,7 @@ mod tests {
             .set_attribute(hero, "style", "background:#445566")
             .unwrap();
 
-        let report = session.update();
+        let report = session.update().expect("incremental update succeeds");
         assert_eq!(report.mode, IncrementalMode::PaintOnlyReuse);
         assert!(report.dirty_nodes >= 1);
         assert_eq!(report.patched_nodes, 1);
@@ -947,7 +1154,7 @@ mod tests {
             .document_mut()
             .set_attribute(node, "style", "width:80px;height:20px;background:#445566")
             .unwrap();
-        let report = session.update();
+        let report = session.update().expect("incremental update succeeds");
 
         assert_eq!(report.mode, IncrementalMode::PaintOnlyReuse);
         assert_eq!(report.patched_nodes, 1);
@@ -971,7 +1178,7 @@ mod tests {
             .document_mut()
             .set_attribute(node, "style", "width:96px;height:20px;background:#445566")
             .unwrap();
-        let report = session.update();
+        let report = session.update().expect("incremental update succeeds");
 
         assert_eq!(report.mode, IncrementalMode::SubtreeRelayout);
         assert_eq!(session.layout().tree.snapshot(), layout_before);
@@ -1004,7 +1211,7 @@ mod tests {
             .set_attribute(target, "style", "height:32px")
             .unwrap();
 
-        let report = session.update();
+        let report = session.update().expect("incremental update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(report.mode, IncrementalMode::FlowRelayout);
@@ -1043,7 +1250,7 @@ mod tests {
             .append_new(parent, NodeKind::Text("!".into()))
             .unwrap();
 
-        let report = session.update();
+        let report = session.update().expect("incremental update succeeds");
         assert_eq!(report.mode, IncrementalMode::FullRebuild);
     }
 
@@ -1060,7 +1267,7 @@ mod tests {
             .document_mut()
             .set_attribute(node, "title", "bootstrap metadata")
             .unwrap();
-        let report = session.update();
+        let report = session.update().expect("incremental update succeeds");
 
         assert_eq!(report.mode, IncrementalMode::Unchanged);
         assert_eq!(session.framebuffer().stable_hash64(), framebuffer_before);
