@@ -270,7 +270,12 @@ impl RenderSession {
             };
         }
 
-        let mut style_candidates = BTreeSet::new();
+        let mut style_candidates = self
+            .dirty
+            .entries()
+            .iter()
+            .filter_map(|(node, flags)| flags.style.then_some(*node))
+            .collect::<BTreeSet<_>>();
         let mut requires_full_rebuild = false;
         for mutation in &mutations {
             match mutation {
