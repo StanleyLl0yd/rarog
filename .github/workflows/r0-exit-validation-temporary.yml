@@ -1,4 +1,4 @@
-name: One-time R0 exit validation
+name: One-time R0 exit validation rerun
 
 on:
   push:
