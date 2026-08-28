@@ -433,7 +433,7 @@ impl RenderSession {
                 dom_nodes: self.document.node_count(),
                 layout_nodes: self.layout.tree.node_count(),
                 fragments: self.layout.fragments.fragment_count(),
-                display_commands: self.display_list.commands.len(),
+                display_commands: self.display_list.len(),
                 damage_rects: self.damage.rects.len(),
             },
         };
@@ -758,7 +758,7 @@ pub fn render_html_against_with_limits(
             dom_nodes: document.node_count(),
             layout_nodes: layout.tree.node_count(),
             fragments: layout.fragments.fragment_count(),
-            display_commands: display_list.commands.len(),
+            display_commands: display_list.len(),
             damage_rects: damage.rects.len(),
         },
     };
@@ -828,7 +828,7 @@ fn validate_display_list_limits(
     display_list: &DisplayList,
     limits: RenderLimits,
 ) -> Result<(), RenderError> {
-    let commands = display_list.commands.len();
+    let commands = display_list.len();
     if commands > limits.max_display_commands {
         return Err(RenderError::DisplayCommandLimitExceeded {
             commands,
@@ -983,7 +983,7 @@ mod tests {
         assert_eq!(counters.dom_nodes, first.document.node_count());
         assert_eq!(counters.layout_nodes, first.layout.tree.node_count());
         assert_eq!(counters.fragments, first.layout.fragments.fragment_count());
-        assert_eq!(counters.display_commands, first.display_list.commands.len());
+        assert_eq!(counters.display_commands, first.display_list.len());
         assert_eq!(counters.damage_rects, first.damage.rects.len());
         assert!(first.observability.timings.total >= first.observability.timings.raster);
         assert_eq!(
@@ -1015,7 +1015,7 @@ mod tests {
             RenderOptions::default(),
         );
 
-        assert!(!output.display_list.commands.is_empty());
+        assert!(!output.display_list.is_empty());
         assert!(!output.layout.fragments.root.children.is_empty());
         assert_eq!(output.framebuffer.width, 1024);
         assert_eq!(output.framebuffer.height, 768);
@@ -1038,7 +1038,7 @@ mod tests {
         let fragment = &output.layout.fragments.root.children[0];
         assert_eq!(fragment.boxes.content_box.size.width, 100.0);
         assert_eq!(fragment.boxes.border_box.size.width, 124.0);
-        assert!(output.display_list.commands.len() >= 6);
+        assert!(output.display_list.len() >= 6);
     }
 
     #[test]

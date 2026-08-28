@@ -64,7 +64,7 @@ fn p1_engine_view_contract_enforces_budgets_and_exposes_observability() {
             .expect("full frame metrics must reach the embedder");
         assert_eq!(
             observability.counters.display_commands,
-            frame.display_list.commands.len()
+            frame.display_list.len()
         );
         assert!(observability.counters.dom_nodes > 0);
         assert!(observability.counters.fragments > 0);

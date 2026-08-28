@@ -647,13 +647,13 @@ mod tests {
         {
             let frame = view.render(viewport).unwrap();
             assert_eq!(frame.status, FrameStatus::Initial);
-            assert!(!frame.display_list.commands.is_empty());
+            assert!(!frame.display_list.is_empty());
             let observability = frame
                 .full_observability
                 .expect("initial frame exposes full render observability");
             assert_eq!(
                 observability.counters.display_commands,
-                frame.display_list.commands.len()
+                frame.display_list.len()
             );
         }
 
