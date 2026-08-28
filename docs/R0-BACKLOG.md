@@ -45,9 +45,9 @@ DOM ownership must not assume that renderer, networking or host live in the same
 
 - [x] bootstrap parser behind `rarog_html::parse`
 - [x] parser output checked against DOM invariants in debug/test paths
-- [ ] define streaming input abstraction
-- [ ] define parser error/reporting model
-- [ ] ADR: standards parser strategy
+- [x] define streaming input abstraction
+- [x] define parser error/reporting model
+- [x] ADR: standards parser strategy
 - [ ] replace bootstrap parser with standards-oriented implementation/adapter
 
 ## P0 — style system boundary
