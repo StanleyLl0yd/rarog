@@ -20,7 +20,7 @@ Before adding a subsystem:
 
 Changes that knowingly reduce site isolation, origin isolation or capability boundaries for performance are not accepted as normal optimizations.
 
-When changing invalidation or incremental rendering, add tests for both the reuse path and the conservative fallback. A paint-only mutation should prove which derived state was reused; a geometry/structure mutation should prove that the fallback still produces correct deterministic output. The dedicated `render_correctness` integration target is the required high-level regression gate; unit tests remain the place for narrow subsystem invariants.
+When changing invalidation or incremental rendering, add tests for both the reuse path and the conservative fallback. A paint-only mutation should prove which derived state was reused; a geometry/structure mutation should prove that the fallback still produces correct deterministic output. The dedicated `r01_correctness` integration target is the required high-level regression gate; unit tests remain the place for narrow subsystem invariants.
 
 Before opening a PR, run:
 
@@ -31,7 +31,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test -p rarog-engine --test r0_exit
 cargo test -p rarog-engine --test p1_exit
-cargo test -p rarog-engine --test render_correctness
+cargo test -p rarog-engine --test r01_correctness
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 
