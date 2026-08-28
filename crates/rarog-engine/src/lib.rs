@@ -225,6 +225,7 @@ pub struct RenderSession {
     damage: DamageRegion,
     framebuffer: Framebuffer,
     dirty: DirtyState,
+    observability: RenderObservability,
 }
 
 impl RenderSession {
@@ -241,6 +242,7 @@ impl RenderSession {
             damage: output.damage,
             framebuffer: output.framebuffer,
             dirty: DirtyState::clean_at(generation),
+            observability: output.observability,
         })
     }
 
@@ -276,6 +278,10 @@ impl RenderSession {
 
     pub fn dirty_state(&self) -> &DirtyState {
         &self.dirty
+    }
+
+    pub fn observability(&self) -> RenderObservability {
+        self.observability
     }
 
     pub fn update(&mut self) -> IncrementalReport {
