@@ -1,0 +1,28 @@
+[package]
+name = "rarog-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.85"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rarog-engine = { path = "../crates/rarog-engine" }
+rarog-html = { path = "../crates/rarog-html" }
+
+[[bin]]
+name = "html_parse"
+path = "fuzz_targets/html_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "render_html"
+path = "fuzz_targets/render_html.rs"
+test = false
+doc = false
+bench = false
