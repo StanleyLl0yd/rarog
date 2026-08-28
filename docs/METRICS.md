@@ -33,7 +33,7 @@ R0 tracks deterministic regression fingerprints before performance claims are al
 
 A changed fingerprint is evidence to investigate, not automatically a regression: intentional rendering changes may update the expected fingerprint after review.
 
-The high-level deterministic and incremental contract is also exercised by the dedicated `rarog-engine` `render_correctness` integration target so a required CI gate cannot silently disappear because a filtered unit-test name was removed or renamed.
+The high-level deterministic and incremental contract is also exercised by the dedicated `rarog-engine` `r01_correctness` integration target so a required CI gate cannot silently disappear because a filtered unit-test name was removed or renamed.
 
 ## Responsiveness
 
