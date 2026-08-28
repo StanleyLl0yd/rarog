@@ -189,7 +189,7 @@ test = """    #[test]
     fn detached_mutations_do_not_dirty_the_connected_document() {
         let mut document = Document::new();
         let detached = document
-            .create_node(NodeKind::Element(ElementData::html("div")))
+            .create_node(NodeKind::Element(rarog_dom::ElementData::html("div")))
             .unwrap();
         let generation = document.generation();
         document.set_attribute(detached, "class", "card").unwrap();
