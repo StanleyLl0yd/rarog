@@ -72,8 +72,7 @@ fn deterministic_full_render_contract() {
 
 #[test]
 fn incremental_paths_match_fresh_render() {
-    let base =
-        "<div id=\"target\" style=\"width:80px;height:20px;background:#112233\">Rarog</div>";
+    let base = "<div id=\"target\" style=\"width:80px;height:20px;background:#112233\">Rarog</div>";
 
     let paint_style = "width:80px;height:20px;background:#445566";
     let paint_source =
