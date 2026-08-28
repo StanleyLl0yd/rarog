@@ -4,55 +4,44 @@
 
 The first production target for both **Rarog Web Engine** and **Zorya Browser** is **Windows 10/11**.
 
-The engine core remains portable by design. Linux is kept as an early portability/CI target, while macOS becomes an active target later. Platform-specific APIs must stay behind adapters so Windows-first delivery does not turn into Windows-coupled Web semantics.
+The engine core remains portable by design. Linux is kept as an early portability/CI target, while macOS becomes an active target later. Platform-specific APIs stay behind adapters so Windows-first delivery does not turn into Windows-coupled Web semantics.
 
-## R0 — Ember (current bootstrap)
+## R0 — Ember — complete
 
-Goal: deterministic `HTML → DOM → style/cascade → Layout Tree → Fragment Tree → display list/damage → pixels` path with the first stateful invalidation/reuse experiment.
+Goal: deterministic `HTML → DOM → style/cascade → Layout Tree → Fragment Tree → display list/damage → pixels` path plus the first stateful invalidation/reuse and host/embedder boundaries.
 
-Current foundation:
+R0 exits with:
 
-- workspace crate boundaries established;
-- checked DOM mutation API, mutation records and invariant validation;
-- document generation tracking;
-- stylesheet/source model with bootstrap selector representation;
-- cascade priority data for origin, layer, specificity and source order;
-- typed bootstrap property/value representation;
-- user-agent, author `<style>` and inline style participation;
-- selector invalidation keys and mutation-derived dirty primitives;
-- persistent engine-owned dirty state across updates;
-- stateful `RenderSession` orchestration;
-- first real incremental path: paint-only computed-style changes reuse existing Layout Tree / Fragment Tree geometry;
-- conservative deterministic full-rebuild fallback for structural, text or geometry-affecting changes;
-- separate DOM, layout-node and fragment identities;
-- explicit content/padding/border/margin boxes;
-- stable display-item IDs and display-list damage comparison;
-- deterministic DOM/style/layout/fragment/display-list snapshots;
-- deterministic framebuffer and combined render-signature hashes;
-- headless shell renders a fixture to an image;
-- Windows-primary CI plus Linux portability CI.
+- checked DOM mutations, mutation records, generation tracking and mutation-history ownership;
+- explicit element namespaces and atom/string ownership boundary;
+- decoded streaming HTML input plus deterministic parser diagnostics behind a replaceable bootstrap parser;
+- stylesheet/source, selector, cascade and typed bootstrap property/value structures;
+- selector invalidation keys, relational dependency metadata and persistent engine-owned dirty state;
+- separate DOM/layout/fragment identities and disposable derived layout state;
+- containing-block, intrinsic-size, grapheme/bidi/font-fallback/shaping-request foundations;
+- paint-only reuse, subtree relayout, root-flow suffix reflow and conservative deterministic fallbacks;
+- backend-neutral display list, clip/stacking/transform/opacity scopes, retained-range validation and damage-scoped software raster;
+- deterministic snapshots, framebuffer hash and combined render-signature hash;
+- render observability plus a benchmark harness with no performance claims;
+- `Engine`/`View`, request forwarding, host policy, callbacks and enforced resource budgets;
+- platform-neutral `rarog-platform` plus the Windows-specific `rarog-platform-windows` host seam;
+- Windows-primary CI, Linux portability CI and Rust 1.85 MSRV checks;
+- a dedicated automated R0 exit gate.
 
-Remaining R0 exit work:
+See `R0-BACKLOG.md` and `R0-EXIT.md` for the completed scope and explicit deferrals.
 
-- benchmark harness with no performance claims;
-- clearer containing-block and intrinsic-sizing interfaces;
-- element namespace representation and atom/string strategy decision;
-- streaming/parser error boundaries;
-- first geometry-affecting incremental relayout slice;
-- retained display-list and damage-scoped raster experiments.
-
-## R1 — Flame
+## R1 — Flame — next
 
 - replace bootstrap HTML parsing with a standards-oriented tokenizer/tree-builder adapter;
 - replace bootstrap CSS parsing with a standards-oriented tokenizer/parser adapter;
 - expand selector matching to combinators, attributes and pseudo-classes in measured slices;
 - real cascade details including importance, inheritance and CSS-wide values;
-- block/inline formatting contexts;
+- block and inline formatting contexts;
 - image resource abstraction;
-- text shaping abstraction;
-- invalidation graph that expands the R0 persistent dirty-state experiment into incremental style/layout work;
-- retained/damage-aware paint path;
-- first Windows text/font platform adapter.
+- connect a production OpenType shaping backend to the existing shaping request/glyph boundary;
+- first Windows font discovery/text platform adapter;
+- expand the R0 invalidation graph into standards-aware incremental style/layout work;
+- expand retained/damage-aware paint across richer formatting and stacking behavior.
 
 ## R2 — Flight
 
@@ -68,7 +57,6 @@ Remaining R0 exit work:
 ## R3 — Wings
 
 - flexbox/grid milestones;
-- retained display list;
 - compositor thread;
 - `wgpu` graphics backend;
 - Windows-first GPU/compositor integration;
@@ -118,6 +106,7 @@ Remaining R0 exit work:
 
 - Zorya becomes the reference desktop browser;
 - first public target is Windows;
+- concrete native window/UI integration is completed for the reference browser;
 - user-facing browser work starts only after the engine is sufficiently useful.
 
 ## R9 — Rarog 1.0

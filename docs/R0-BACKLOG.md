@@ -1,8 +1,12 @@
 # R0 — Ember backlog
 
-R0 has one purpose: prove the shape of the engine with a deterministic end-to-end rendering path.
+Status: **complete**.
+
+R0 has one purpose: prove the shape of the engine with a deterministic end-to-end rendering path and stable ownership boundaries before standards breadth, JavaScript, GPU composition and multi-process isolation expand the implementation.
 
 Windows is the primary platform lane for R0. Linux remains a portability lane so engine-core code does not accidentally depend on Windows APIs.
+
+The R0 exit contract is checked by `cargo test -p rarog-engine --test r0_exit` and documented in `docs/R0-EXIT.md`.
 
 ## P0 — repository health
 
@@ -22,6 +26,7 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] explicit Rust 1.85 MSRV check
 - [x] immutable CI action pinning
 - [x] benchmark harness with no performance claims yet
+- [x] dedicated R0 exit-manifest and render-contract CI gate
 
 ## P0 — DOM model
 
@@ -35,20 +40,21 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] mutation-history pruning/checkpoint after the active engine consumer advances
 - [x] engine-owned mutation facade prevents session callers from pruning mutation history
 - [x] element namespace representation
-- [x] interned atom/string strategy ADR
+- [x] atom/string ownership strategy ADR
 
 ### Exit condition
 
-DOM ownership must not assume that renderer, networking or host live in the same process.
+DOM ownership does not assume that renderer, networking or host live in the same process. Layout/paint identities remain derived and disposable.
 
 ## P0 — parsing boundary
 
 - [x] bootstrap parser behind `rarog_html::parse`
 - [x] parser output checked against DOM invariants in debug/test paths
-- [x] define streaming input abstraction
-- [x] define parser error/reporting model
-- [x] ADR: standards parser strategy
-- [ ] replace bootstrap parser with standards-oriented implementation/adapter
+- [x] decoded streaming-input abstraction
+- [x] deterministic parser diagnostic/error model
+- [x] standards-parser strategy ADR
+
+The standards-oriented HTML tokenizer/tree-builder is intentionally an **R1 — Flame** implementation task, not an R0 exit blocker.
 
 ## P0 — style system boundary
 
@@ -63,11 +69,12 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] DOM-mutation-to-style/layout/paint invalidation primitives
 - [x] persistent dirty state survives across DOM mutations until a render consumes it
 - [x] non-finite bootstrap CSS lengths are rejected before computed geometry
-- [x] style sharing/cache design note
-- [x] descendant/sibling selector invalidation dependencies
-- [ ] standards-oriented CSS tokenizer/parser adapter
+- [x] style-sharing/cache ownership design
+- [x] descendant/following-sibling invalidation dependency model
 
-## P0 — layout
+The standards-oriented CSS tokenizer/parser and broader selector grammar are **R1 — Flame** work.
+
+## P0 — layout and text foundations
 
 - [x] block-like vertical bootstrap layout
 - [x] separate `LayoutNodeId` from DOM `NodeId`
@@ -79,7 +86,12 @@ DOM ownership must not assume that renderer, networking or host live in the same
 - [x] first paint-only incremental reuse experiment with persistent Layout/Fragment geometry
 - [x] containing-block model foundation beyond a raw available-width argument
 - [x] intrinsic sizing interface
-- [x] text run abstraction (without committing to a shaping backend)
+- [x] text-run abstraction and scalar-indexed source ranges
+- [x] grapheme-safe text boundaries and line fragmentation
+- [x] bidi-run foundation and visual ordering boundary
+- [x] font fallback runs
+- [x] shaping segmentation across bidi/font/script boundaries
+- [x] backend-neutral shaping request/glyph result boundary
 - [x] first geometry-affecting incremental relayout from a retained Layout Tree
 - [x] first subtree-local incremental relayout for geometry changes that preserve vertical flow footprint
 - [x] first ancestor/sibling-aware local reflow for vertical-footprint changes in the root block-flow context
@@ -87,7 +99,9 @@ DOM ownership must not assume that renderer, networking or host live in the same
 
 ### Required invariant
 
-Layout state and fragment state are derived and disposable. DOM must never depend on layout object addresses or layout/fragment IDs.
+Layout state and fragment state are derived and disposable. DOM never depends on layout object addresses or layout/fragment IDs.
+
+A production OpenType shaper, platform font discovery and standards-complete Unicode algorithms remain later milestones.
 
 ## P0 — paint
 
@@ -96,89 +110,74 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] paint consumes Fragment Tree rather than drawing from layout code
 - [x] bootstrap background and border painting
 - [x] deterministic display-item IDs combine source identity, fragment identity and paint slot
-- [x] display-list ID uniqueness invariant prevents silent damage-index collisions before fragmentation
+- [x] display-list ID uniqueness invariant prevents silent damage-index collisions
 - [x] damage rectangles by comparing previous/current display lists
 - [x] checked framebuffer allocation with an explicit R0 pixel budget
 - [x] deterministic display-list snapshot
 - [x] stable framebuffer hash
 - [x] clip commands with nested software-raster clip-stack semantics and conservative damage fallback
 - [x] stacking-context representation with explicit balanced display-list scopes
-- [x] transforms/opacity representation
+- [x] transform and opacity representation
 - [x] retained display-list replacement experiment for affected fragment subtrees
-- [x] retained display-list v2 uses exact contiguous ranges and preserves clip/stacking scope balance
+- [x] retained display-list v2 uses exact contiguous ranges and preserves structural scope balance
 - [x] damage-scoped software raster update instead of full framebuffer rerasterization
-- [x] fragmentation/stacking/clip-aware retained display-list updates
+- [x] fragmentation/stacking/clip/transform-aware retained-range validation
 
 ## P0 — platform boundary
 
 - [x] Windows-first platform policy documented
 - [x] engine core remains platform-neutral in R0
 - [x] Windows-primary + Linux-portability CI policy
-- [x] Windows host/platform crate boundary
-- [ ] window/event adapter
-- [ ] font/text platform adapter
-- [ ] input/IME adapter
-- [ ] accessibility adapter
-- [ ] sandbox/process adapter
-- [ ] GPU/compositor platform adapter
+- [x] `rarog-platform` neutral host/capability boundary
+- [x] `rarog-platform-windows` target-specific host boundary
+- [x] Windows-specific APIs do not leak into DOM/HTML/CSS/layout/engine-core semantics
 
-### Required invariant
+Concrete services are intentionally staged after R0:
 
-Win32, WinRT, Direct3D and other Windows-specific APIs must not leak into DOM, HTML, CSS, layout or script-facing Web platform crates.
+- Windows font/text adapter — R1
+- input/IME and event-loop integration — R2
+- GPU/compositor adapter — R3
+- sandbox/process adapter — R4
+- accessibility bridge — R5
+- reference-browser window/UI integration — R8
 
 ## P1 — engine/embedder API
 
 - [x] `render_html` orchestration bootstrap
 - [x] previous-display-list input and damage output for bootstrap rendering
-- [x] stateful R0 `RenderSession` bootstrap for mutation → dirty state → update orchestration
+- [x] stateful R0 `RenderSession` mutation → dirty state → update orchestration
 - [x] fallible render/session construction for invalid or oversized framebuffer viewports
 - [x] `Engine` object
 - [x] `View` object
 - [x] navigation/request interfaces without networking implementation
 - [x] callbacks/events without UI assumptions
 - [x] host policy interface
-- [x] resource budget data model
-
-Proposed shape:
-
-```rust
-let engine = Engine::builder().build()?;
-let view = engine.create_view(ViewOptions::default())?;
-view.load_html(html, BaseUrl::about_blank())?;
-let frame = view.render(viewport)?;
-```
+- [x] enforced resource-budget data model
 
 ## P1 — observability from day one
 
-Every render should eventually expose timings for:
+- [x] wall-clock stage timings for parse/style/layout-tree/fragment/paint-list/raster/total
+- [x] structural render counters for DOM/layout/fragments/display commands/damage
+- [x] incremental mode plus dirty/patched-node reporting
+- [x] dependency-free R0 benchmark harness with no performance thresholds or claims
 
-```text
-parse
-style
-layout-tree
-fragment
-paint-list
-raster
-peak temporary memory
-persistent document memory
-```
-
-Incremental frames must additionally expose which path ran (`unchanged`, `paint-only reuse`, `subtree relayout`, `flow relayout`, `geometry relayout`, `full rebuild`) and how many nodes were dirtied/patched.
-
-R0 may use wall-clock timers; later milestones replace these with a structured tracing system.
+Allocator-backed peak/persistent byte accounting is deliberately deferred until there is a trustworthy measurement boundary.
 
 ## R0 exit test
 
-Given a committed HTML fixture, repeated runs on the same architecture/toolchain must produce:
+The committed R0 fixture and CI prove:
 
-1. an equivalent DOM snapshot;
-2. an equivalent stylesheet/computed-style snapshot;
-3. an equivalent Layout Tree snapshot;
-4. an equivalent Fragment Tree + box-model snapshot;
-5. an identical display list with identical display-item IDs;
-6. an identical framebuffer hash;
-7. an identical combined deterministic render-signature hash.
+1. equivalent DOM snapshots across repeated runs;
+2. equivalent stylesheet/computed-style snapshots;
+3. equivalent Layout Tree snapshots;
+4. equivalent Fragment Tree + box-model snapshots;
+5. identical display lists with identical display-item IDs;
+6. identical framebuffer hashes;
+7. identical combined deterministic render-signature hashes;
+8. paint-only retained reuse;
+9. footprint-safe subtree relayout;
+10. ancestor/sibling-aware root-flow reflow for vertical-footprint changes;
+11. conservative geometry/full-rebuild fallbacks when local reuse is not proven safe;
+12. Windows-primary execution plus Linux portability and Rust 1.85 MSRV checks.
 
-The stateful R0 path must also prove paint-only reuse, footprint-safe subtree relayout, ancestor/sibling-aware root-flow reflow for vertical-footprint changes with full-render equivalence, conservative whole-Fragment-Tree geometry fallback, and a deterministic full rebuild for structural changes.
-
-The same deterministic test must pass in the Windows-primary CI lane. Only after the R0 pipeline and remaining bootstrap interfaces are stable do we start R1 standards work.
+`crates/rarog-engine/tests/r0_exit.rs` additionally fails if this R0 backlog contains a new unchecked checklist item. New standards or platform breadth therefore belongs in the roadmap for the appropriate later milestone instead of silently reopening Ember.

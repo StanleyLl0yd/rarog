@@ -11,14 +11,14 @@ Rarog is an experimental, independent, Rust-first Web engine designed around fou
 
 The **primary target platform is Windows**. Rarog is being designed so the engine core can remain portable, but the first production-quality host integration, GPU/compositor path, sandboxing, text/input integration, accessibility work and reference browser will target **Windows 10/11** first.
 
-This repository is the **v0.1 / R0 — Ember workspace**. It deliberately implements a small deterministic rendering path so that the public interfaces between DOM, style, layout, fragments, paint and the host are established before JavaScript, GPU rendering and multi-process isolation are introduced.
+The workspace version is **0.1.0**. **R0 — Ember is complete**: it establishes the deterministic rendering, invalidation, paint, embedder and platform ownership boundaries that later milestones build on. **R1 — Flame** is the next development milestone and begins replacing bootstrap parsing/layout/text pieces with standards-oriented implementations behind those boundaries.
 
-> The bootstrap HTML/CSS parsers are intentionally incomplete and are **not** intended to become the standards implementation. They are scaffolding for the first end-to-end pipeline and will be replaced behind stable interfaces.
+> The bootstrap HTML/CSS parsers remain intentionally incomplete and are **not** standards implementations. R0 proves the adapter contracts; R1 replaces the bootstrap algorithms behind them.
 
-## Current R0 pipeline
+## R0 exit pipeline
 
 ```text
-HTML source
+decoded HTML input
    ↓
 rarog-html
    ↓
@@ -26,51 +26,55 @@ rarog-dom + mutation generations
    ↓
 stylesheet sources → selectors → cascade/specificity
    ↓
-computed style + invalidation keys
+computed style + invalidation dependencies
    ↓
 persistent dirty state
-   ├─ paint-only style change → reuse Layout/Fragment geometry + retained paint update
+   ├─ unchanged → no render work
+   ├─ paint-only style change → retained Layout/Fragment geometry + paint patch
    ├─ footprint-safe geometry change → subtree Fragment relayout
-   ├─ vertical-footprint geometry change → retain Layout Tree + flow-aware suffix relayout
-   └─ structural/text/display-membership change → deterministic full rebuild
+   ├─ vertical-footprint geometry change → retained Layout Tree + flow-aware suffix relayout
+   └─ unsafe structural/text/display-membership change → deterministic fallback/rebuild
    ↓
 layout tree
    ↓
 fragment tree + box model
    ↓
-source + fragment + paint-slot display-item IDs + damage tracking
+structural display scopes + stable display-item IDs + damage tracking
    ↓
 software framebuffer / deterministic hash
 ```
 
-The current R0 foundation includes:
+The completed R0 foundation includes:
 
-- checked DOM mutations, mutation records and document generation tracking;
-- stylesheet/source, selector, property/value and cascade-priority data structures;
-- simple type, class and ID selector matching for the bootstrap path;
-- user-agent, author `<style>` and inline style origins with deterministic source order/specificity handling;
-- selector invalidation keys plus DOM-mutation-to-style/layout/paint dirty primitives;
+- checked DOM mutations, mutation records, document generation tracking and mutation-history pruning;
+- explicit element namespaces and an atom/string ownership boundary;
+- decoded streaming HTML input plus deterministic parser diagnostics behind a replaceable bootstrap parser;
+- stylesheet/source, selector, property/value and cascade-priority structures;
+- simple type/class/ID bootstrap matching plus selector invalidation keys and relational dependency metadata;
 - persistent engine-owned dirty state across mutations and renders;
-- a stateful `RenderSession` with paint-only reuse, footprint-safe subtree Fragment relayout, flow-aware vertical suffix relayout from a retained Layout Tree, whole-Fragment-Tree fallback when local flow mapping is not provably safe, and conservative full rebuild for structural/text/display-membership changes;
-- explicit containing-block, intrinsic-size and text-run abstractions in the bootstrap layout path;
-- separate DOM, layout-node and fragment identities;
-- a derived/disposable Fragment Tree and explicit content/padding/border/margin boxes;
-- display-item IDs combine stable source identity, fragment identity and paint slot; generated display lists enforce ID uniqueness before damage comparison, while retained replacement preserves unaffected ranges when safe;
-- damage-scoped software framebuffer updates that clear and rerasterize only damaged rectangles;
-- bounded framebuffer allocation with checked pixel counts and a fallible public render boundary for invalid or oversized viewports;
-- mutation-journal pruning after the engine consumes a DOM generation, with `RenderSession` exposing a mutation-only `DocumentEditor` so callers cannot prune its journal behind the engine;
+- a stateful `RenderSession` with paint-only reuse, footprint-safe subtree Fragment relayout, flow-aware vertical suffix relayout, conservative geometry fallback and deterministic full rebuild;
+- explicit containing-block and intrinsic-size boundaries;
+- grapheme-safe text ranges, line fragmentation, bidi runs, font fallback, shaping segmentation and backend-neutral shaping request/glyph result contracts;
+- separate DOM, layout-node and fragment identities with derived/disposable layout state;
+- a backend-neutral display list with clip, stacking, transform and opacity scopes;
+- deterministic display-item IDs, retained-range validation, damage comparison and damage-scoped software framebuffer updates;
+- bounded framebuffer allocation and a fallible public render boundary;
+- render-stage timings, structural counters and a benchmark harness with no performance thresholds or claims;
+- `Engine`/`View`, request forwarding, host policy, UI-neutral callbacks and enforced source/viewport resource budgets;
+- `rarog-platform` plus the Windows-specific `rarog-platform-windows` ownership seam;
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
-- CI with Windows as the primary platform lane, Linux as a portability lane and an explicit Rust 1.85 MSRV check; CI actions are pinned to immutable revisions.
+- Windows-primary CI, Linux portability CI, an explicit Rust 1.85 MSRV check and immutable action pins;
+- a dedicated R0 exit gate that rejects new unchecked Ember checklist items.
 
-The incremental experiment is intentionally narrow. It now proves paint-only retained updates, subtree-local Fragment relayout for geometry changes that preserve vertical flow footprint, ancestor/sibling-aware suffix reflow for vertical-footprint changes in the current root block flow, conservative whole-Fragment-Tree fallback when that mapping is not safe, and damage-scoped software raster updates. It does **not** yet claim general CSS incremental reflow, nested formatting-context-local propagation, fragmentation-aware retained painting, standards-complete invalidation or measured performance gains.
+R0 deliberately does **not** claim general Web compatibility, standards completeness, production security, performance leadership or browser readiness. Those are later milestones with their own measurable exit criteria.
 
 ## Platform strategy
 
 **Windows is first, not Windows-only.**
 
-The engine-owned Web platform code must stay independent of Win32/WinRT/D3D-specific APIs. Windows-specific code will live behind narrow platform adapters so Linux and macOS ports remain possible later without forcing the core architecture to follow the lowest common denominator.
+The engine-owned Web platform code stays independent of Win32/WinRT/D3D-specific APIs. Windows-specific code lives behind narrow platform adapters so Linux and macOS ports remain possible later without forcing the core architecture to follow the lowest common denominator.
 
-R0 now makes that separation concrete: `rarog-platform` defines the platform-neutral host capability contract and `rarog-platform-windows` is the first target-specific boundary. The Windows crate does not yet advertise windowing, font, IME, accessibility, sandbox or GPU capabilities; those are enabled only when real adapters are implemented.
+R0 makes that separation concrete: `rarog-platform` defines the platform-neutral host capability contract and `rarog-platform-windows` is the first target-specific boundary. Concrete Windows font/text, input/IME, GPU, sandbox/process and accessibility services are enabled only when their later roadmap milestones implement them.
 
 The first reference browser, **Zorya Browser**, is also planned for Windows first.
 
@@ -78,26 +82,27 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 
 - `rarog-types` — shared geometry/color/value types
 - `rarog-dom` — DOM arena, checked mutations, mutation records and generation tracking
-- `rarog-html` — bootstrap HTML adapter
+- `rarog-html` — HTML input/diagnostics boundary plus bootstrap parser
 - `rarog-css` — bootstrap stylesheet sources, selectors, cascade, computed style and invalidation primitives
-- `rarog-layout` — derived Layout Tree, Fragment Tree, box model and deterministic snapshots
-- `rarog-paint` — stable display-item IDs, damage tracking, display list and software rasterizer
+- `rarog-layout` — derived Layout Tree, Fragment Tree, box model and text foundations
+- `rarog-paint` — structural display list, stable IDs, damage tracking and software rasterizer
 - `rarog-platform` — platform-neutral host capability contract
-- `rarog-platform-windows` — Windows-specific host boundary for future adapters
-- `rarog-engine` — stateless rendering plus persistent dirty-state / incremental-session orchestration
+- `rarog-platform-windows` — Windows-specific host boundary for later concrete adapters
+- `rarog-engine` — rendering, persistent incremental session, observability and embedder boundary
 - `rarog-shell` — minimal CLI test shell
 
-See `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/R0-BACKLOG.md` and `docs/adr/`.
+See `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/R0-BACKLOG.md`, `docs/R0-EXIT.md` and `docs/adr/`.
 
 ## Development checks
 
-The same core checks used by CI are:
+The same core checks used by CI include:
 
 ```text
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo test -p rarog-engine --test r0_exit
 cargo test -p rarog-engine deterministic_render_snapshot_and_hash
 cargo test -p rarog-engine paint_only_update_reuses_layout_and_fragment_geometry
 cargo test -p rarog-engine geometry_change_relayouts_without_rebuilding_layout_tree
@@ -117,6 +122,6 @@ Rarog is dual-licensed under **Apache-2.0 OR MIT**, at your option. See `LICENSE
 
 ## Project status
 
-Rarog is in **R0 — Ember**, an early bootstrap milestone. No compatibility, performance, or production-readiness claims are made yet.
+**R0 — Ember is complete. R1 — Flame is next.** Rarog remains experimental; no compatibility, performance, security-hardening or production-readiness claims are made yet.
 
 Created by **Stanley Lloyd**. Contributions are welcome; see `CONTRIBUTING.md`.
