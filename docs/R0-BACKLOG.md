@@ -21,7 +21,7 @@ Windows is the primary platform lane for R0. Linux remains a portability lane so
 - [x] explicit incremental reuse/fallback CI gate
 - [x] explicit Rust 1.85 MSRV check
 - [x] immutable CI action pinning
-- [ ] benchmark harness with no performance claims yet
+- [x] benchmark harness with no performance claims yet
 
 ## P0 — DOM model
 

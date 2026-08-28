@@ -193,6 +193,14 @@ Attribute invalidation deliberately keys on the changed attribute category (`id`
 
 `StyleSharingKey` captures the local inputs that are sufficient for the current bootstrap selector/cascade model: namespace, tag, ID, canonicalized classes and inline style. Local style sharing is considered safe only while the active rule set has no relational dependencies. R0 does not install a process-global computed-style cache; any future cache must be bounded to a document/style-set lifetime and must expand or disable its key when inheritance, pseudo-state, relational selectors or other contextual inputs become observable. See ADR-0026.
 
+## R0 observability and benchmark harness
+
+Full bootstrap renders expose `RenderObservability` without feeding timing data into deterministic render identity. `RenderTimings` records wall-clock durations for decoded HTML parsing, style-source construction, Layout Tree construction, Fragment Tree construction, display-list/damage construction, rasterization, and the enclosing render. `RenderCounters` records DOM nodes, layout nodes, fragments, display commands, and damage rectangles. Layout Tree construction currently includes per-element computed-style resolution because R0 resolves styles while deriving layout nodes.
+
+Stateful updates expose elapsed wall-clock time alongside the existing `IncrementalMode`, dirty-node count and patched-node count. These values are diagnostics only: CI does not enforce thresholds and the project makes no cross-machine performance claims from them. Allocator-backed peak/persistent byte accounting is deliberately deferred rather than publishing misleading estimates.
+
+`cargo run -p rarog-engine --example r0_bench --release -- <iterations>` runs fixed full-render, paint-only, subtree-relayout and flow-relayout scenarios. Setup for each incremental sample is excluded from the reported update duration through the engine's own timing boundary. The harness is intended to detect gross regressions during development and to provide a stable place for later benchmark methodology, not to publish competitive numbers. See ADR-0028.
+
 ## First incremental reuse experiment
 
 R0 now has a stateful `RenderSession` that owns the current document, styles, Layout Tree, Fragment Tree, display list, framebuffer and persistent dirty state.

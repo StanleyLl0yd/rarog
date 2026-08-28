@@ -250,6 +250,10 @@ impl Document {
         self.generation
     }
 
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn contains(&self, id: NodeId) -> bool {
         id < self.nodes.len()
     }
