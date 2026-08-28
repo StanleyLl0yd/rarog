@@ -20,7 +20,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Apply style invalidation/cache foundation
-        run: python tools/apply_style_invalidation_cache.py
+        run: |
+          python tools/apply_style_invalidation_cache.py
+          python tools/fix_style_invalidation_cache.py
       - name: Format
         run: cargo fmt --all
       - name: Check
