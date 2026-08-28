@@ -114,7 +114,7 @@ Layout state and fragment state are derived and disposable. DOM must never depen
 - [x] Windows-first platform policy documented
 - [x] engine core remains platform-neutral in R0
 - [x] Windows-primary + Linux-portability CI policy
-- [ ] Windows host/platform crate boundary
+- [x] Windows host/platform crate boundary
 - [ ] window/event adapter
 - [ ] font/text platform adapter
 - [ ] input/IME adapter
