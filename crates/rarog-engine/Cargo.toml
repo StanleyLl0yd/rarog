@@ -11,6 +11,7 @@ rarog-dom = { path = "../rarog-dom" }
 rarog-html = { path = "../rarog-html" }
 rarog-layout = { path = "../rarog-layout" }
 rarog-paint = { path = "../rarog-paint" }
+rarog-platform = { path = "../rarog-platform" }
 rarog-types = { path = "../rarog-types" }
 
 [lints]
