@@ -60,8 +60,8 @@ replace(css, "for child in document.children(parent) {", "for child in document.
 html = "crates/rarog-html/src/lib.rs"
 replace(
     html,
-    """                    if !self_closing && !matches_void(document.node(id)) {\n                        stack.push(id);\n                    }""",
-    """                    if !self_closing\n                        && document.node(id).is_some_and(|node| !matches_void(node))\n                    {\n                        stack.push(id);\n                    }""",
+    "if !self_closing && !matches_void(document.node(id)) {",
+    "if !self_closing && document.node(id).is_some_and(|node| !matches_void(node)) {",
 )
 
 dom = "crates/rarog-dom/src/lib.rs"
