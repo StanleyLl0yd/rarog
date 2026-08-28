@@ -53,6 +53,16 @@ replace(
         max_depth
     }
 
+    pub fn text_scalar_count(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter_map(|node| match &node.kind {
+                NodeKind::Text(text) => Some(text.chars().count()),
+                NodeKind::Document | NodeKind::Element(_) => None,
+            })
+            .fold(0usize, usize::saturating_add)
+    }
+
     pub fn node(&self, id: NodeId) -> Option<&Node> {""",
 )
 replace(
@@ -70,16 +80,20 @@ replace(
     }
 
     #[test]
-    fn connectedness_and_depth_are_iterative_and_explicit() {
+    fn connectedness_depth_and_text_accounting_are_iterative_and_explicit() {
         let mut document = Document::new();
         let first = document.append_new(document.root(), element("div")).unwrap();
         let second = document.append_new(first, element("span")).unwrap();
+        document
+            .append_new(second, NodeKind::Text("Rarog".into()))
+            .unwrap();
         let detached = document.create_node(element("section")).unwrap();
 
         assert!(document.is_connected(document.root()));
         assert!(document.is_connected(second));
         assert!(!document.is_connected(detached));
-        assert_eq!(document.max_depth(), 3);
+        assert_eq!(document.max_depth(), 4);
+        assert_eq!(document.text_scalar_count(), 5);
     }
 }""",
 )
@@ -110,6 +124,44 @@ replace(
 )
 replace(
     css,
+    """                MutationKind::Reparented {
+                    child,
+                    old_parent,
+                    new_parent,
+                } => {
+                    set.mark(*child, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    set.mark_ancestors(document, *old_parent, DirtyFlags::LAYOUT_PAINT);
+                    set.mark_ancestors(document, *new_parent, DirtyFlags::LAYOUT_PAINT);
+                    if dependencies.has_scope(SelectorDependencyScope::Descendants) {
+                        mark_subtree(document, *child, &mut set, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    }
+                    if dependencies.has_scope(SelectorDependencyScope::FollowingSiblings) {""",
+    """                MutationKind::Reparented {
+                    child,
+                    old_parent,
+                    new_parent,
+                } => {
+                    let child_connected = document.is_connected(*child);
+                    let old_connected = old_parent.is_some_and(|node| document.is_connected(node));
+                    let new_connected = new_parent.is_some_and(|node| document.is_connected(node));
+                    if child_connected {
+                        set.mark(*child, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    }
+                    if old_connected {
+                        set.mark_ancestors(document, *old_parent, DirtyFlags::LAYOUT_PAINT);
+                    }
+                    if new_connected {
+                        set.mark_ancestors(document, *new_parent, DirtyFlags::LAYOUT_PAINT);
+                    }
+                    if child_connected && dependencies.has_scope(SelectorDependencyScope::Descendants) {
+                        mark_subtree(document, *child, &mut set, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    }
+                    if (old_connected || new_connected)
+                        && dependencies.has_scope(SelectorDependencyScope::FollowingSiblings)
+                    {""",
+)
+replace(
+    css,
     """                MutationKind::Attribute { node, name } => {
                     if matches!(name.as_str(), "id" | "class" | "style") {""",
     """                MutationKind::Attribute { node, name } => {
@@ -128,16 +180,6 @@ replace(
                     }
                     set.mark(*node, DirtyFlags::LAYOUT_PAINT);""",
 )
-replace(
-    css,
-    """    fn mark(&mut self, node: NodeId, flags: DirtyFlags) {
-        self.entries.entry(node).or_default().merge(flags);
-    }""",
-    """    fn mark(&mut self, node: NodeId, flags: DirtyFlags) {
-        self.entries.entry(node).or_default().merge(flags);
-    }""",
-)
-# append a connectedness regression before the test module closes by inserting before helper near end
 marker = """    #[test]
     fn non_finite_lengths_are_rejected() {"""
 text = Path(css).read_text(encoding="utf-8")
