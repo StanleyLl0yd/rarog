@@ -33,10 +33,7 @@ pub fn parse(input: &str) -> Document {
                         let id = doc
                             .append_new(
                                 parent,
-                                NodeKind::Element(ElementData {
-                                    tag_name: tag,
-                                    attributes: attrs,
-                                }),
+                                NodeKind::Element(ElementData::html(tag).with_attributes(attrs)),
                             )
                             .expect("bootstrap parser only appends to valid parents");
                         if !self_closing && !matches_void(doc.node(id)) {
@@ -151,5 +148,11 @@ mod tests {
         let doc = parse("<html><body><div id=\"x\">hello</div></body></html>");
         assert_eq!(doc.validate_invariants(), Ok(()));
         assert!(doc.generation() > 0);
+        let html = doc.children(doc.root())[0];
+        let NodeKind::Element(element) = &doc.node(html).kind else {
+            panic!("expected html element");
+        };
+        assert_eq!(element.namespace, rarog_dom::Namespace::Html);
+        assert_eq!(element.tag_name.as_str(), "html");
     }
 }
