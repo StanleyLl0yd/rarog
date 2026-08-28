@@ -1096,7 +1096,7 @@ mod tests {
             .set_attribute(node, "title", "metadata")
             .unwrap();
         assert_eq!(session.document().mutation_record_count(), 1);
-        session.update();
+        session.update().expect("metadata update succeeds");
 
         assert_eq!(session.document().mutation_record_count(), 0);
         assert_eq!(
