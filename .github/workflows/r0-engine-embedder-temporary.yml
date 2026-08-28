@@ -25,6 +25,24 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
+          embedder = Path('crates/rarog-engine/src/embedder.rs')
+          text = embedder.read_text()
+          text = text.replace(
+              'use super::{IncrementalMode, IncrementalReport, RenderError, RenderOptions, RenderSession};',
+              'use super::{IncrementalReport, RenderError, RenderOptions, RenderSession};',
+              1,
+          )
+          test_marker = 'mod tests {\n    use super::*;\n'
+          if 'use crate::IncrementalMode;' not in text:
+              if test_marker not in text:
+                  raise SystemExit('embedder test marker missing')
+              text = text.replace(
+                  test_marker,
+                  test_marker + '    use crate::IncrementalMode;\n',
+                  1,
+              )
+          embedder.write_text(text)
+
           lib = Path('crates/rarog-engine/src/lib.rs')
           text = lib.read_text()
           marker = 'use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};\n'
