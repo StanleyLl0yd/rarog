@@ -5,7 +5,24 @@ use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 
-pub type NodeId = usize;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId(usize);
+
+impl NodeId {
+    const fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Atom(Arc<str>);
@@ -235,7 +252,7 @@ impl Document {
         };
         Self {
             nodes: vec![root],
-            root: 0,
+            root: NodeId::from_index(0),
             generation: 0,
             mutation_floor: 0,
             mutations: Vec::new(),
@@ -255,19 +272,19 @@ impl Document {
     }
 
     pub fn contains(&self, id: NodeId) -> bool {
-        id < self.nodes.len()
+        id.index() < self.nodes.len()
     }
 
     pub fn node(&self, id: NodeId) -> &Node {
-        &self.nodes[id]
+        &self.nodes[id.index()]
     }
 
     pub fn try_node(&self, id: NodeId) -> Option<&Node> {
-        self.nodes.get(id)
+        self.nodes.get(id.index())
     }
 
     pub fn children(&self, id: NodeId) -> &[NodeId] {
-        &self.nodes[id].children
+        &self.nodes[id.index()].children
     }
 
     pub fn mutation_records_since(&self, generation: u64) -> impl Iterator<Item = &MutationRecord> {
@@ -309,7 +326,7 @@ impl Document {
         self.ensure_creatable_kind(&kind)?;
 
         let id = self.allocate_node(kind, Some(parent));
-        self.nodes[parent].children.push(id);
+        self.nodes[parent.index()].children.push(id);
         self.record_mutation(MutationKind::ChildAdded { parent, child: id });
         Ok(id)
     }
@@ -326,21 +343,22 @@ impl Document {
             return Err(MutationError::WouldCreateCycle { parent, child });
         }
 
-        if self.nodes[child].parent == Some(parent) && self.nodes[parent].children.contains(&child)
+        if self.nodes[child.index()].parent == Some(parent)
+            && self.nodes[parent.index()].children.contains(&child)
         {
             return Ok(());
         }
 
-        let old_parent = self.nodes[child].parent;
+        let old_parent = self.nodes[child.index()].parent;
         if let Some(old_parent) = old_parent {
-            self.nodes[old_parent]
+            self.nodes[old_parent.index()]
                 .children
                 .retain(|candidate| *candidate != child);
         }
 
-        self.nodes[child].parent = Some(parent);
-        if !self.nodes[parent].children.contains(&child) {
-            self.nodes[parent].children.push(child);
+        self.nodes[child.index()].parent = Some(parent);
+        if !self.nodes[parent.index()].children.contains(&child) {
+            self.nodes[parent.index()].children.push(child);
         }
         self.record_mutation(MutationKind::Reparented {
             child,
@@ -356,14 +374,14 @@ impl Document {
             return Err(MutationError::CannotReparentRoot);
         }
 
-        let Some(parent) = self.nodes[child].parent else {
+        let Some(parent) = self.nodes[child.index()].parent else {
             return Ok(());
         };
 
-        self.nodes[parent]
+        self.nodes[parent.index()]
             .children
             .retain(|candidate| *candidate != child);
-        self.nodes[child].parent = None;
+        self.nodes[child.index()].parent = None;
         self.record_mutation(MutationKind::Reparented {
             child,
             old_parent: Some(parent),
@@ -382,7 +400,7 @@ impl Document {
         let name = name.into();
         let value = value.into();
 
-        let NodeKind::Element(element) = &mut self.nodes[node].kind else {
+        let NodeKind::Element(element) = &mut self.nodes[node.index()].kind else {
             return Err(MutationError::NotElement(node));
         };
 
@@ -401,7 +419,7 @@ impl Document {
         name: &str,
     ) -> Result<Option<String>, MutationError> {
         self.ensure_node(node)?;
-        let NodeKind::Element(element) = &mut self.nodes[node].kind else {
+        let NodeKind::Element(element) = &mut self.nodes[node.index()].kind else {
             return Err(MutationError::NotElement(node));
         };
 
@@ -422,7 +440,7 @@ impl Document {
     ) -> Result<(), MutationError> {
         self.ensure_node(node)?;
         let value = value.into();
-        let NodeKind::Text(text) = &mut self.nodes[node].kind else {
+        let NodeKind::Text(text) = &mut self.nodes[node.index()].kind else {
             return Err(MutationError::NotText(node));
         };
 
@@ -480,14 +498,15 @@ impl Document {
     }
 
     pub fn validate_invariants(&self) -> Result<(), InvariantError> {
-        if self.nodes[self.root].parent.is_some() {
+        if self.nodes[self.root.index()].parent.is_some() {
             return Err(InvariantError::RootHasParent);
         }
-        if !matches!(self.nodes[self.root].kind, NodeKind::Document) {
+        if !matches!(self.nodes[self.root.index()].kind, NodeKind::Document) {
             return Err(InvariantError::RootIsNotDocument);
         }
 
-        for (id, node) in self.nodes.iter().enumerate() {
+        for (index, node) in self.nodes.iter().enumerate() {
+            let id = NodeId::from_index(index);
             if id != self.root && matches!(node.kind, NodeKind::Document) {
                 return Err(InvariantError::NonRootDocument(id));
             }
@@ -496,7 +515,7 @@ impl Document {
                 if !self.contains(parent) {
                     return Err(InvariantError::InvalidParent { node: id, parent });
                 }
-                if !self.nodes[parent].children.contains(&id) {
+                if !self.nodes[parent.index()].children.contains(&id) {
                     return Err(InvariantError::MissingChildLink { node: id, parent });
                 }
             }
@@ -515,11 +534,11 @@ impl Document {
                         child: *child,
                     });
                 }
-                if self.nodes[*child].parent != Some(id) {
+                if self.nodes[child.index()].parent != Some(id) {
                     return Err(InvariantError::WrongParent {
                         parent: id,
                         child: *child,
-                        actual: self.nodes[*child].parent,
+                        actual: self.nodes[child.index()].parent,
                     });
                 }
             }
@@ -530,7 +549,7 @@ impl Document {
                 if !seen_ancestors.insert(current) {
                     return Err(InvariantError::Cycle(id));
                 }
-                cursor = self.nodes[current].parent;
+                cursor = self.nodes[current.index()].parent;
             }
         }
 
@@ -547,7 +566,7 @@ impl Document {
 
     fn ensure_can_have_children(&self, node: NodeId) -> Result<(), MutationError> {
         self.ensure_node(node)?;
-        if matches!(self.nodes[node].kind, NodeKind::Text(_)) {
+        if matches!(self.nodes[node.index()].kind, NodeKind::Text(_)) {
             Err(MutationError::CannotAppendToText(node))
         } else {
             Ok(())
@@ -563,7 +582,7 @@ impl Document {
     }
 
     fn allocate_node(&mut self, kind: NodeKind, parent: Option<NodeId>) -> NodeId {
-        let id = self.nodes.len();
+        let id = NodeId::from_index(self.nodes.len());
         self.nodes.push(Node {
             kind,
             parent,
@@ -578,7 +597,7 @@ impl Document {
             if current == ancestor {
                 return true;
             }
-            cursor = self.nodes[current].parent;
+            cursor = self.nodes[current.index()].parent;
         }
         false
     }
@@ -783,6 +802,13 @@ mod tests {
         assert_eq!(element.namespace, Namespace::Svg);
         assert_eq!(element.tag_name.as_str(), "circle");
         assert!(doc.snapshot().contains("element:svg:circle[]"));
+    }
+
+    #[test]
+    fn node_id_exposes_stable_index_without_public_construction() {
+        let document = Document::new();
+        assert_eq!(document.root().index(), 0);
+        assert_eq!(document.root().to_string(), "0");
     }
 }
 
