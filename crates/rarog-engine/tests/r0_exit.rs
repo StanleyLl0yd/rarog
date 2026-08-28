@@ -8,7 +8,9 @@ const FIXTURE: &str = "<style>.card { width:80px; padding:4px; background:#11223
 fn r0_exit_manifest_has_no_open_items() {
     assert!(R0_BACKLOG.contains("Status: **complete**."));
     assert!(
-        !R0_BACKLOG.lines().any(|line| line.trim_start().starts_with("- [ ]")),
+        !R0_BACKLOG
+            .lines()
+            .any(|line| line.trim_start().starts_with("- [ ]")),
         "R0 backlog contains an unchecked milestone item; move later work to ROADMAP.md or complete the Ember requirement"
     );
 }
@@ -37,7 +39,10 @@ fn r0_exit_render_contract_is_deterministic() {
         first.layout.fragments.snapshot(),
         second.layout.fragments.snapshot()
     );
-    assert_eq!(first.display_list.snapshot(), second.display_list.snapshot());
+    assert_eq!(
+        first.display_list.snapshot(),
+        second.display_list.snapshot()
+    );
     assert_eq!(
         first.framebuffer.stable_hash64(),
         second.framebuffer.stable_hash64()
