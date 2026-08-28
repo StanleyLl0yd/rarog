@@ -14,13 +14,15 @@ fn options() -> RenderOptions {
 
 fn element_with_id(document: &Document, id: &str) -> NodeId {
     fn find(document: &Document, node: NodeId, id: &str) -> Option<NodeId> {
-        if let NodeKind::Element(element) = &document.node(node).kind
+        if let Some(dom_node) = document.node(node)
+            && let NodeKind::Element(element) = &dom_node.kind
             && element.attributes.get("id").map(String::as_str) == Some(id)
         {
             return Some(node);
         }
         document
             .children(node)
+            .unwrap_or(&[])
             .iter()
             .find_map(|child| find(document, *child, id))
     }
