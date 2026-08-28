@@ -1,8 +1,8 @@
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
-    Fragment, LayoutNode, LayoutOutput, fragment_for_dom, layout_document_with_styles,
-    relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
+    Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_for_dom,
+    layout_document_with_styles, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, build_display_list,
@@ -10,6 +10,7 @@ use rarog_paint::{
 };
 use rarog_types::{Color, Size};
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug)]
 pub struct RenderOptions {
@@ -50,6 +51,32 @@ impl Default for RenderOptions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderTimings {
+    pub parse: Duration,
+    pub style: Duration,
+    pub layout_tree: Duration,
+    pub fragment: Duration,
+    pub paint_list: Duration,
+    pub raster: Duration,
+    pub total: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderCounters {
+    pub dom_nodes: usize,
+    pub layout_nodes: usize,
+    pub fragments: usize,
+    pub display_commands: usize,
+    pub damage_rects: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderObservability {
+    pub timings: RenderTimings,
+    pub counters: RenderCounters,
+}
+
 pub struct RenderOutput {
     pub document: Document,
     pub styles: StyleSet,
@@ -57,6 +84,7 @@ pub struct RenderOutput {
     pub display_list: DisplayList,
     pub damage: DamageRegion,
     pub framebuffer: Framebuffer,
+    pub observability: RenderObservability,
 }
 
 impl RenderOutput {
@@ -135,6 +163,7 @@ pub struct IncrementalReport {
     pub through_generation: u64,
     pub dirty_nodes: usize,
     pub patched_nodes: usize,
+    pub elapsed: Duration,
 }
 
 pub struct DocumentEditor<'a> {
@@ -247,6 +276,7 @@ impl RenderSession {
     }
 
     pub fn update(&mut self) -> IncrementalReport {
+        let update_started = Instant::now();
         let from_generation = self.dirty.through_generation();
         let mutations = self
             .document
@@ -267,6 +297,7 @@ impl RenderSession {
                 through_generation,
                 dirty_nodes,
                 patched_nodes: 0,
+                elapsed: update_started.elapsed(),
             };
         }
 
@@ -448,6 +479,7 @@ impl RenderSession {
             through_generation,
             dirty_nodes,
             patched_nodes,
+            elapsed: update_started.elapsed(),
         }
     }
 
@@ -475,13 +507,53 @@ pub fn render_html_against(
     options: RenderOptions,
     previous_display_list: Option<&DisplayList>,
 ) -> Result<RenderOutput, RenderError> {
+    let total_started = Instant::now();
+
+    let stage_started = Instant::now();
     let document = rarog_html::parse(source);
+    let parse = stage_started.elapsed();
+
+    let stage_started = Instant::now();
     let styles = StyleSet::for_document(&document);
-    let layout = layout_document_with_styles(&document, &styles, options.viewport);
+    let style = stage_started.elapsed();
+
+    let stage_started = Instant::now();
+    let tree = build_layout_tree(&document, &styles);
+    let layout_tree = stage_started.elapsed();
+
+    let stage_started = Instant::now();
+    let fragments = relayout_tree(&tree, options.viewport);
+    let fragment = stage_started.elapsed();
+    let layout = LayoutOutput { tree, fragments };
+
+    let stage_started = Instant::now();
     let display_list = build_display_list(&layout.fragments);
     let damage = DamageRegion::between(previous_display_list, &display_list);
+    let paint_list = stage_started.elapsed();
+
+    let stage_started = Instant::now();
     let mut framebuffer = Framebuffer::try_new(options.viewport, options.background)?;
     framebuffer.rasterize(&display_list);
+    let raster = stage_started.elapsed();
+
+    let observability = RenderObservability {
+        timings: RenderTimings {
+            parse,
+            style,
+            layout_tree,
+            fragment,
+            paint_list,
+            raster,
+            total: total_started.elapsed(),
+        },
+        counters: RenderCounters {
+            dom_nodes: document.node_count(),
+            layout_nodes: layout.tree.node_count(),
+            fragments: layout.fragments.fragment_count(),
+            display_commands: display_list.commands.len(),
+            damage_rects: damage.rects.len(),
+        },
+    };
 
     Ok(RenderOutput {
         document,
@@ -490,6 +562,7 @@ pub fn render_html_against(
         display_list,
         damage,
         framebuffer,
+        observability,
     })
 }
 
@@ -602,6 +675,40 @@ mod tests {
         }
 
         find(document, document.root(), id).expect("fixture contains requested id")
+    }
+
+    #[test]
+    fn full_render_exposes_stage_observability_without_affecting_identity() {
+        let first = render_ok(DETERMINISTIC_FIXTURE, deterministic_options());
+        let second = render_ok(DETERMINISTIC_FIXTURE, deterministic_options());
+        let counters = first.observability.counters;
+
+        assert_eq!(counters.dom_nodes, first.document.node_count());
+        assert_eq!(counters.layout_nodes, first.layout.tree.node_count());
+        assert_eq!(counters.fragments, first.layout.fragments.fragment_count());
+        assert_eq!(counters.display_commands, first.display_list.commands.len());
+        assert_eq!(counters.damage_rects, first.damage.rects.len());
+        assert!(first.observability.timings.total >= first.observability.timings.raster);
+        assert_eq!(
+            first.deterministic_signature_hash(),
+            second.deterministic_signature_hash()
+        );
+    }
+
+    #[test]
+    fn incremental_report_exposes_elapsed_time_and_path_counts() {
+        let mut session = session(DETERMINISTIC_FIXTURE, deterministic_options());
+        let hero = element_with_id(session.document(), "hero");
+        session
+            .document_mut()
+            .set_attribute(hero, "style", "background:#445566")
+            .unwrap();
+
+        let report = session.update();
+        assert_eq!(report.mode, IncrementalMode::PaintOnlyReuse);
+        assert!(report.dirty_nodes >= 1);
+        assert_eq!(report.patched_nodes, 1);
+        let _elapsed = report.elapsed;
     }
 
     #[test]

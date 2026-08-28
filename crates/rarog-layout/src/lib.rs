@@ -1103,6 +1103,14 @@ impl LayoutTree {
         snapshot_style_node(&self.root, &mut output);
         output
     }
+
+    pub fn node_count(&self) -> usize {
+        count_layout_nodes(&self.root)
+    }
+}
+
+fn count_layout_nodes(node: &LayoutNode) -> usize {
+    1 + node.children.iter().map(count_layout_nodes).sum::<usize>()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1156,6 +1164,14 @@ impl FragmentTree {
         snapshot_fragment(&self.root, 0, &mut output);
         output
     }
+
+    pub fn fragment_count(&self) -> usize {
+        count_fragments(&self.root)
+    }
+}
+
+fn count_fragments(fragment: &Fragment) -> usize {
+    1 + fragment.children.iter().map(count_fragments).sum::<usize>()
 }
 
 #[derive(Clone, Debug)]
@@ -1169,19 +1185,21 @@ pub fn layout_document(doc: &Document, viewport: Size) -> LayoutOutput {
     layout_document_with_styles(doc, &styles, viewport)
 }
 
+pub fn build_layout_tree(doc: &Document, styles: &StyleSet) -> LayoutTree {
+    let mut tree_builder = LayoutTreeBuilder::new(styles);
+    let root = tree_builder
+        .build_node(doc, doc.root())
+        .expect("document root always creates a layout root");
+    LayoutTree { root }
+}
+
 pub fn layout_document_with_styles(
     doc: &Document,
     styles: &StyleSet,
     viewport: Size,
 ) -> LayoutOutput {
-    let mut tree_builder = LayoutTreeBuilder::new(styles);
-    let root = tree_builder
-        .build_node(doc, doc.root())
-        .expect("document root always creates a layout root");
-    let tree = LayoutTree { root };
-
+    let tree = build_layout_tree(doc, styles);
     let fragments = relayout_tree(&tree, viewport);
-
     LayoutOutput { tree, fragments }
 }
 
