@@ -1,5 +1,7 @@
 use super::{
-    IncrementalReport, RenderError, RenderObservability, RenderOptions, RenderSession,
+    DEFAULT_MAX_CSS_RULES, DEFAULT_MAX_DISPLAY_COMMANDS, DEFAULT_MAX_DOM_DEPTH,
+    DEFAULT_MAX_DOM_NODES, DEFAULT_MAX_FRAGMENTS, DEFAULT_MAX_TEXT_SCALARS, IncrementalReport,
+    RenderError, RenderLimits, RenderObservability, RenderOptions, RenderSession,
     validate_viewport_size,
 };
 use rarog_paint::{
@@ -171,6 +173,12 @@ impl EventSink for NullEventSink {
 pub struct ResourceBudget {
     pub max_document_source_bytes: usize,
     pub max_viewport_pixels: u64,
+    pub max_dom_nodes: usize,
+    pub max_dom_depth: usize,
+    pub max_text_scalars: usize,
+    pub max_css_rules: usize,
+    pub max_fragments: usize,
+    pub max_display_commands: usize,
 }
 
 impl Default for ResourceBudget {
@@ -178,6 +186,12 @@ impl Default for ResourceBudget {
         Self {
             max_document_source_bytes: DEFAULT_MAX_DOCUMENT_SOURCE_BYTES,
             max_viewport_pixels: MAX_FRAMEBUFFER_PIXELS,
+            max_dom_nodes: DEFAULT_MAX_DOM_NODES,
+            max_dom_depth: DEFAULT_MAX_DOM_DEPTH,
+            max_text_scalars: DEFAULT_MAX_TEXT_SCALARS,
+            max_css_rules: DEFAULT_MAX_CSS_RULES,
+            max_fragments: DEFAULT_MAX_FRAGMENTS,
+            max_display_commands: DEFAULT_MAX_DISPLAY_COMMANDS,
         }
     }
 }
@@ -276,6 +290,12 @@ impl EngineBuilder {
     pub fn build(self) -> Result<Engine, EngineError> {
         if self.budget.max_document_source_bytes == 0
             || self.budget.max_viewport_pixels == 0
+            || self.budget.max_dom_nodes == 0
+            || self.budget.max_dom_depth == 0
+            || self.budget.max_text_scalars == 0
+            || self.budget.max_css_rules == 0
+            || self.budget.max_fragments == 0
+            || self.budget.max_display_commands == 0
             || self.budget.max_viewport_pixels > MAX_FRAMEBUFFER_PIXELS
         {
             return Err(EngineError::InvalidResourceBudget);
@@ -460,14 +480,23 @@ impl View {
                 session.resize(viewport)?;
                 FrameStatus::ViewportRebuild
             }
-            Some(session) => FrameStatus::Incremental(session.update()),
+            Some(session) => FrameStatus::Incremental(session.update()?),
             None => {
                 let loaded = self.loaded.as_ref().ok_or(EngineError::NoDocumentLoaded)?;
-                self.session = Some(RenderSession::new(
+                self.session = Some(RenderSession::new_with_limits(
                     &loaded.source,
                     RenderOptions {
                         viewport,
                         background: self.options.background,
+                    },
+                    RenderLimits {
+                        max_document_source_bytes: self.shared.budget.max_document_source_bytes,
+                        max_dom_nodes: self.shared.budget.max_dom_nodes,
+                        max_dom_depth: self.shared.budget.max_dom_depth,
+                        max_text_scalars: self.shared.budget.max_text_scalars,
+                        max_css_rules: self.shared.budget.max_css_rules,
+                        max_fragments: self.shared.budget.max_fragments,
+                        max_display_commands: self.shared.budget.max_display_commands,
                     },
                 )?);
                 FrameStatus::Initial
@@ -618,13 +647,13 @@ mod tests {
         {
             let frame = view.render(viewport).unwrap();
             assert_eq!(frame.status, FrameStatus::Initial);
-            assert!(!frame.display_list.commands.is_empty());
+            assert!(!frame.display_list.is_empty());
             let observability = frame
                 .full_observability
                 .expect("initial frame exposes full render observability");
             assert_eq!(
                 observability.counters.display_commands,
-                frame.display_list.commands.len()
+                frame.display_list.len()
             );
         }
 
@@ -677,6 +706,7 @@ mod tests {
             .resource_budget(ResourceBudget {
                 max_document_source_bytes: 4,
                 max_viewport_pixels: 100,
+                ..ResourceBudget::default()
             })
             .build()
             .unwrap();
@@ -694,6 +724,7 @@ mod tests {
             .resource_budget(ResourceBudget {
                 max_document_source_bytes: 1024,
                 max_viewport_pixels: 100,
+                ..ResourceBudget::default()
             })
             .build()
             .unwrap();
@@ -789,6 +820,7 @@ mod tests {
                 .resource_budget(ResourceBudget {
                     max_document_source_bytes: 1,
                     max_viewport_pixels: MAX_FRAMEBUFFER_PIXELS + 1,
+                    ..ResourceBudget::default()
                 })
                 .build(),
             Err(EngineError::InvalidResourceBudget)

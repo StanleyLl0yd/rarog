@@ -90,7 +90,7 @@ where
         let mut session = RenderSession::new(FIXTURE, RenderOptions::default()).unwrap();
         let hero = element_with_id(session.document(), "hero");
         mutate(&mut session, hero);
-        let report = session.update();
+        let report = session.update().expect("benchmark update succeeds");
         assert_eq!(report.mode, expected);
         total += report.elapsed;
         black_box(session.framebuffer().stable_hash64());
@@ -106,11 +106,12 @@ fn print_sample(name: &str, iterations: usize, total: Duration) {
 
 fn element_with_id(document: &Document, id: &str) -> NodeId {
     fn find(document: &Document, node: NodeId, id: &str) -> Option<NodeId> {
-        if let Some(dom_node) = document.node(node)
-            && let NodeKind::Element(element) = &dom_node.kind
-            && element.attributes.get("id").map(String::as_str) == Some(id)
-        {
-            return Some(node);
+        if let Some(dom_node) = document.node(node) {
+            if let NodeKind::Element(element) = &dom_node.kind {
+                if element.attributes.get("id").map(String::as_str) == Some(id) {
+                    return Some(node);
+                }
+            }
         }
         document
             .children(node)

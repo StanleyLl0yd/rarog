@@ -1,5 +1,8 @@
-use rarog_dom::{Document, NodeId, NodeKind};
-use rarog_engine::{IncrementalMode, RenderOptions, RenderSession, render_html};
+use rarog_dom::{Document, ElementData, NodeId, NodeKind};
+use rarog_engine::{
+    IncrementalMode, RenderError, RenderLimits, RenderOptions, RenderSession, render_html,
+    render_html_with_limits,
+};
 use rarog_types::{Color, Size};
 
 fn options() -> RenderOptions {
@@ -14,11 +17,12 @@ fn options() -> RenderOptions {
 
 fn element_with_id(document: &Document, id: &str) -> NodeId {
     fn find(document: &Document, node: NodeId, id: &str) -> Option<NodeId> {
-        if let Some(dom_node) = document.node(node)
-            && let NodeKind::Element(element) = &dom_node.kind
-            && element.attributes.get("id").map(String::as_str) == Some(id)
-        {
-            return Some(node);
+        if let Some(dom_node) = document.node(node) {
+            if let NodeKind::Element(element) = &dom_node.kind {
+                if element.attributes.get("id").map(String::as_str) == Some(id) {
+                    return Some(node);
+                }
+            }
         }
         document
             .children(node)
@@ -37,7 +41,7 @@ fn update_style(source: &str, style: &str) -> (RenderSession, IncrementalMode) {
         .document_mut()
         .set_attribute(target, "style", style)
         .expect("style mutation succeeds");
-    let mode = session.update().mode;
+    let mode = session.update().expect("incremental update succeeds").mode;
     (session, mode)
 }
 
@@ -105,7 +109,153 @@ fn vertical_flow_and_structural_fallback_are_preserved() {
         .document_mut()
         .append_new(target, NodeKind::Text("!".into()))
         .expect("structural mutation succeeds");
-    assert_eq!(structural.update().mode, IncrementalMode::FullRebuild);
+    assert_eq!(
+        structural
+            .update()
+            .expect("incremental update succeeds")
+            .mode,
+        IncrementalMode::FullRebuild
+    );
+}
+
+#[test]
+fn structural_limits_reject_deep_and_wide_documents_before_recursive_rendering() {
+    let deep = format!("{}x{}", "<div>".repeat(16), "</div>".repeat(16));
+    let depth_limits = RenderLimits {
+        max_dom_depth: 8,
+        ..RenderLimits::default()
+    };
+    assert!(matches!(
+        render_html_with_limits(&deep, options(), depth_limits),
+        Err(RenderError::DomDepthLimitExceeded { .. })
+    ));
+
+    let wide = "<div>x</div>".repeat(32);
+    let node_limits = RenderLimits {
+        max_dom_nodes: 16,
+        ..RenderLimits::default()
+    };
+    assert!(matches!(
+        render_html_with_limits(&wide, options(), node_limits),
+        Err(RenderError::DomNodeLimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn mutation_growth_is_rejected_before_incremental_recursive_work() {
+    let limits = RenderLimits {
+        max_dom_depth: 6,
+        ..RenderLimits::default()
+    };
+    let mut session =
+        RenderSession::new_with_limits("<div id=\"target\"></div>", options(), limits)
+            .expect("session starts");
+    let mut parent = element_with_id(session.document(), "target");
+    for _ in 0..8 {
+        parent = session
+            .document_mut()
+            .append_new(parent, NodeKind::Element(ElementData::html("div")))
+            .expect("fixture mutation succeeds");
+    }
+
+    assert!(matches!(
+        session.update(),
+        Err(RenderError::DomDepthLimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn detached_mutations_do_not_force_connected_render_work() {
+    let mut session = RenderSession::new(
+        "<div id=\"target\" style=\"background:#112233\">x</div>",
+        options(),
+    )
+    .expect("session starts");
+    let before = session.framebuffer().stable_hash64();
+    let detached = session
+        .document_mut()
+        .create_node(NodeKind::Element(ElementData::html("section")))
+        .expect("detached node is created");
+    session
+        .document_mut()
+        .set_attribute(detached, "class", "unused")
+        .expect("detached mutation succeeds");
+
+    let report = session.update().expect("detached update succeeds");
+    assert_eq!(report.mode, IncrementalMode::Unchanged);
+    assert_eq!(session.framebuffer().stable_hash64(), before);
+}
+
+#[test]
+fn stylesheet_text_mutation_rebuilds_stylesheet_sources() {
+    let source =
+        "<style id=\"sheet\">#target { background:#112233; }</style><div id=\"target\">x</div>";
+    let expected =
+        "<style id=\"sheet\">#target { background:#445566; }</style><div id=\"target\">x</div>";
+    let mut session = RenderSession::new(source, options()).expect("session starts");
+    let sheet = element_with_id(session.document(), "sheet");
+    let text = *session
+        .document()
+        .children(sheet)
+        .and_then(|children| children.first())
+        .expect("style element contains text");
+    session
+        .document_mut()
+        .set_text(text, "#target { background:#445566; }")
+        .expect("stylesheet text mutation succeeds");
+
+    assert_eq!(
+        session.update().expect("stylesheet update succeeds").mode,
+        IncrementalMode::FullRebuild
+    );
+    assert_matches_fresh(&session, expected);
+}
+
+#[test]
+fn deterministic_incremental_sequence_matches_fresh_render() {
+    let base = "<div id=\"target\" style=\"width:80px;height:20px;background:#000000\">Rarog</div>";
+    let mut session = RenderSession::new(base, options()).expect("session starts");
+    let target = element_with_id(session.document(), "target");
+
+    for step in 0..24u32 {
+        let width = 80 + (step % 5) * 4;
+        let shade = (step * 17) & 0xff;
+        let style =
+            format!("width:{width}px;height:20px;background:#{shade:02x}{shade:02x}{shade:02x}");
+        session
+            .document_mut()
+            .set_attribute(target, "style", style.clone())
+            .expect("mutation succeeds");
+        session.update().expect("incremental update succeeds");
+
+        let fresh_source = format!("<div id=\"target\" style=\"{style}\">Rarog</div>");
+        let fresh = render_html(&fresh_source, options()).expect("fresh render succeeds");
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            fresh.framebuffer.stable_hash64()
+        );
+        assert_eq!(session.styles().snapshot(), fresh.styles.snapshot());
+        assert_eq!(
+            session.layout().tree.snapshot(),
+            fresh.layout.tree.snapshot()
+        );
+        assert_eq!(session.display_list().len(), fresh.display_list.len());
+    }
+}
+
+#[test]
+fn malformed_bootstrap_corpus_does_not_panic() {
+    for source in [
+        "",
+        "<",
+        "<div",
+        "</div>",
+        "<style>{</style>",
+        "<div><span></div>",
+        "<div style=\"width:NaNpx\">x</div>",
+    ] {
+        let _ = render_html_with_limits(source, options(), RenderLimits::default());
+    }
 }
 
 #[test]

@@ -1,6 +1,10 @@
 use rarog_css::{ComputedStyle, StyleSet, computed_style};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
+use unicode_bidi::BidiInfo;
+use unicode_linebreak::{BreakOpportunity as UnicodeBreakOpportunity, linebreaks};
+use unicode_script::{Script, UnicodeScript};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LayoutNodeId(usize);
@@ -327,6 +331,14 @@ impl FontFallbackChain {
 
     pub fn select_face_for_range(&self, text: &str, range: TextRange) -> Option<FontFaceId> {
         let characters = text.chars().collect::<Vec<_>>();
+        self.select_face_for_characters(&characters, range)
+    }
+
+    fn select_face_for_characters(
+        &self,
+        characters: &[char],
+        range: TextRange,
+    ) -> Option<FontFaceId> {
         let slice = characters.get(range.start..range.end)?;
         self.faces
             .iter()
@@ -355,6 +367,7 @@ fn is_common_font_character(character: char) -> bool {
 }
 
 pub fn font_runs(text: &str, chain: &FontFallbackChain) -> Vec<FontRun> {
+    let characters = text.chars().collect::<Vec<_>>();
     let boundaries = grapheme_boundaries(text);
     if boundaries.len() < 2 {
         return Vec::new();
@@ -363,7 +376,6 @@ pub fn font_runs(text: &str, chain: &FontFallbackChain) -> Vec<FontRun> {
     let mut runs: Vec<FontRun> = Vec::new();
     for window in boundaries.windows(2) {
         let range = TextRange::new(window[0], window[1]);
-        let characters = text.chars().collect::<Vec<_>>();
         let common = characters[range.start..range.end]
             .iter()
             .copied()
@@ -372,7 +384,7 @@ pub fn font_runs(text: &str, chain: &FontFallbackChain) -> Vec<FontRun> {
         let face = if inherited {
             runs.last().map(|run| run.face)
         } else {
-            chain.select_face_for_range(text, range)
+            chain.select_face_for_characters(&characters, range)
         }
         .or_else(|| chain.faces.last().map(|face| face.id))
         .expect("font fallback chain must contain at least one face");
@@ -619,6 +631,7 @@ pub fn shaping_runs(text: &str, fallback: &FontFallbackChain) -> Vec<ShapingRun>
 
 fn shaping_runs_for_font_runs(text: &str, fonts: &[FontRun]) -> Vec<ShapingRun> {
     let bidi = bidi_runs(text);
+    let boundaries = grapheme_boundaries(text);
     let mut runs: Vec<ShapingRun> = Vec::new();
     let mut bidi_index = 0usize;
     let mut font_index = 0usize;
@@ -630,8 +643,8 @@ fn shaping_runs_for_font_runs(text: &str, fonts: &[FontRun]) -> Vec<ShapingRun> 
         let end = bidi_run.range.end.min(font_run.range.end);
 
         if start < end {
-            debug_assert!(is_grapheme_boundary(text, start));
-            debug_assert!(is_grapheme_boundary(text, end));
+            debug_assert!(boundaries.binary_search(&start).is_ok());
+            debug_assert!(boundaries.binary_search(&end).is_ok());
             let run = ShapingRun {
                 range: TextRange::new(start, end),
                 face: font_run.face,
@@ -663,6 +676,7 @@ fn shaping_runs_for_font_runs(text: &str, fonts: &[FontRun]) -> Vec<ShapingRun> 
 }
 
 fn shaping_requests_for_runs(text: &str, runs: &[ShapingRun]) -> Vec<ShapingRequest> {
+    let characters = text.chars().collect::<Vec<_>>();
     let boundaries = grapheme_boundaries(text);
     let mut requests = Vec::new();
 
@@ -677,8 +691,10 @@ fn shaping_requests_for_runs(text: &str, runs: &[ShapingRun]) -> Vec<ShapingRequ
                 continue;
             }
 
-            let cluster_script =
-                shaping_script_for_range(text, TextRange::new(cluster_start, cluster_end));
+            let cluster_script = shaping_script_for_characters(
+                &characters,
+                TextRange::new(cluster_start, cluster_end),
+            );
             if matches!(cluster_script, ShapingScript::Common) {
                 continue;
             }
@@ -690,9 +706,7 @@ fn shaping_requests_for_runs(text: &str, runs: &[ShapingRun]) -> Vec<ShapingRequ
                         face: run.face,
                         level: run.level,
                     };
-                    let mut request = ShapingRequest::bootstrap(text, request_run);
-                    request.script = script;
-                    requests.push(request);
+                    requests.push(shaping_request(request_run, script));
                     request_start = cluster_start;
                     current_script = Some(cluster_script);
                 }
@@ -707,19 +721,31 @@ fn shaping_requests_for_runs(text: &str, runs: &[ShapingRun]) -> Vec<ShapingRequ
                 face: run.face,
                 level: run.level,
             };
-            let mut request = ShapingRequest::bootstrap(text, request_run);
-            if let Some(script) = current_script {
-                request.script = script;
-            }
-            requests.push(request);
+            let script = current_script
+                .unwrap_or_else(|| shaping_script_for_characters(&characters, request_run.range));
+            requests.push(shaping_request(request_run, script));
         }
     }
 
     requests
 }
 
+fn shaping_request(run: ShapingRun, script: ShapingScript) -> ShapingRequest {
+    ShapingRequest {
+        run,
+        script,
+        language: LanguageTag::default(),
+        features: Vec::new(),
+        variations: Vec::new(),
+    }
+}
+
 pub fn shaping_script_for_range(text: &str, range: TextRange) -> ShapingScript {
     let characters = text.chars().collect::<Vec<_>>();
+    shaping_script_for_characters(&characters, range)
+}
+
+fn shaping_script_for_characters(characters: &[char], range: TextRange) -> ShapingScript {
     let Some(slice) = characters.get(range.start..range.end) else {
         return ShapingScript::Unknown;
     };
@@ -731,73 +757,69 @@ pub fn shaping_script_for_range(text: &str, range: TextRange) -> ShapingScript {
 }
 
 fn shaping_script_for_character(character: char) -> Option<ShapingScript> {
-    let code = character as u32;
     if is_extended_pictographic(character) || is_regional_indicator(character) {
-        Some(ShapingScript::Emoji)
-    } else if is_common_font_character(character) || character.is_ascii_digit() {
-        None
-    } else if matches!(code, 0x0041..=0x024f) {
-        Some(ShapingScript::Latin)
-    } else if matches!(code, 0x0400..=0x052f) {
-        Some(ShapingScript::Cyrillic)
-    } else if matches!(code, 0x0590..=0x05ff) {
-        Some(ShapingScript::Hebrew)
-    } else if matches!(code, 0x0600..=0x08ff | 0xfb50..=0xfdff | 0xfe70..=0xfefc) {
-        Some(ShapingScript::Arabic)
-    } else if matches!(code, 0x2e80..=0x9fff | 0xf900..=0xfaff) {
-        Some(ShapingScript::Han)
-    } else if is_grapheme_extend(character) {
-        None
-    } else {
-        Some(ShapingScript::Unknown)
+        return Some(ShapingScript::Emoji);
+    }
+    match character.script() {
+        Script::Common | Script::Inherited => None,
+        Script::Latin => Some(ShapingScript::Latin),
+        Script::Cyrillic => Some(ShapingScript::Cyrillic),
+        Script::Hebrew => Some(ShapingScript::Hebrew),
+        Script::Arabic => Some(ShapingScript::Arabic),
+        Script::Han => Some(ShapingScript::Han),
+        Script::Unknown => Some(ShapingScript::Unknown),
+        _ => Some(ShapingScript::Unknown),
     }
 }
 
 pub fn paragraph_direction(text: &str) -> TextDirection {
-    text.chars()
-        .find_map(strong_direction)
+    BidiInfo::new(text, None)
+        .paragraphs
+        .first()
+        .map(|paragraph| {
+            if paragraph.level.is_rtl() {
+                TextDirection::Rtl
+            } else {
+                TextDirection::Ltr
+            }
+        })
         .unwrap_or(TextDirection::Ltr)
 }
 
 pub fn bidi_runs(text: &str) -> Vec<BidiRun> {
-    let characters = text.chars().collect::<Vec<_>>();
-    if characters.is_empty() {
+    if text.is_empty() {
         return Vec::new();
     }
 
-    let base = paragraph_direction(text);
-    let base_level = match base {
-        TextDirection::Ltr => BidiLevel::new(0),
-        TextDirection::Rtl => BidiLevel::new(1),
-    };
-
-    let mut resolved = Vec::with_capacity(characters.len());
-    let mut previous = base;
-    for character in characters.iter().copied() {
-        let direction = strong_direction(character).unwrap_or(previous);
-        resolved.push(direction);
-        if strong_direction(character).is_some() {
-            previous = direction;
-        }
-    }
-
+    let bidi = BidiInfo::new(text, None);
     let mut runs = Vec::new();
-    let mut start = 0usize;
-    let mut current = resolved[0];
-    for (index, direction) in resolved.iter().copied().enumerate().skip(1) {
-        if direction != current {
-            runs.push(BidiRun {
-                range: TextRange::new(start, index),
-                level: level_for_direction(base_level, current),
-            });
-            start = index;
-            current = direction;
+    let mut current_level = None;
+    let mut run_start = 0usize;
+    let mut character_index = 0usize;
+
+    for (byte_index, _) in text.char_indices() {
+        let level = BidiLevel::new(bidi.levels[byte_index].number());
+        match current_level {
+            Some(current) if current != level => {
+                runs.push(BidiRun {
+                    range: TextRange::new(run_start, character_index),
+                    level: current,
+                });
+                run_start = character_index;
+                current_level = Some(level);
+            }
+            None => current_level = Some(level),
+            Some(_) => {}
         }
+        character_index += 1;
     }
-    runs.push(BidiRun {
-        range: TextRange::new(start, characters.len()),
-        level: level_for_direction(base_level, current),
-    });
+
+    if let Some(level) = current_level {
+        runs.push(BidiRun {
+            range: TextRange::new(run_start, character_index),
+            level,
+        });
+    }
     runs
 }
 
@@ -831,26 +853,6 @@ pub fn visual_bidi_runs(text: &str) -> Vec<BidiRun> {
     runs
 }
 
-fn level_for_direction(base: BidiLevel, direction: TextDirection) -> BidiLevel {
-    match (base.direction(), direction) {
-        (TextDirection::Ltr, TextDirection::Ltr) => BidiLevel::new(0),
-        (TextDirection::Ltr, TextDirection::Rtl) => BidiLevel::new(1),
-        (TextDirection::Rtl, TextDirection::Rtl) => BidiLevel::new(1),
-        (TextDirection::Rtl, TextDirection::Ltr) => BidiLevel::new(2),
-    }
-}
-
-fn strong_direction(character: char) -> Option<TextDirection> {
-    let code = character as u32;
-    if matches!(code, 0x0590..=0x08ff | 0xfb1d..=0xfdff | 0xfe70..=0xfefc) {
-        Some(TextDirection::Rtl)
-    } else if character.is_alphabetic() || character.is_ascii_digit() {
-        Some(TextDirection::Ltr)
-    } else {
-        None
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BreakKind {
     Soft,
@@ -864,34 +866,13 @@ pub struct BreakOpportunity {
 }
 
 pub fn grapheme_boundaries(text: &str) -> Vec<usize> {
-    let characters = text.chars().collect::<Vec<_>>();
-    let mut boundaries = vec![0];
-    for index in 1..characters.len() {
-        let previous = characters[index - 1];
-        let current = characters[index];
-        let previous_previous = index.checked_sub(2).map(|value| characters[value]);
-        let preceding_regional_indicators = characters[..index]
-            .iter()
-            .rev()
-            .take_while(|character| is_regional_indicator(**character))
-            .count();
-
-        let no_break = (previous == '\r' && current == '\n')
-            || is_grapheme_extend(current)
-            || previous == '\u{200d}'
-            || current == '\u{200d}'
-            || (is_regional_indicator(previous)
-                && is_regional_indicator(current)
-                && preceding_regional_indicators % 2 == 1)
-            || (previous_previous == Some('\u{200d}') && is_extended_pictographic(current));
-
-        if !no_break {
-            boundaries.push(index);
-        }
+    let mut boundaries = Vec::new();
+    let mut character_index = 0usize;
+    boundaries.push(0);
+    for grapheme in UnicodeSegmentation::graphemes(text, true) {
+        character_index = character_index.saturating_add(grapheme.chars().count());
+        boundaries.push(character_index);
     }
-
-    boundaries.push(characters.len());
-    boundaries.dedup();
     boundaries
 }
 
@@ -931,30 +912,25 @@ fn is_extended_pictographic(character: char) -> bool {
 }
 
 pub fn unicode_break_opportunities(text: &str) -> Vec<BreakOpportunity> {
-    let characters = text.chars().collect::<Vec<_>>();
     let mut opportunities = Vec::new();
-    for (index, character) in characters.iter().copied().enumerate() {
-        let boundary = index + 1;
-        if is_mandatory_break(character) {
-            if is_grapheme_boundary(text, boundary) {
-                opportunities.push(BreakOpportunity {
-                    index: boundary,
-                    kind: BreakKind::Mandatory,
-                });
-            }
+    let mut previous_byte = 0usize;
+    let mut character_index = 0usize;
+    let terminal_is_explicit_break = text.chars().last().is_some_and(is_mandatory_break);
+
+    for (byte_index, opportunity) in linebreaks(text) {
+        character_index =
+            character_index.saturating_add(text[previous_byte..byte_index].chars().count());
+        previous_byte = byte_index;
+        if byte_index == text.len() && !terminal_is_explicit_break {
             continue;
         }
-        let next = characters.get(boundary).copied();
-        if is_grapheme_boundary(text, boundary)
-            && (is_breakable_whitespace(character)
-                || character == '-'
-                || (is_cjk_ideograph(character) && next.is_some_and(is_cjk_ideograph)))
-        {
-            opportunities.push(BreakOpportunity {
-                index: boundary,
-                kind: BreakKind::Soft,
-            });
-        }
+        opportunities.push(BreakOpportunity {
+            index: character_index,
+            kind: match opportunity {
+                UnicodeBreakOpportunity::Allowed => BreakKind::Soft,
+                UnicodeBreakOpportunity::Mandatory => BreakKind::Mandatory,
+            },
+        });
     }
     opportunities
 }
@@ -963,21 +939,7 @@ fn is_mandatory_break(character: char) -> bool {
     matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
-fn is_breakable_whitespace(character: char) -> bool {
-    character.is_whitespace()
-        && !is_mandatory_break(character)
-        && !matches!(character, '\u{00a0}' | '\u{202f}')
-}
-
-fn is_cjk_ideograph(character: char) -> bool {
-    matches!(
-        character as u32,
-        0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x2fa1f
-    )
-}
-
-fn is_non_breaking_boundary(text: &str, index: usize) -> bool {
-    let characters = text.chars().collect::<Vec<_>>();
+fn is_non_breaking_boundary(characters: &[char], index: usize) -> bool {
     let previous = index.checked_sub(1).and_then(|value| characters.get(value));
     let next = characters.get(index);
     previous
@@ -995,7 +957,14 @@ impl LineBreaker for UnicodeLineBreaker {
             return vec![TextRange::new(0, 0)];
         }
 
+        let characters = run.text.chars().collect::<Vec<_>>();
+        let boundaries = grapheme_boundaries(&run.text);
         let opportunities = unicode_break_opportunities(&run.text);
+        let mut prefix_advance = vec![0.0f32; characters.len().saturating_add(1)];
+        for cluster in &run.shaped.clusters {
+            prefix_advance[cluster.source.end] =
+                prefix_advance[cluster.source.start] + cluster.advance;
+        }
         let mut ranges = Vec::new();
         let mut line_start = 0;
         let mut last_soft = None;
@@ -1005,9 +974,9 @@ impl LineBreaker for UnicodeLineBreaker {
             width += cluster.advance;
             let boundary = cluster.source.end;
             let opportunity = opportunities
-                .iter()
-                .find(|opportunity| opportunity.index == boundary)
-                .copied();
+                .binary_search_by_key(&boundary, |opportunity| opportunity.index)
+                .ok()
+                .map(|index| opportunities[index]);
 
             if matches!(
                 opportunity.map(|value| value.kind),
@@ -1024,23 +993,20 @@ impl LineBreaker for UnicodeLineBreaker {
                 let emergency = cluster.source.start;
                 let break_at = last_soft.filter(|value| *value > line_start).or_else(|| {
                     (emergency > line_start
-                        && is_grapheme_boundary(&run.text, emergency)
-                        && !is_non_breaking_boundary(&run.text, emergency))
+                        && boundaries.binary_search(&emergency).is_ok()
+                        && !is_non_breaking_boundary(&characters, emergency))
                     .then_some(emergency)
                 });
                 if let Some(break_at) = break_at {
                     ranges.push(TextRange::new(line_start, break_at));
                     line_start = break_at;
-                    width = run.advance_for_range(TextRange::new(line_start, boundary));
-                    last_soft = opportunities
+                    width = prefix_advance[boundary] - prefix_advance[line_start];
+                    let end = opportunities.partition_point(|value| value.index < boundary);
+                    last_soft = opportunities[..end]
                         .iter()
-                        .filter(|value| {
-                            value.kind == BreakKind::Soft
-                                && value.index > line_start
-                                && value.index < boundary
-                        })
-                        .map(|value| value.index)
-                        .next_back();
+                        .rev()
+                        .find(|value| value.kind == BreakKind::Soft && value.index > line_start)
+                        .map(|value| value.index);
                 }
             }
 
@@ -1975,27 +1941,27 @@ mod tests {
 
     #[test]
     fn unicode_break_opportunities_cover_whitespace_hyphen_cjk_and_mandatory_breaks() {
-        assert_eq!(
-            unicode_break_opportunities("a b-c中日\nq"),
-            vec![
-                BreakOpportunity {
-                    index: 2,
-                    kind: BreakKind::Soft
-                },
-                BreakOpportunity {
-                    index: 4,
-                    kind: BreakKind::Soft
-                },
-                BreakOpportunity {
-                    index: 6,
-                    kind: BreakKind::Soft
-                },
-                BreakOpportunity {
-                    index: 8,
-                    kind: BreakKind::Mandatory
-                },
-            ]
-        );
+        let opportunities = unicode_break_opportunities("a b-c中日\nq");
+        for expected in [
+            BreakOpportunity {
+                index: 2,
+                kind: BreakKind::Soft,
+            },
+            BreakOpportunity {
+                index: 4,
+                kind: BreakKind::Soft,
+            },
+            BreakOpportunity {
+                index: 6,
+                kind: BreakKind::Soft,
+            },
+            BreakOpportunity {
+                index: 8,
+                kind: BreakKind::Mandatory,
+            },
+        ] {
+            assert!(opportunities.contains(&expected));
+        }
     }
 
     #[test]
@@ -2070,6 +2036,19 @@ mod tests {
     }
 
     #[test]
+    fn long_text_analysis_preserves_linear_sized_results() {
+        let text = "ab cd-世界🇱🇹".repeat(2_000);
+        let boundaries = grapheme_boundaries(&text);
+        let opportunities = unicode_break_opportunities(&text);
+        let runs = font_runs(&text, &FontFallbackChain::default());
+
+        assert!(!boundaries.is_empty());
+        assert!(boundaries.len() <= text.chars().count() + 1);
+        assert!(opportunities.len() <= text.chars().count());
+        assert!(!runs.is_empty());
+    }
+
+    #[test]
     fn crlf_is_one_grapheme_cluster_and_one_mandatory_boundary() {
         let text = "a\r\nb";
         assert_eq!(grapheme_boundaries(text), vec![0, 1, 3, 4]);
@@ -2106,14 +2085,14 @@ mod tests {
         assert_eq!(
             runs[1],
             BidiRun {
-                range: TextRange::new(4, 9),
+                range: TextRange::new(4, 8),
                 level: BidiLevel::new(1)
             }
         );
         assert_eq!(
             runs[2],
             BidiRun {
-                range: TextRange::new(9, 12),
+                range: TextRange::new(8, 12),
                 level: BidiLevel::new(0)
             }
         );
@@ -2221,9 +2200,14 @@ mod tests {
                     level: BidiLevel::new(0),
                 },
                 ShapingRun {
-                    range: TextRange::new(4, 9),
+                    range: TextRange::new(4, 8),
                     face: FontFaceId::new(1),
                     level: BidiLevel::new(1),
+                },
+                ShapingRun {
+                    range: TextRange::new(8, 9),
+                    face: FontFaceId::new(1),
+                    level: BidiLevel::new(0),
                 },
                 ShapingRun {
                     range: TextRange::new(9, 11),
@@ -2288,10 +2272,11 @@ mod tests {
     fn text_run_exposes_stable_shaping_segments() {
         let run = TextRun::new("abc שלום 世界".into());
         let segments = run.shaping_runs();
-        assert_eq!(segments.len(), 3);
+        assert_eq!(segments.len(), 4);
         assert_eq!(segments[0].direction(), TextDirection::Ltr);
         assert_eq!(segments[1].direction(), TextDirection::Rtl);
         assert_eq!(segments[2].direction(), TextDirection::Ltr);
+        assert_eq!(segments[3].direction(), TextDirection::Ltr);
     }
 
     #[test]
@@ -2377,11 +2362,13 @@ mod tests {
         let fallback = FontFallbackChain::default();
         let run = TextRun::with_fallback("abc שלום 世界".into(), &fallback);
         let shaped = run.shape_with_backend(&fallback, &FixedTextShaper::default());
-        assert_eq!(shaped.len(), 3);
+        assert_eq!(shaped.len(), 4);
         assert_eq!(shaped[0].run.face, FontFaceId::new(0));
         assert_eq!(shaped[1].run.face, FontFaceId::new(1));
-        assert_eq!(shaped[2].run.face, FontFaceId::new(2));
+        assert_eq!(shaped[2].run.face, FontFaceId::new(1));
+        assert_eq!(shaped[3].run.face, FontFaceId::new(2));
         assert_eq!(shaped[1].run.direction(), TextDirection::Rtl);
+        assert_eq!(shaped[2].run.direction(), TextDirection::Ltr);
         assert!(shaped.iter().all(|segment| !segment.glyphs.is_empty()));
     }
 

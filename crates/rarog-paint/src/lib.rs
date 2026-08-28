@@ -150,11 +150,81 @@ impl DisplayCommand {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DisplayList {
-    pub command_ids: Vec<DisplayItemId>,
-    pub commands: Vec<DisplayCommand>,
+    command_ids: Vec<DisplayItemId>,
+    commands: Vec<DisplayCommand>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayListError {
+    LengthMismatch { ids: usize, commands: usize },
+    DuplicateIds,
+    UnbalancedStructure,
+}
+
+impl fmt::Display for DisplayListError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LengthMismatch { ids, commands } => {
+                write!(
+                    formatter,
+                    "display list has {ids} IDs for {commands} commands"
+                )
+            }
+            Self::DuplicateIds => formatter.write_str("display list contains duplicate item IDs"),
+            Self::UnbalancedStructure => {
+                formatter.write_str("display list structural scopes are invalid")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DisplayListError {}
+
 impl DisplayList {
+    pub fn try_from_parts(
+        command_ids: Vec<DisplayItemId>,
+        commands: Vec<DisplayCommand>,
+    ) -> Result<Self, DisplayListError> {
+        let list = Self {
+            command_ids,
+            commands,
+        };
+        list.validate()?;
+        Ok(list)
+    }
+
+    pub fn command_ids(&self) -> &[DisplayItemId] {
+        &self.command_ids
+    }
+
+    pub fn commands(&self) -> &[DisplayCommand] {
+        &self.commands
+    }
+
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<(), DisplayListError> {
+        if self.command_ids.len() != self.commands.len() {
+            return Err(DisplayListError::LengthMismatch {
+                ids: self.command_ids.len(),
+                commands: self.commands.len(),
+            });
+        }
+        if !self.has_unique_ids() {
+            return Err(DisplayListError::DuplicateIds);
+        }
+        if !self.has_balanced_structure() {
+            return Err(DisplayListError::UnbalancedStructure);
+        }
+        Ok(())
+    }
+
     fn push(&mut self, id: DisplayItemId, command: DisplayCommand) {
         self.command_ids.push(id);
         self.commands.push(command);
@@ -253,11 +323,6 @@ pub fn build_display_list(tree: &FragmentTree) -> DisplayList {
 pub fn build_display_list_for_fragment(fragment: &Fragment) -> DisplayList {
     let mut list = DisplayList::default();
     collect(fragment, &mut list);
-    assert!(list.has_unique_ids(), "display item IDs must be unique");
-    assert!(
-        list.has_balanced_structure(),
-        "display list structural scopes must be balanced"
-    );
     list
 }
 
@@ -502,17 +567,6 @@ pub struct DamageRegion {
 
 impl DamageRegion {
     pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
-        assert!(
-            current.has_unique_ids(),
-            "current display list contains duplicate display item IDs"
-        );
-        if let Some(previous) = previous {
-            assert!(
-                previous.has_unique_ids(),
-                "previous display list contains duplicate display item IDs"
-            );
-        }
-
         let Some(previous) = previous else {
             let mut damage = Self::default();
             for bounds in effective_paint_bounds(current) {
@@ -713,9 +767,9 @@ pub struct Framebuffer {
 }
 
 impl Framebuffer {
-    pub fn new(size: Size, background: Color) -> Self {
-        Self::try_new(size, background)
-            .expect("framebuffer dimensions must fit the R0 safety budget")
+    #[cfg(test)]
+    fn new(size: Size, background: Color) -> Self {
+        Self::try_new(size, background).expect("test framebuffer dimensions are valid")
     }
 
     pub fn try_new(size: Size, background: Color) -> Result<Self, FramebufferError> {
@@ -750,10 +804,6 @@ impl Framebuffer {
     }
 
     pub fn rasterize(&mut self, list: &DisplayList) {
-        assert!(
-            list.has_balanced_structure(),
-            "display list structural scopes must be balanced"
-        );
         let framebuffer_clip = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
         let mut clips = vec![framebuffer_clip];
         let mut transforms = Vec::new();
@@ -1380,6 +1430,19 @@ mod tests {
     }
 
     #[test]
+    fn nested_transform_order_follows_display_list_push_order() {
+        let rect = Rect::new(1.0, 1.0, 2.0, 2.0);
+        let transformed = transform_rect(
+            rect,
+            &[
+                Transform2D::translation(10.0, 0.0),
+                Transform2D::scale(2.0, 3.0),
+            ],
+        );
+        assert_eq!(transformed, Rect::new(22.0, 3.0, 4.0, 6.0));
+    }
+
+    #[test]
     fn framebuffer_hash_is_stable() {
         let list = single_fill(1, Rect::new(0.0, 0.0, 2.0, 2.0), Color::BLACK);
         let mut framebuffer = Framebuffer::new(
@@ -1437,27 +1500,32 @@ mod display_identity_hardening_tests {
         assert!(!list.has_unique_ids());
     }
     #[test]
-    #[should_panic(expected = "current display list contains duplicate display item IDs")]
-    fn damage_rejects_duplicate_display_ids() {
+    fn malformed_external_display_lists_are_rejected_without_panicking() {
         let id = DisplayItemId {
             source: 1,
             fragment: 2,
             slot: 0,
         };
-        let list = DisplayList {
-            command_ids: vec![id, id],
-            commands: vec![
-                DisplayCommand::FillRect {
-                    rect: Rect::new(0.0, 0.0, 1.0, 1.0),
-                    color: Color::BLACK,
-                },
-                DisplayCommand::FillRect {
-                    rect: Rect::new(1.0, 0.0, 1.0, 1.0),
-                    color: Color::BLACK,
-                },
-            ],
+        let command = DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+            color: Color::BLACK,
         };
-        let _ = DamageRegion::between(None, &list);
+
+        assert_eq!(
+            DisplayList::try_from_parts(vec![id], vec![command, command]),
+            Err(DisplayListError::LengthMismatch {
+                ids: 1,
+                commands: 2
+            })
+        );
+        assert_eq!(
+            DisplayList::try_from_parts(vec![id, id], vec![command, command]),
+            Err(DisplayListError::DuplicateIds)
+        );
+        assert_eq!(
+            DisplayList::try_from_parts(vec![id], vec![DisplayCommand::PopClip],),
+            Err(DisplayListError::UnbalancedStructure)
+        );
     }
 
     #[test]

@@ -19,6 +19,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let rendered = render_html(&source, RenderOptions::default())?;
     fs::write(&output, rendered.framebuffer.to_ppm())?;
     println!("Rarog rendered {input} -> {output}");
-    println!("display commands: {}", rendered.display_list.commands.len());
+    println!("display commands: {}", rendered.display_list.len());
     Ok(())
 }

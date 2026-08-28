@@ -402,6 +402,13 @@ impl StyleSet {
         set
     }
 
+    pub fn rule_count(&self) -> usize {
+        self.stylesheets
+            .iter()
+            .map(|stylesheet| stylesheet.rules.len())
+            .fold(0usize, usize::saturating_add)
+    }
+
     pub fn invalidation_dependencies(&self) -> SelectorInvalidationDependencies {
         let mut dependencies = SelectorInvalidationDependencies::new();
         for stylesheet in &self.stylesheets {
@@ -930,25 +937,42 @@ impl InvalidationSet {
         for record in records {
             match &record.kind {
                 MutationKind::NodeCreated { node } => {
-                    set.mark(*node, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    if document.is_connected(*node) {
+                        set.mark(*node, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    }
                 }
                 MutationKind::ChildAdded { parent, child } => {
-                    set.mark(*child, DirtyFlags::STYLE_LAYOUT_PAINT);
-                    set.mark_ancestors(document, Some(*parent), DirtyFlags::LAYOUT_PAINT);
-                    set.mark_structural_dependents(document, *parent, *child, dependencies);
+                    if document.is_connected(*parent) {
+                        set.mark(*child, DirtyFlags::STYLE_LAYOUT_PAINT);
+                        set.mark_ancestors(document, Some(*parent), DirtyFlags::LAYOUT_PAINT);
+                        set.mark_structural_dependents(document, *parent, *child, dependencies);
+                    }
                 }
                 MutationKind::Reparented {
                     child,
                     old_parent,
                     new_parent,
                 } => {
-                    set.mark(*child, DirtyFlags::STYLE_LAYOUT_PAINT);
-                    set.mark_ancestors(document, *old_parent, DirtyFlags::LAYOUT_PAINT);
-                    set.mark_ancestors(document, *new_parent, DirtyFlags::LAYOUT_PAINT);
-                    if dependencies.has_scope(SelectorDependencyScope::Descendants) {
+                    let child_connected = document.is_connected(*child);
+                    let old_connected = old_parent.is_some_and(|node| document.is_connected(node));
+                    let new_connected = new_parent.is_some_and(|node| document.is_connected(node));
+                    if child_connected {
+                        set.mark(*child, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    }
+                    if old_connected {
+                        set.mark_ancestors(document, *old_parent, DirtyFlags::LAYOUT_PAINT);
+                    }
+                    if new_connected {
+                        set.mark_ancestors(document, *new_parent, DirtyFlags::LAYOUT_PAINT);
+                    }
+                    if child_connected
+                        && dependencies.has_scope(SelectorDependencyScope::Descendants)
+                    {
                         mark_subtree(document, *child, &mut set, DirtyFlags::STYLE_LAYOUT_PAINT);
                     }
-                    if dependencies.has_scope(SelectorDependencyScope::FollowingSiblings) {
+                    if (old_connected || new_connected)
+                        && dependencies.has_scope(SelectorDependencyScope::FollowingSiblings)
+                    {
                         if let Some(old_parent) = old_parent {
                             set.mark_child_subtrees(
                                 document,
@@ -967,6 +991,9 @@ impl InvalidationSet {
                     }
                 }
                 MutationKind::Attribute { node, name } => {
+                    if !document.is_connected(*node) {
+                        continue;
+                    }
                     if matches!(name.as_str(), "id" | "class" | "style") {
                         set.mark(*node, DirtyFlags::STYLE_LAYOUT_PAINT);
                         let parent = document.node(*node).and_then(|node| node.parent);
@@ -977,6 +1004,9 @@ impl InvalidationSet {
                     }
                 }
                 MutationKind::CharacterData { node } => {
+                    if !document.is_connected(*node) {
+                        continue;
+                    }
                     set.mark(*node, DirtyFlags::LAYOUT_PAINT);
                     let parent = document.node(*node).and_then(|node| node.parent);
                     set.mark_ancestors(document, parent, DirtyFlags::LAYOUT_PAINT);
@@ -1381,6 +1411,23 @@ mod tests {
 #[cfg(test)]
 mod finite_geometry_tests {
     use super::*;
+
+    #[test]
+    fn detached_mutations_do_not_dirty_the_connected_document() {
+        let mut document = Document::new();
+        let detached = document
+            .create_node(NodeKind::Element(rarog_dom::ElementData::html("div")))
+            .unwrap();
+        let generation = document.generation();
+        document.set_attribute(detached, "class", "card").unwrap();
+
+        let invalidation = InvalidationSet::from_document_since(&document, generation);
+        assert!(invalidation.entries.is_empty());
+
+        document.append_child(document.root(), detached).unwrap();
+        let invalidation = InvalidationSet::from_document_since(&document, generation);
+        assert!(invalidation.entries.contains_key(&detached));
+    }
 
     #[test]
     fn non_finite_lengths_are_rejected() {
