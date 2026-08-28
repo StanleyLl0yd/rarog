@@ -26,7 +26,7 @@ jobs:
           components: rustfmt
       - name: Apply Unicode backends
         run: |
-          sed -i 's/^    """,$/    "",/' tools/r01_unicode.py
+          sed -i 's/^    """,$/    "",/' tools/r01_unicode.py tools/r01_unicode_regressions.py
           python tools/r01_unicode.py
           python tools/r01_unicode_regressions.py
           cargo fmt --all
