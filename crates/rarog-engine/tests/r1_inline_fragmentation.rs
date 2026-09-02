@@ -55,7 +55,7 @@ fn fragmented_inline_background_keeps_unique_display_identity() {
 }
 
 #[test]
-fn text_growth_rebuilds_inline_fragments_to_match_fresh_render() {
+fn text_growth_reflows_inline_fragments_to_match_fresh_render() {
     let source = "<div><span style=\"display:inline;background:#112233\">ab</span></div>";
     let expected = "<div><span style=\"display:inline;background:#112233\">ab cd ef</span></div>";
     let mut session = RenderSession::new(source, options()).unwrap();
@@ -65,7 +65,7 @@ fn text_growth_rebuilds_inline_fragments_to_match_fresh_render() {
     let report = session.update().unwrap();
     let fresh = render_html(expected, options()).unwrap();
 
-    assert_eq!(report.mode, IncrementalMode::FullRebuild);
+    assert_eq!(report.mode, IncrementalMode::FlowRelayout);
     assert_eq!(
         session.framebuffer().stable_hash64(),
         fresh.framebuffer.stable_hash64()
