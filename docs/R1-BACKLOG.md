@@ -25,15 +25,15 @@ Tracking issue: #39.
   - [x] Collapse adjoining vertical margins between in-flow block siblings, including negative margins.
   - [x] Add parent/child and empty-block margin collapsing boundaries.
   - [x] Add block auto/min/max sizing and explicit BFC boundary rules.
-- [ ] Add inline formatting context foundations.
+- [x] Add inline formatting context foundations.
   - [x] Add explicit atomic inline boxes with horizontal line packing and block interruption.
   - [x] Share one line builder across text and inline boxes while preserving Unicode shaping and line-break source ranges.
-  - [ ] Add baseline/vertical-align behavior and inline fragmentation.
+  - [x] Add baseline/vertical-align behavior and inline fragmentation.
     - [x] Align text and atomic inline boxes with `baseline`, `top` and `bottom`.
     - [x] Fragment direct-text non-atomic inline containers across line boundaries with stable fragment ordinals.
     - [x] Slice first/middle/last horizontal box edges for direct-text inline fragments.
     - [x] Fragment arbitrary unsized inline-owner chains around one shaped text leaf.
-    - [ ] Generalize inline fragmentation across multiple nested/sibling inline leaves.
+    - [x] Generalize inline fragmentation across multiple nested/sibling inline leaves.
 - [ ] Add image resource abstraction.
 
 ## D — Production text path

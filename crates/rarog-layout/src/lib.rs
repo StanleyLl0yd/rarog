@@ -1329,27 +1329,37 @@ fn fragmenting_inline_box_is_supported(node: &LayoutNode, nested: bool) -> bool 
         && (!nested || style.vertical_align == VerticalAlign::Baseline)
 }
 
-fn fragmenting_inline_text_leaf(node: &LayoutNode) -> Option<FragmentingInlineTextLeaf<'_>> {
-    let mut boxes = Vec::new();
-    let mut current = node;
-    loop {
-        if !fragmenting_inline_box_is_supported(current, true) || current.children.len() != 1 {
-            return None;
-        }
-        boxes.push(current);
-        let child = &current.children[0];
+fn collect_fragmenting_inline_text_leaves<'a>(
+    node: &'a LayoutNode,
+    boxes: &mut Vec<&'a LayoutNode>,
+    leaves: &mut Vec<FragmentingInlineTextLeaf<'a>>,
+) -> bool {
+    if !fragmenting_inline_box_is_supported(node, true) || node.children.is_empty() {
+        return false;
+    }
+
+    boxes.push(node);
+    for child in &node.children {
         match &child.kind {
-            LayoutNodeKind::Text(run) => {
-                return Some(FragmentingInlineTextLeaf {
-                    boxes,
-                    text_node: child,
-                    run,
-                });
+            LayoutNodeKind::Text(run) => leaves.push(FragmentingInlineTextLeaf {
+                boxes: boxes.clone(),
+                text_node: child,
+                run,
+            }),
+            LayoutNodeKind::Box => {
+                if !collect_fragmenting_inline_text_leaves(child, boxes, leaves) {
+                    boxes.pop();
+                    return false;
+                }
             }
-            LayoutNodeKind::Box => current = child,
-            LayoutNodeKind::Root => return None,
+            LayoutNodeKind::Root => {
+                boxes.pop();
+                return false;
+            }
         }
     }
+    boxes.pop();
+    true
 }
 
 fn fragmenting_inline_text_stream(node: &LayoutNode) -> Option<FragmentingInlineTextStream<'_>> {
@@ -1357,7 +1367,8 @@ fn fragmenting_inline_text_stream(node: &LayoutNode) -> Option<FragmentingInline
         return None;
     }
 
-    let mut leaves = Vec::with_capacity(node.children.len());
+    let mut leaves = Vec::new();
+    let mut boxes = Vec::new();
     for child in &node.children {
         match &child.kind {
             LayoutNodeKind::Text(run) => leaves.push(FragmentingInlineTextLeaf {
@@ -1365,12 +1376,16 @@ fn fragmenting_inline_text_stream(node: &LayoutNode) -> Option<FragmentingInline
                 text_node: child,
                 run,
             }),
-            LayoutNodeKind::Box => leaves.push(fragmenting_inline_text_leaf(child)?),
+            LayoutNodeKind::Box => {
+                if !collect_fragmenting_inline_text_leaves(child, &mut boxes, &mut leaves) {
+                    return None;
+                }
+            }
             LayoutNodeKind::Root => return None,
         }
     }
 
-    Some(FragmentingInlineTextStream { root: node, leaves })
+    (!leaves.is_empty()).then_some(FragmentingInlineTextStream { root: node, leaves })
 }
 
 fn is_inline_flow_node(node: &LayoutNode) -> bool {
@@ -1859,6 +1874,18 @@ struct InlineTextContainerFlow<'a> {
     fragments: &'a mut Vec<Fragment>,
 }
 
+struct InlineStreamPiece<'leaf, 'tree> {
+    leaf: &'leaf FragmentingInlineTextLeaf<'tree>,
+    owner_spans: &'leaf std::collections::BTreeMap<LayoutNodeId, (usize, usize)>,
+    leaf_index: usize,
+    leaf_ordinal: u32,
+    text_range: TextRange,
+    content_width: f32,
+    is_first_leaf_piece: bool,
+    is_last_leaf_piece: bool,
+    cursor_y: f32,
+}
+
 #[derive(Default)]
 struct FragmentBuilder {
     next_id: usize,
@@ -2098,36 +2125,53 @@ impl FragmentBuilder {
             fragments,
         } = flow;
         let root_style = stream.root.style;
-        let root_left_edge =
-            root_style.margin.left + root_style.border_width.left + root_style.padding.left;
-        let root_right_edge =
-            root_style.padding.right + root_style.border_width.right + root_style.margin.right;
+        let root_left_edge = inline_left_edge(root_style);
+        let root_right_edge = inline_right_edge(root_style);
         let full_width = containing_block.available.width.max(0.0);
         let leaf_count = stream.leaves.len();
         let mut root_ordinal = 0u32;
         let mut current_root_index = None;
+        let mut owner_spans = std::collections::BTreeMap::<LayoutNodeId, (usize, usize)>::new();
+        let mut owner_ordinals = std::collections::BTreeMap::<LayoutNodeId, u32>::new();
+
+        for (leaf_index, leaf) in stream.leaves.iter().enumerate() {
+            for owner in &leaf.boxes {
+                owner_spans
+                    .entry(owner.id)
+                    .and_modify(|span| span.1 = leaf_index)
+                    .or_insert((leaf_index, leaf_index));
+            }
+        }
 
         for (leaf_index, leaf) in stream.leaves.iter().enumerate() {
             let nested_left_edge = leaf
                 .boxes
                 .iter()
-                .map(|box_node| {
-                    let style = box_node.style;
-                    style.margin.left + style.border_width.left + style.padding.left
+                .filter(|owner| {
+                    owner_spans
+                        .get(&owner.id)
+                        .is_some_and(|span| span.0 == leaf_index)
                 })
+                .map(|owner| inline_left_edge(owner.style))
                 .sum::<f32>();
             let nested_right_edge = leaf
                 .boxes
                 .iter()
-                .map(|box_node| {
-                    let style = box_node.style;
-                    style.padding.right + style.border_width.right + style.margin.right
+                .filter(|owner| {
+                    owner_spans
+                        .get(&owner.id)
+                        .is_some_and(|span| span.1 == leaf_index)
                 })
+                .map(|owner| inline_right_edge(owner.style))
                 .sum::<f32>();
             let is_first_leaf = leaf_index == 0;
             let is_last_leaf = leaf_index + 1 == leaf_count;
-            let first_piece_start_edge =
-                nested_left_edge + if is_first_leaf { root_left_edge } else { 0.0 };
+            let first_piece_start_edge = nested_left_edge
+                + if is_first_leaf && root_ordinal == 0 {
+                    root_left_edge
+                } else {
+                    0.0
+                };
 
             if line.active
                 && leaf.run.shaped.clusters.first().is_some_and(|cluster| {
@@ -2202,154 +2246,59 @@ impl FragmentBuilder {
                     index
                 };
 
-                let mut styles = leaf
-                    .boxes
-                    .iter()
-                    .map(|box_node| box_node.style)
-                    .collect::<Vec<_>>();
-                for style in &mut styles {
-                    if !is_first_leaf_piece {
-                        style.margin.left = 0.0;
-                        style.border_width.left = 0.0;
-                        style.padding.left = 0.0;
-                    }
-                    if !is_last_leaf_piece {
-                        style.margin.right = 0.0;
-                        style.border_width.right = 0.0;
-                        style.padding.right = 0.0;
-                    }
-                }
-
-                let nested_horizontal_edges = styles
-                    .iter()
-                    .map(|style| {
-                        style.margin.horizontal()
-                            + style.border_width.horizontal()
-                            + style.padding.horizontal()
-                    })
-                    .sum::<f32>();
+                let nested_start_reserve = if is_first_leaf_piece {
+                    nested_left_edge
+                } else {
+                    0.0
+                };
+                let nested_terminal_reserve = if is_last_leaf_piece {
+                    nested_right_edge
+                } else {
+                    0.0
+                };
                 let root_terminal_reserve = if is_final_stream_piece {
                     root_right_edge
                 } else {
                     0.0
                 };
-                let available_content =
-                    (line.remaining_width() - nested_horizontal_edges - root_terminal_reserve)
-                        .max(0.0);
+                let available_content = (line.remaining_width()
+                    - nested_start_reserve
+                    - nested_terminal_reserve
+                    - root_terminal_reserve)
+                    .max(0.0);
                 let content_width = leaf
                     .run
                     .advance_for_range(text_range)
                     .min(available_content);
-
-                let mut origins = Vec::with_capacity(styles.len());
-                let mut x = line.x;
-                for style in &styles {
-                    let margin_x = x;
-                    let border_x = margin_x + style.margin.left;
-                    let padding_x = border_x + style.border_width.left;
-                    let content_x = padding_x + style.padding.left;
-                    origins.push((margin_x, border_x, padding_x, content_x));
-                    x = content_x;
-                }
-                let text_rect = Rect::new(x, *cursor_y, content_width, leaf.run.line_height);
-                let line_box = LineBox {
-                    ordinal: leaf_ordinal as u32,
-                    rect: text_rect,
+                let piece = InlineStreamPiece {
+                    leaf,
+                    owner_spans: &owner_spans,
+                    leaf_index,
+                    leaf_ordinal: leaf_ordinal as u32,
                     text_range,
+                    content_width,
+                    is_first_leaf_piece,
+                    is_last_leaf_piece,
+                    cursor_y: *cursor_y,
                 };
-                let mut nested = Fragment {
-                    id: self.allocate_id(),
-                    ordinal: FragmentOrdinal(leaf_ordinal as u32),
-                    layout_node: leaf.text_node.id,
-                    dom_node: leaf.text_node.dom_node,
-                    kind: FragmentKind::Text,
-                    boxes: BoxModel::single(text_rect),
-                    style: leaf.text_node.style,
-                    text_range: Some(text_range),
-                    line_box: Some(line_box),
-                    children: Vec::new(),
-                };
-                let mut nested_outer_width = content_width;
-
-                for ((box_node, style), (margin_x, border_x, padding_x, content_x)) in
-                    leaf.boxes.iter().zip(styles.iter()).zip(origins).rev()
-                {
-                    let content_box = Rect::new(
-                        content_x,
-                        *cursor_y,
-                        nested_outer_width,
-                        leaf.run.line_height,
-                    );
-                    let padding_box = Rect::new(
-                        padding_x,
-                        *cursor_y,
-                        content_box.size.width + style.padding.horizontal(),
-                        leaf.run.line_height,
-                    );
-                    let border_box = Rect::new(
-                        border_x,
-                        *cursor_y,
-                        padding_box.size.width + style.border_width.horizontal(),
-                        leaf.run.line_height,
-                    );
-                    let margin_box = Rect::new(
-                        margin_x,
-                        *cursor_y,
-                        border_box.size.width + style.margin.horizontal(),
-                        leaf.run.line_height,
-                    );
-                    nested_outer_width = margin_box.size.width;
-                    nested = Fragment {
-                        id: self.allocate_id(),
-                        ordinal: FragmentOrdinal(leaf_ordinal as u32),
-                        layout_node: box_node.id,
-                        dom_node: box_node.dom_node,
-                        kind: FragmentKind::Box,
-                        boxes: BoxModel {
-                            margin_box,
-                            border_box,
-                            padding_box,
-                            content_box,
-                        },
-                        style: *style,
-                        text_range: None,
-                        line_box: None,
-                        children: vec![nested],
-                    };
-                }
-
-                let child_height = nested.boxes.margin_box.size.height;
                 {
                     let root_fragment = &mut fragments[root_index];
-                    root_fragment.children.push(nested);
-                    let content_width =
-                        root_fragment.boxes.content_box.size.width + nested_outer_width;
-                    let content_height = root_fragment
-                        .boxes
-                        .content_box
-                        .size
-                        .height
-                        .max(child_height);
-                    root_fragment.boxes = inline_fragment_box_model(
-                        root_fragment.boxes.margin_box.origin,
-                        root_fragment.style,
-                        content_width,
-                        content_height,
+                    self.append_inline_stream_piece(
+                        root_fragment,
+                        &leaf.boxes,
+                        &piece,
+                        &mut owner_ordinals,
+                        &mut line.x,
                     );
+                    refresh_inline_fragment_from_children(root_fragment);
                 }
-                line.x += nested_outer_width;
 
                 if is_final_stream_piece {
                     let root_fragment = &mut fragments[root_index];
                     root_fragment.style.margin.right = root_style.margin.right;
                     root_fragment.style.border_width.right = root_style.border_width.right;
                     root_fragment.style.padding.right = root_style.padding.right;
-                    root_fragment.boxes = inline_fragment_box_model(
-                        root_fragment.boxes.margin_box.origin,
-                        root_fragment.style,
-                        root_fragment.boxes.content_box.size.width,
-                        root_fragment.boxes.content_box.size.height,
-                    );
+                    refresh_inline_fragment_from_children(root_fragment);
                     line.x += root_right_edge;
                 }
 
@@ -2366,6 +2315,110 @@ impl FragmentBuilder {
                 }
             }
         }
+    }
+
+    fn append_inline_stream_piece(
+        &mut self,
+        parent: &mut Fragment,
+        owners: &[&LayoutNode],
+        piece: &InlineStreamPiece<'_, '_>,
+        owner_ordinals: &mut std::collections::BTreeMap<LayoutNodeId, u32>,
+        line_x: &mut f32,
+    ) {
+        let Some((owner, remaining_owners)) = owners.split_first() else {
+            let rect = Rect::new(
+                *line_x,
+                piece.cursor_y,
+                piece.content_width,
+                piece.leaf.run.line_height,
+            );
+            parent.children.push(Fragment {
+                id: self.allocate_id(),
+                ordinal: FragmentOrdinal(piece.leaf_ordinal),
+                layout_node: piece.leaf.text_node.id,
+                dom_node: piece.leaf.text_node.dom_node,
+                kind: FragmentKind::Text,
+                boxes: BoxModel::single(rect),
+                style: piece.leaf.text_node.style,
+                text_range: Some(piece.text_range),
+                line_box: Some(LineBox {
+                    ordinal: piece.leaf_ordinal,
+                    rect,
+                    text_range: piece.text_range,
+                }),
+                children: Vec::new(),
+            });
+            *line_x += piece.content_width;
+            return;
+        };
+
+        let span = piece
+            .owner_spans
+            .get(&owner.id)
+            .copied()
+            .expect("owner span exists for every inline leaf owner");
+        let is_owner_first_piece = piece.is_first_leaf_piece && piece.leaf_index == span.0;
+        let is_owner_last_piece = piece.is_last_leaf_piece && piece.leaf_index == span.1;
+        let reuses_last = parent.children.last().is_some_and(|fragment| {
+            fragment.kind == FragmentKind::Box && fragment.layout_node == owner.id
+        });
+
+        if !reuses_last {
+            let ordinal = owner_ordinals.entry(owner.id).or_insert(0);
+            let fragment_ordinal = *ordinal;
+            *ordinal = ordinal.saturating_add(1);
+            let mut style = owner.style;
+            if !is_owner_first_piece {
+                style.margin.left = 0.0;
+                style.border_width.left = 0.0;
+                style.padding.left = 0.0;
+            }
+            style.margin.right = 0.0;
+            style.border_width.right = 0.0;
+            style.padding.right = 0.0;
+            let boxes = inline_fragment_box_model(
+                Point {
+                    x: *line_x,
+                    y: piece.cursor_y,
+                },
+                style,
+                0.0,
+                piece.leaf.run.line_height,
+            );
+            *line_x = boxes.content_box.origin.x;
+            parent.children.push(Fragment {
+                id: self.allocate_id(),
+                ordinal: FragmentOrdinal(fragment_ordinal),
+                layout_node: owner.id,
+                dom_node: owner.dom_node,
+                kind: FragmentKind::Box,
+                boxes,
+                style,
+                text_range: None,
+                line_box: None,
+                children: Vec::new(),
+            });
+        }
+
+        let owner_fragment = parent
+            .children
+            .last_mut()
+            .expect("inline owner fragment was created or reused");
+        self.append_inline_stream_piece(
+            owner_fragment,
+            remaining_owners,
+            piece,
+            owner_ordinals,
+            line_x,
+        );
+
+        if is_owner_last_piece {
+            owner_fragment.style.margin.right = owner.style.margin.right;
+            owner_fragment.style.border_width.right = owner.style.border_width.right;
+            owner_fragment.style.padding.right = owner.style.padding.right;
+            *line_x += inline_right_edge(owner.style);
+        }
+        refresh_inline_fragment_from_children(owner_fragment);
     }
 
     fn layout_text_inline_flow(
@@ -2678,6 +2731,34 @@ impl FragmentBuilder {
         self.next_id += 1;
         id
     }
+}
+
+fn inline_left_edge(style: ComputedStyle) -> f32 {
+    style.margin.left + style.border_width.left + style.padding.left
+}
+
+fn inline_right_edge(style: ComputedStyle) -> f32 {
+    style.padding.right + style.border_width.right + style.margin.right
+}
+
+fn refresh_inline_fragment_from_children(fragment: &mut Fragment) {
+    let Some(first_child) = fragment.children.first() else {
+        return;
+    };
+    let content_origin = fragment.boxes.content_box.origin;
+    let mut right = first_child.boxes.margin_box.origin.x + first_child.boxes.margin_box.size.width;
+    let mut bottom =
+        first_child.boxes.margin_box.origin.y + first_child.boxes.margin_box.size.height;
+    for child in fragment.children.iter().skip(1) {
+        right = right.max(child.boxes.margin_box.origin.x + child.boxes.margin_box.size.width);
+        bottom = bottom.max(child.boxes.margin_box.origin.y + child.boxes.margin_box.size.height);
+    }
+    fragment.boxes = inline_fragment_box_model(
+        fragment.boxes.margin_box.origin,
+        fragment.style,
+        (right - content_origin.x).max(0.0),
+        (bottom - content_origin.y).max(0.0),
+    );
 }
 
 fn inline_fragment_box_model(
