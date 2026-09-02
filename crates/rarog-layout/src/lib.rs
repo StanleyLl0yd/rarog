@@ -1,4 +1,4 @@
-use rarog_css::{ComputedStyle, StyleSet, computed_style_with_parent};
+use rarog_css::{ComputedStyle, StyleSet, VerticalAlign, computed_style_with_parent};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
 use unicode_bidi::BidiInfo;
@@ -1707,12 +1707,19 @@ struct BlockMarginProfile {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct InlineAlignmentItem {
+    fragment_index: usize,
+    vertical_align: VerticalAlign,
+    baseline_offset: Option<f32>,
+}
+
+#[derive(Debug)]
 struct InlineLineState {
     start_x: f32,
     right: f32,
     x: f32,
-    height: f32,
     active: bool,
+    items: Vec<InlineAlignmentItem>,
 }
 
 impl InlineLineState {
@@ -1722,22 +1729,33 @@ impl InlineLineState {
             start_x,
             right: start_x + containing_block.available.width.max(0.0),
             x: start_x,
-            height: 0.0,
             active: false,
+            items: Vec::new(),
         }
     }
 
-    fn remaining_width(self) -> f32 {
+    fn remaining_width(&self) -> f32 {
         (self.right - self.x).max(0.0)
     }
 
-    fn flush(&mut self, cursor_y: &mut f32) {
-        if self.active {
-            *cursor_y += self.height;
-        }
+    fn record(
+        &mut self,
+        fragment_index: usize,
+        vertical_align: VerticalAlign,
+        baseline_offset: Option<f32>,
+    ) {
+        self.items.push(InlineAlignmentItem {
+            fragment_index,
+            vertical_align,
+            baseline_offset,
+        });
+        self.active = true;
+    }
+
+    fn reset(&mut self) {
         self.x = self.start_x;
-        self.height = 0.0;
         self.active = false;
+        self.items.clear();
     }
 }
 
@@ -1758,6 +1776,50 @@ impl FragmentBuilder {
             .get(&node.id)
             .copied()
             .unwrap_or_default()
+    }
+
+    fn flush_inline_line(
+        &self,
+        line: &mut InlineLineState,
+        fragments: &mut [Fragment],
+        cursor_y: &mut f32,
+    ) {
+        if !line.active {
+            return;
+        }
+
+        let mut baseline = 0.0f32;
+        let mut descent = 0.0f32;
+        let mut line_height = 0.0f32;
+        for item in &line.items {
+            let fragment = &fragments[item.fragment_index];
+            let height = fragment.boxes.margin_box.size.height;
+            line_height = line_height.max(height);
+            if item.vertical_align == VerticalAlign::Baseline {
+                let offset = item.baseline_offset.unwrap_or(height).clamp(0.0, height);
+                baseline = baseline.max(offset);
+                descent = descent.max((height - offset).max(0.0));
+            }
+        }
+        line_height = line_height.max(baseline + descent);
+
+        for item in &line.items {
+            let fragment = &mut fragments[item.fragment_index];
+            let height = fragment.boxes.margin_box.size.height;
+            let target_y = match item.vertical_align {
+                VerticalAlign::Baseline => {
+                    let offset = item.baseline_offset.unwrap_or(height).clamp(0.0, height);
+                    *cursor_y + baseline - offset
+                }
+                VerticalAlign::Top => *cursor_y,
+                VerticalAlign::Bottom => *cursor_y + line_height - height,
+            };
+            let delta = target_y - fragment.boxes.margin_box.origin.y;
+            translate_fragment_y(fragment, delta);
+        }
+
+        *cursor_y += line_height;
+        line.reset();
     }
 
     fn build(&mut self, tree: &LayoutTree, viewport: Size) -> FragmentTree {
@@ -1817,7 +1879,7 @@ impl FragmentBuilder {
 
                     let outer_width = self.inline_outer_width(node);
                     if line.active && line.x > line.start_x && line.x + outer_width > line.right {
-                        line.flush(cursor_y);
+                        self.flush_inline_line(&mut line, &mut fragments, cursor_y);
                     }
 
                     let fragment = self.layout_inline_box(
@@ -1828,13 +1890,19 @@ impl FragmentBuilder {
                             y: *cursor_y,
                         },
                     );
-                    line.x += fragment.boxes.margin_box.size.width;
-                    line.height = line.height.max(fragment.boxes.margin_box.size.height);
-                    line.active = true;
+                    let width = fragment.boxes.margin_box.size.width;
+                    let height = fragment.boxes.margin_box.size.height;
+                    let fragment_index = fragments.len();
                     fragments.push(fragment);
+                    line.x += width;
+                    line.record(
+                        fragment_index,
+                        node.style.vertical_align,
+                        (node.style.vertical_align == VerticalAlign::Baseline).then_some(height),
+                    );
                 }
                 LayoutNodeKind::Box => {
-                    line.flush(cursor_y);
+                    self.flush_inline_line(&mut line, &mut fragments, cursor_y);
 
                     let profile = self.margin_profile(node);
                     if profile.through {
@@ -1860,13 +1928,14 @@ impl FragmentBuilder {
                         *cursor_y += pending_margin.resolved();
                         pending_margin = MarginStrut::default();
                     }
-                    fragments.extend(self.layout_text_inline_flow(
+                    self.layout_text_inline_flow(
                         node,
                         run,
                         containing_block,
                         cursor_y,
                         &mut line,
-                    ));
+                        &mut fragments,
+                    );
                 }
                 LayoutNodeKind::Root => {
                     unreachable!("only the layout root may have Root kind")
@@ -1874,7 +1943,7 @@ impl FragmentBuilder {
             }
         }
 
-        line.flush(cursor_y);
+        self.flush_inline_line(&mut line, &mut fragments, cursor_y);
         (fragments, pending_margin)
     }
 
@@ -1906,7 +1975,8 @@ impl FragmentBuilder {
         containing_block: ContainingBlock,
         cursor_y: &mut f32,
         line: &mut InlineLineState,
-    ) -> Vec<Fragment> {
+        fragments: &mut Vec<Fragment>,
+    ) {
         let full_width = containing_block.available.width.max(0.0);
         if line.active
             && run
@@ -1915,7 +1985,7 @@ impl FragmentBuilder {
                 .first()
                 .is_some_and(|cluster| cluster.advance > line.remaining_width())
         {
-            line.flush(cursor_y);
+            self.flush_inline_line(line, fragments, cursor_y);
         }
 
         let first_width = if line.active {
@@ -1926,7 +1996,6 @@ impl FragmentBuilder {
         let ranges = UnicodeLineBreaker.break_text_with_widths(run, first_width, full_width);
         let characters = run.text.chars().collect::<Vec<_>>();
         let range_count = ranges.len();
-        let mut fragments = Vec::with_capacity(range_count);
 
         for (ordinal, text_range) in ranges.into_iter().enumerate() {
             let available_width = line.remaining_width();
@@ -1937,6 +2006,7 @@ impl FragmentBuilder {
                 rect,
                 text_range,
             };
+            let fragment_index = fragments.len();
             fragments.push(Fragment {
                 id: self.allocate_id(),
                 ordinal: FragmentOrdinal(ordinal as u32),
@@ -1951,8 +2021,11 @@ impl FragmentBuilder {
             });
 
             line.x += width;
-            line.height = line.height.max(run.line_height);
-            line.active = true;
+            line.record(
+                fragment_index,
+                VerticalAlign::Baseline,
+                Some(run.shaped.metrics.ascent),
+            );
             let mandatory = text_range
                 .end
                 .checked_sub(1)
@@ -1960,11 +2033,9 @@ impl FragmentBuilder {
                 .copied()
                 .is_some_and(is_mandatory_break);
             if mandatory || ordinal + 1 < range_count {
-                line.flush(cursor_y);
+                self.flush_inline_line(line, fragments, cursor_y);
             }
         }
-
-        fragments
     }
 
     fn layout_text(
@@ -2206,6 +2277,19 @@ impl FragmentBuilder {
         let id = FragmentId(self.next_id);
         self.next_id += 1;
         id
+    }
+}
+
+fn translate_fragment_y(fragment: &mut Fragment, delta: f32) {
+    fragment.boxes.margin_box.origin.y += delta;
+    fragment.boxes.border_box.origin.y += delta;
+    fragment.boxes.padding_box.origin.y += delta;
+    fragment.boxes.content_box.origin.y += delta;
+    if let Some(line_box) = &mut fragment.line_box {
+        line_box.rect.origin.y += delta;
+    }
+    for child in &mut fragment.children {
+        translate_fragment_y(child, delta);
     }
 }
 

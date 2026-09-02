@@ -965,6 +965,7 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
         || before.display_none != after.display_none
         || before.display_inline != after.display_inline
         || before.establishes_bfc != after.establishes_bfc
+        || before.vertical_align != after.vertical_align
 }
 
 fn vertical_footprint_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
