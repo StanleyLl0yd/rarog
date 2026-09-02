@@ -4,7 +4,7 @@ pub use embedder::*;
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
-    Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_for_dom,
+    Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_for_dom, fragments_for_dom,
     layout_document_with_styles, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
@@ -532,6 +532,10 @@ impl RenderSession {
                     break;
                 }
                 if old_style != new_style {
+                    if fragments_for_dom(&self.layout.fragments, node).len() > 1 {
+                        requires_full_rebuild = true;
+                        break;
+                    }
                     if old_style.color != new_style.color {
                         collect_layout_descendant_dom_nodes(
                             &self.layout.tree.root,

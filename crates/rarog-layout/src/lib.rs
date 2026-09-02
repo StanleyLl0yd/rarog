@@ -1,4 +1,4 @@
-use rarog_css::{ComputedStyle, StyleSet, VerticalAlign, computed_style_with_parent};
+use rarog_css::{ComputedStyle, EdgeSizes, StyleSet, VerticalAlign, computed_style_with_parent};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
 use unicode_bidi::BidiInfo;
@@ -1280,6 +1280,29 @@ pub fn relayout_fragment_flow(
     true
 }
 
+fn fragmenting_inline_text_child(node: &LayoutNode) -> Option<(&LayoutNode, &TextRun)> {
+    let style = node.style;
+    if !style.display_inline
+        || style.width.is_some()
+        || style.height.is_some()
+        || style.min_width.is_some()
+        || style.max_width.is_some()
+        || style.min_height.is_some()
+        || style.max_height.is_some()
+        || style.margin != EdgeSizes::ZERO
+        || style.border_width != EdgeSizes::ZERO
+        || style.padding != EdgeSizes::ZERO
+        || node.children.len() != 1
+    {
+        return None;
+    }
+    let child = &node.children[0];
+    let LayoutNodeKind::Text(run) = &child.kind else {
+        return None;
+    };
+    Some((child, run))
+}
+
 fn is_inline_flow_node(node: &LayoutNode) -> bool {
     matches!(&node.kind, LayoutNodeKind::Text(_))
         || (matches!(&node.kind, LayoutNodeKind::Box) && node.style.display_inline)
@@ -1759,6 +1782,13 @@ impl InlineLineState {
     }
 }
 
+struct InlineTextContainerFlow<'a> {
+    containing_block: ContainingBlock,
+    cursor_y: &'a mut f32,
+    line: &'a mut InlineLineState,
+    fragments: &'a mut Vec<Fragment>,
+}
+
 #[derive(Default)]
 struct FragmentBuilder {
     next_id: usize,
@@ -1870,6 +1900,26 @@ impl FragmentBuilder {
 
         for node in nodes {
             match &node.kind {
+                LayoutNodeKind::Box if fragmenting_inline_text_child(node).is_some() => {
+                    suppress_leading_margin = false;
+                    if !line.active {
+                        *cursor_y += pending_margin.resolved();
+                        pending_margin = MarginStrut::default();
+                    }
+                    let (text_node, run) = fragmenting_inline_text_child(node)
+                        .expect("fragmenting inline guard validated the text child");
+                    self.layout_inline_text_container_flow(
+                        node,
+                        text_node,
+                        run,
+                        InlineTextContainerFlow {
+                            containing_block,
+                            cursor_y,
+                            line: &mut line,
+                            fragments: &mut fragments,
+                        },
+                    );
+                }
                 LayoutNodeKind::Box if node.style.display_inline => {
                     suppress_leading_margin = false;
                     if !line.active {
@@ -1965,6 +2015,92 @@ impl FragmentBuilder {
                 },
             )],
             LayoutNodeKind::Box => vec![self.layout_box(node, containing_block, cursor_y)],
+        }
+    }
+
+    fn layout_inline_text_container_flow(
+        &mut self,
+        node: &LayoutNode,
+        text_node: &LayoutNode,
+        run: &TextRun,
+        flow: InlineTextContainerFlow<'_>,
+    ) {
+        let InlineTextContainerFlow {
+            containing_block,
+            cursor_y,
+            line,
+            fragments,
+        } = flow;
+        let full_width = containing_block.available.width.max(0.0);
+        if line.active
+            && run
+                .shaped
+                .clusters
+                .first()
+                .is_some_and(|cluster| cluster.advance > line.remaining_width())
+        {
+            self.flush_inline_line(line, fragments, cursor_y);
+        }
+
+        let first_width = if line.active {
+            line.remaining_width()
+        } else {
+            full_width
+        };
+        let ranges = UnicodeLineBreaker.break_text_with_widths(run, first_width, full_width);
+        let characters = run.text.chars().collect::<Vec<_>>();
+        let range_count = ranges.len();
+
+        for (ordinal, text_range) in ranges.into_iter().enumerate() {
+            let available_width = line.remaining_width();
+            let width = run.advance_for_range(text_range).min(available_width);
+            let rect = Rect::new(line.x, *cursor_y, width, run.line_height);
+            let line_box = LineBox {
+                ordinal: ordinal as u32,
+                rect,
+                text_range,
+            };
+            let text_fragment = Fragment {
+                id: self.allocate_id(),
+                ordinal: FragmentOrdinal(ordinal as u32),
+                layout_node: text_node.id,
+                dom_node: text_node.dom_node,
+                kind: FragmentKind::Text,
+                boxes: BoxModel::single(rect),
+                style: text_node.style,
+                text_range: Some(text_range),
+                line_box: Some(line_box),
+                children: Vec::new(),
+            };
+            let fragment_index = fragments.len();
+            fragments.push(Fragment {
+                id: self.allocate_id(),
+                ordinal: FragmentOrdinal(ordinal as u32),
+                layout_node: node.id,
+                dom_node: node.dom_node,
+                kind: FragmentKind::Box,
+                boxes: BoxModel::single(rect),
+                style: node.style,
+                text_range: None,
+                line_box: None,
+                children: vec![text_fragment],
+            });
+
+            line.x += width;
+            line.record(
+                fragment_index,
+                node.style.vertical_align,
+                Some(run.shaped.metrics.ascent),
+            );
+            let mandatory = text_range
+                .end
+                .checked_sub(1)
+                .and_then(|index| characters.get(index))
+                .copied()
+                .is_some_and(is_mandatory_break);
+            if mandatory || ordinal + 1 < range_count {
+                self.flush_inline_line(line, fragments, cursor_y);
+            }
         }
     }
 
