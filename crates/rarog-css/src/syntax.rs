@@ -1,12 +1,14 @@
 use cssparser::{
-    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
-    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser,
+    AtRuleParser, BasicParseErrorKind, CowRcStr, DeclarationParser, ParseError, Parser,
+    ParserInput, ParserState, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
+    StyleSheetParser, Token, parse_important,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedDeclaration {
     pub name: String,
     pub value: String,
+    pub important: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,13 +88,15 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser {
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
         let start = input.position();
         while input.next().is_ok() {}
-        let value = input.slice_from(start).trim();
+        let raw_value = input.slice_from(start).trim();
+        let (value, important) = split_important(raw_value);
         if value.is_empty() {
             return Err(input.new_custom_error(()));
         }
         Ok(ParsedDeclaration {
             name: name.to_ascii_lowercase(),
             value: value.to_owned(),
+            important,
         })
     }
 }
@@ -117,6 +121,32 @@ impl<'i> RuleBodyItemParser<'i, ParsedDeclaration, ()> for DeclarationListParser
     fn parse_qualified(&self) -> bool {
         false
     }
+}
+
+fn split_important(value: &str) -> (&str, bool) {
+    let mut input_state = ParserInput::new(value);
+    let mut input = Parser::new(&mut input_state);
+    let start = input.position();
+    let mut important_start = None;
+
+    loop {
+        let state = input.state();
+        match input.next_including_whitespace_and_comments() {
+            Ok(Token::Delim('!')) => important_start = Some(state),
+            Ok(_) => {}
+            Err(error) if matches!(error.kind, BasicParseErrorKind::EndOfInput) => break,
+            Err(_) => break,
+        }
+    }
+
+    let Some(important_start) = important_start else {
+        return (value.trim(), false);
+    };
+    input.reset(&important_start);
+    if input.try_parse(parse_important).is_ok() && input.expect_exhausted().is_ok() {
+        return (input.slice(start..important_start.position()).trim(), true);
+    }
+    (value.trim(), false)
 }
 
 fn parse_declaration_body<'i>(input: &mut Parser<'i, '_>) -> Vec<ParsedDeclaration> {
@@ -168,6 +198,20 @@ mod tests {
         assert_eq!(declarations[0].name, "unknown");
         assert_eq!(declarations[1].name, "width");
         assert_eq!(declarations[2].name, "height");
+    }
+
+    #[test]
+    fn terminal_important_is_separated_from_property_value() {
+        let declarations = parse_declarations(
+            "width: 10px !important; unknown: func(!important); height: 8px ! important junk;",
+        );
+
+        assert_eq!(declarations[0].value, "10px");
+        assert!(declarations[0].important);
+        assert_eq!(declarations[1].value, "func(!important)");
+        assert!(!declarations[1].important);
+        assert_eq!(declarations[2].value, "8px ! important junk");
+        assert!(!declarations[2].important);
     }
 
     #[test]

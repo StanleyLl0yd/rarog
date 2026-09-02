@@ -63,6 +63,7 @@ pub struct ComputedStyle {
     pub margin: EdgeSizes,
     pub border_width: EdgeSizes,
     pub padding: EdgeSizes,
+    pub color: Color,
     pub background: Color,
     pub border_color: Color,
     pub display_none: bool,
@@ -76,6 +77,7 @@ impl Default for ComputedStyle {
             margin: EdgeSizes::ZERO,
             border_width: EdgeSizes::ZERO,
             padding: EdgeSizes::ZERO,
+            color: Color::BLACK,
             background: Color::TRANSPARENT,
             border_color: Color::TRANSPARENT,
             display_none: false,
@@ -246,6 +248,7 @@ pub enum PropertyId {
     PaddingRight,
     PaddingBottom,
     PaddingLeft,
+    Color,
     BackgroundColor,
     BorderColor,
     Display,
@@ -257,17 +260,26 @@ pub enum DisplayValue {
     None,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CssWideKeyword {
+    Initial,
+    Inherit,
+    Unset,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PropertyValue {
     Length(f32),
     Color(Color),
     Display(DisplayValue),
+    CssWide(CssWideKeyword),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Declaration {
     pub property: PropertyId,
     pub value: PropertyValue,
+    pub important: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -387,14 +399,53 @@ impl StyleSet {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CascadePriority {
+    important: bool,
     origin: StyleOrigin,
     layer: CascadeLayer,
     specificity: Specificity,
     sheet_order: u32,
     rule_order: u32,
     declaration_order: u32,
+}
+
+impl Ord for CascadePriority {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        cascade_origin_rank(self.important, self.origin)
+            .cmp(&cascade_origin_rank(other.important, other.origin))
+            .then_with(|| {
+                cascade_layer_rank(self.important, self.layer)
+                    .cmp(&cascade_layer_rank(other.important, other.layer))
+            })
+            .then_with(|| self.specificity.cmp(&other.specificity))
+            .then_with(|| self.sheet_order.cmp(&other.sheet_order))
+            .then_with(|| self.rule_order.cmp(&other.rule_order))
+            .then_with(|| self.declaration_order.cmp(&other.declaration_order))
+    }
+}
+
+impl PartialOrd for CascadePriority {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn cascade_origin_rank(important: bool, origin: StyleOrigin) -> u8 {
+    match (important, origin) {
+        (false, StyleOrigin::UserAgent) => 0,
+        (false, StyleOrigin::Author | StyleOrigin::Inline) => 1,
+        (true, StyleOrigin::Author | StyleOrigin::Inline) => 2,
+        (true, StyleOrigin::UserAgent) => 3,
+    }
+}
+
+fn cascade_layer_rank(important: bool, layer: CascadeLayer) -> u16 {
+    if important {
+        u16::MAX - layer.0
+    } else {
+        layer.0
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -404,11 +455,36 @@ struct Winner {
 }
 
 pub fn computed_style(document: &Document, node: NodeId, styles: &StyleSet) -> ComputedStyle {
+    let mut lineage = Vec::new();
+    let mut current = Some(node);
+    while let Some(node) = current {
+        let Some(dom_node) = document.node(node) else {
+            return ComputedStyle::default();
+        };
+        lineage.push(node);
+        current = dom_node.parent;
+    }
+
+    let mut parent_style = None;
+    let mut style = ComputedStyle::default();
+    for node in lineage.into_iter().rev() {
+        style = computed_style_with_parent(document, node, styles, parent_style);
+        parent_style = Some(style);
+    }
+    style
+}
+
+pub fn computed_style_with_parent(
+    document: &Document,
+    node: NodeId,
+    styles: &StyleSet,
+    parent_style: Option<ComputedStyle>,
+) -> ComputedStyle {
     let Some(dom_node) = document.node(node) else {
         return ComputedStyle::default();
     };
     let NodeKind::Element(element) = &dom_node.kind else {
-        return ComputedStyle::default();
+        return inherited_style(parent_style);
     };
 
     let mut winners = BTreeMap::<PropertyId, Winner>::new();
@@ -422,6 +498,7 @@ pub fn computed_style(document: &Document, node: NodeId, styles: &StyleSet) -> C
                 &mut winners,
                 &rule.declarations,
                 CascadePriority {
+                    important: false,
                     origin: stylesheet.source.origin,
                     layer: stylesheet.source.layer,
                     specificity: rule.specificity,
@@ -439,8 +516,9 @@ pub fn computed_style(document: &Document, node: NodeId, styles: &StyleSet) -> C
             &mut winners,
             &declarations,
             CascadePriority {
+                important: false,
                 origin: StyleOrigin::Inline,
-                layer: CascadeLayer(u16::MAX),
+                layer: CascadeLayer(0),
                 specificity: Specificity {
                     ids: u16::MAX,
                     classes: u16::MAX,
@@ -453,7 +531,15 @@ pub fn computed_style(document: &Document, node: NodeId, styles: &StyleSet) -> C
         );
     }
 
-    style_from_winners(&winners)
+    style_from_winners(&winners, parent_style)
+}
+
+fn inherited_style(parent_style: Option<ComputedStyle>) -> ComputedStyle {
+    let mut style = ComputedStyle::default();
+    if let Some(parent) = parent_style {
+        style.color = parent.color;
+    }
+    style
 }
 
 fn apply_declarations(
@@ -463,6 +549,7 @@ fn apply_declarations(
 ) {
     for (declaration_order, declaration) in declarations.iter().enumerate() {
         let priority = CascadePriority {
+            important: declaration.important,
             declaration_order: declaration_order as u32,
             ..base_priority
         };
@@ -482,57 +569,134 @@ fn apply_declarations(
     }
 }
 
-fn style_from_winners(winners: &BTreeMap<PropertyId, Winner>) -> ComputedStyle {
-    let mut style = ComputedStyle::default();
+fn style_from_winners(
+    winners: &BTreeMap<PropertyId, Winner>,
+    parent_style: Option<ComputedStyle>,
+) -> ComputedStyle {
+    let mut style = inherited_style(parent_style);
     for (property, winner) in winners {
-        match (*property, winner.value) {
-            (PropertyId::Width, PropertyValue::Length(value)) => {
-                style.width = Some(value.max(0.0));
+        match winner.value {
+            PropertyValue::CssWide(keyword) => {
+                apply_css_wide(&mut style, *property, keyword, parent_style);
             }
-            (PropertyId::Height, PropertyValue::Length(value)) => {
-                style.height = Some(value.max(0.0));
-            }
-            (PropertyId::MarginTop, PropertyValue::Length(value)) => style.margin.top = value,
-            (PropertyId::MarginRight, PropertyValue::Length(value)) => style.margin.right = value,
-            (PropertyId::MarginBottom, PropertyValue::Length(value)) => style.margin.bottom = value,
-            (PropertyId::MarginLeft, PropertyValue::Length(value)) => style.margin.left = value,
-            (PropertyId::BorderTopWidth, PropertyValue::Length(value)) => {
-                style.border_width.top = value.max(0.0);
-            }
-            (PropertyId::BorderRightWidth, PropertyValue::Length(value)) => {
-                style.border_width.right = value.max(0.0);
-            }
-            (PropertyId::BorderBottomWidth, PropertyValue::Length(value)) => {
-                style.border_width.bottom = value.max(0.0);
-            }
-            (PropertyId::BorderLeftWidth, PropertyValue::Length(value)) => {
-                style.border_width.left = value.max(0.0);
-            }
-            (PropertyId::PaddingTop, PropertyValue::Length(value)) => {
-                style.padding.top = value.max(0.0);
-            }
-            (PropertyId::PaddingRight, PropertyValue::Length(value)) => {
-                style.padding.right = value.max(0.0);
-            }
-            (PropertyId::PaddingBottom, PropertyValue::Length(value)) => {
-                style.padding.bottom = value.max(0.0);
-            }
-            (PropertyId::PaddingLeft, PropertyValue::Length(value)) => {
-                style.padding.left = value.max(0.0);
-            }
-            (PropertyId::BackgroundColor, PropertyValue::Color(color)) => {
-                style.background = color;
-            }
-            (PropertyId::BorderColor, PropertyValue::Color(color)) => {
-                style.border_color = color;
-            }
-            (PropertyId::Display, PropertyValue::Display(display)) => {
-                style.display_none = display == DisplayValue::None;
-            }
-            _ => {}
+            value => apply_property_value(&mut style, *property, value),
         }
     }
     style
+}
+
+fn apply_css_wide(
+    style: &mut ComputedStyle,
+    property: PropertyId,
+    keyword: CssWideKeyword,
+    parent_style: Option<ComputedStyle>,
+) {
+    match keyword {
+        CssWideKeyword::Initial => reset_property_to_initial(style, property),
+        CssWideKeyword::Inherit => copy_property_from_parent(style, property, parent_style),
+        CssWideKeyword::Unset if is_inherited_property(property) => {
+            copy_property_from_parent(style, property, parent_style)
+        }
+        CssWideKeyword::Unset => reset_property_to_initial(style, property),
+    }
+}
+
+fn is_inherited_property(property: PropertyId) -> bool {
+    property == PropertyId::Color
+}
+
+fn copy_property_from_parent(
+    style: &mut ComputedStyle,
+    property: PropertyId,
+    parent_style: Option<ComputedStyle>,
+) {
+    let parent = parent_style.unwrap_or_default();
+    match property {
+        PropertyId::Width => style.width = parent.width,
+        PropertyId::Height => style.height = parent.height,
+        PropertyId::MarginTop => style.margin.top = parent.margin.top,
+        PropertyId::MarginRight => style.margin.right = parent.margin.right,
+        PropertyId::MarginBottom => style.margin.bottom = parent.margin.bottom,
+        PropertyId::MarginLeft => style.margin.left = parent.margin.left,
+        PropertyId::BorderTopWidth => style.border_width.top = parent.border_width.top,
+        PropertyId::BorderRightWidth => style.border_width.right = parent.border_width.right,
+        PropertyId::BorderBottomWidth => style.border_width.bottom = parent.border_width.bottom,
+        PropertyId::BorderLeftWidth => style.border_width.left = parent.border_width.left,
+        PropertyId::PaddingTop => style.padding.top = parent.padding.top,
+        PropertyId::PaddingRight => style.padding.right = parent.padding.right,
+        PropertyId::PaddingBottom => style.padding.bottom = parent.padding.bottom,
+        PropertyId::PaddingLeft => style.padding.left = parent.padding.left,
+        PropertyId::Color => style.color = parent.color,
+        PropertyId::BackgroundColor => style.background = parent.background,
+        PropertyId::BorderColor => style.border_color = parent.border_color,
+        PropertyId::Display => style.display_none = parent.display_none,
+    }
+}
+
+fn reset_property_to_initial(style: &mut ComputedStyle, property: PropertyId) {
+    let initial = ComputedStyle::default();
+    match property {
+        PropertyId::Width => style.width = initial.width,
+        PropertyId::Height => style.height = initial.height,
+        PropertyId::MarginTop => style.margin.top = initial.margin.top,
+        PropertyId::MarginRight => style.margin.right = initial.margin.right,
+        PropertyId::MarginBottom => style.margin.bottom = initial.margin.bottom,
+        PropertyId::MarginLeft => style.margin.left = initial.margin.left,
+        PropertyId::BorderTopWidth => style.border_width.top = initial.border_width.top,
+        PropertyId::BorderRightWidth => style.border_width.right = initial.border_width.right,
+        PropertyId::BorderBottomWidth => style.border_width.bottom = initial.border_width.bottom,
+        PropertyId::BorderLeftWidth => style.border_width.left = initial.border_width.left,
+        PropertyId::PaddingTop => style.padding.top = initial.padding.top,
+        PropertyId::PaddingRight => style.padding.right = initial.padding.right,
+        PropertyId::PaddingBottom => style.padding.bottom = initial.padding.bottom,
+        PropertyId::PaddingLeft => style.padding.left = initial.padding.left,
+        PropertyId::Color => style.color = initial.color,
+        PropertyId::BackgroundColor => style.background = initial.background,
+        PropertyId::BorderColor => style.border_color = initial.border_color,
+        PropertyId::Display => style.display_none = initial.display_none,
+    }
+}
+
+fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: PropertyValue) {
+    match (property, value) {
+        (PropertyId::Width, PropertyValue::Length(value)) => style.width = Some(value.max(0.0)),
+        (PropertyId::Height, PropertyValue::Length(value)) => style.height = Some(value.max(0.0)),
+        (PropertyId::MarginTop, PropertyValue::Length(value)) => style.margin.top = value,
+        (PropertyId::MarginRight, PropertyValue::Length(value)) => style.margin.right = value,
+        (PropertyId::MarginBottom, PropertyValue::Length(value)) => style.margin.bottom = value,
+        (PropertyId::MarginLeft, PropertyValue::Length(value)) => style.margin.left = value,
+        (PropertyId::BorderTopWidth, PropertyValue::Length(value)) => {
+            style.border_width.top = value.max(0.0)
+        }
+        (PropertyId::BorderRightWidth, PropertyValue::Length(value)) => {
+            style.border_width.right = value.max(0.0)
+        }
+        (PropertyId::BorderBottomWidth, PropertyValue::Length(value)) => {
+            style.border_width.bottom = value.max(0.0)
+        }
+        (PropertyId::BorderLeftWidth, PropertyValue::Length(value)) => {
+            style.border_width.left = value.max(0.0)
+        }
+        (PropertyId::PaddingTop, PropertyValue::Length(value)) => {
+            style.padding.top = value.max(0.0)
+        }
+        (PropertyId::PaddingRight, PropertyValue::Length(value)) => {
+            style.padding.right = value.max(0.0)
+        }
+        (PropertyId::PaddingBottom, PropertyValue::Length(value)) => {
+            style.padding.bottom = value.max(0.0)
+        }
+        (PropertyId::PaddingLeft, PropertyValue::Length(value)) => {
+            style.padding.left = value.max(0.0)
+        }
+        (PropertyId::Color, PropertyValue::Color(color)) => style.color = color,
+        (PropertyId::BackgroundColor, PropertyValue::Color(color)) => style.background = color,
+        (PropertyId::BorderColor, PropertyValue::Color(color)) => style.border_color = color,
+        (PropertyId::Display, PropertyValue::Display(display)) => {
+            style.display_none = display == DisplayValue::None
+        }
+        (_, PropertyValue::CssWide(_)) | (_, _) => {}
+    }
 }
 
 fn collect_style_elements(document: &Document, node: NodeId, output: &mut Vec<String>) {
@@ -581,15 +745,21 @@ fn declarations_from_syntax(input: &[syntax::ParsedDeclaration]) -> Vec<Declarat
             &mut declarations,
             declaration.name.as_str(),
             declaration.value.as_str(),
+            declaration.important,
         );
     }
     declarations
 }
 
-fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str) {
+fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, important: bool) {
+    if let Some(keyword) = parse_css_wide(value) {
+        push_css_wide(output, name, keyword, important);
+        return;
+    }
+
     match name {
-        "width" => push_length(output, PropertyId::Width, value, false),
-        "height" => push_length(output, PropertyId::Height, value, false),
+        "width" => push_length(output, PropertyId::Width, value, false, important),
+        "height" => push_length(output, PropertyId::Height, value, false, important),
         "margin" => push_edges(
             output,
             value,
@@ -600,6 +770,7 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str) {
                 PropertyId::MarginLeft,
             ],
             true,
+            important,
         ),
         "padding" => push_edges(
             output,
@@ -611,6 +782,7 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str) {
                 PropertyId::PaddingLeft,
             ],
             false,
+            important,
         ),
         "border-width" => push_edges(
             output,
@@ -622,24 +794,51 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str) {
                 PropertyId::BorderLeftWidth,
             ],
             false,
+            important,
         ),
-        "margin-top" => push_length(output, PropertyId::MarginTop, value, true),
-        "margin-right" => push_length(output, PropertyId::MarginRight, value, true),
-        "margin-bottom" => push_length(output, PropertyId::MarginBottom, value, true),
-        "margin-left" => push_length(output, PropertyId::MarginLeft, value, true),
-        "padding-top" => push_length(output, PropertyId::PaddingTop, value, false),
-        "padding-right" => push_length(output, PropertyId::PaddingRight, value, false),
-        "padding-bottom" => push_length(output, PropertyId::PaddingBottom, value, false),
-        "padding-left" => push_length(output, PropertyId::PaddingLeft, value, false),
-        "border-top-width" => push_length(output, PropertyId::BorderTopWidth, value, false),
-        "border-right-width" => push_length(output, PropertyId::BorderRightWidth, value, false),
-        "border-bottom-width" => push_length(output, PropertyId::BorderBottomWidth, value, false),
-        "border-left-width" => push_length(output, PropertyId::BorderLeftWidth, value, false),
+        "margin-top" => push_length(output, PropertyId::MarginTop, value, true, important),
+        "margin-right" => push_length(output, PropertyId::MarginRight, value, true, important),
+        "margin-bottom" => push_length(output, PropertyId::MarginBottom, value, true, important),
+        "margin-left" => push_length(output, PropertyId::MarginLeft, value, true, important),
+        "padding-top" => push_length(output, PropertyId::PaddingTop, value, false, important),
+        "padding-right" => push_length(output, PropertyId::PaddingRight, value, false, important),
+        "padding-bottom" => push_length(output, PropertyId::PaddingBottom, value, false, important),
+        "padding-left" => push_length(output, PropertyId::PaddingLeft, value, false, important),
+        "border-top-width" => {
+            push_length(output, PropertyId::BorderTopWidth, value, false, important)
+        }
+        "border-right-width" => push_length(
+            output,
+            PropertyId::BorderRightWidth,
+            value,
+            false,
+            important,
+        ),
+        "border-bottom-width" => push_length(
+            output,
+            PropertyId::BorderBottomWidth,
+            value,
+            false,
+            important,
+        ),
+        "border-left-width" => {
+            push_length(output, PropertyId::BorderLeftWidth, value, false, important)
+        }
+        "color" => {
+            if let Some(color) = parse_color(value) {
+                output.push(Declaration {
+                    property: PropertyId::Color,
+                    value: PropertyValue::Color(color),
+                    important,
+                });
+            }
+        }
         "background" | "background-color" => {
             if let Some(color) = parse_color(value) {
                 output.push(Declaration {
                     property: PropertyId::BackgroundColor,
                     value: PropertyValue::Color(color),
+                    important,
                 });
             }
         }
@@ -648,6 +847,7 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str) {
                 output.push(Declaration {
                     property: PropertyId::BorderColor,
                     value: PropertyValue::Color(color),
+                    important,
                 });
             }
         }
@@ -661,6 +861,7 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str) {
                 output.push(Declaration {
                     property: PropertyId::Display,
                     value: PropertyValue::Display(display),
+                    important,
                 });
             }
         }
@@ -668,7 +869,76 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str) {
     }
 }
 
-fn push_length(output: &mut Vec<Declaration>, property: PropertyId, value: &str, negative: bool) {
+fn parse_css_wide(value: &str) -> Option<CssWideKeyword> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "initial" => Some(CssWideKeyword::Initial),
+        "inherit" => Some(CssWideKeyword::Inherit),
+        "unset" => Some(CssWideKeyword::Unset),
+        _ => None,
+    }
+}
+
+fn push_css_wide(
+    output: &mut Vec<Declaration>,
+    name: &str,
+    keyword: CssWideKeyword,
+    important: bool,
+) {
+    let properties: &[PropertyId] = match name {
+        "width" => &[PropertyId::Width],
+        "height" => &[PropertyId::Height],
+        "margin" => &[
+            PropertyId::MarginTop,
+            PropertyId::MarginRight,
+            PropertyId::MarginBottom,
+            PropertyId::MarginLeft,
+        ],
+        "padding" => &[
+            PropertyId::PaddingTop,
+            PropertyId::PaddingRight,
+            PropertyId::PaddingBottom,
+            PropertyId::PaddingLeft,
+        ],
+        "border-width" => &[
+            PropertyId::BorderTopWidth,
+            PropertyId::BorderRightWidth,
+            PropertyId::BorderBottomWidth,
+            PropertyId::BorderLeftWidth,
+        ],
+        "margin-top" => &[PropertyId::MarginTop],
+        "margin-right" => &[PropertyId::MarginRight],
+        "margin-bottom" => &[PropertyId::MarginBottom],
+        "margin-left" => &[PropertyId::MarginLeft],
+        "padding-top" => &[PropertyId::PaddingTop],
+        "padding-right" => &[PropertyId::PaddingRight],
+        "padding-bottom" => &[PropertyId::PaddingBottom],
+        "padding-left" => &[PropertyId::PaddingLeft],
+        "border-top-width" => &[PropertyId::BorderTopWidth],
+        "border-right-width" => &[PropertyId::BorderRightWidth],
+        "border-bottom-width" => &[PropertyId::BorderBottomWidth],
+        "border-left-width" => &[PropertyId::BorderLeftWidth],
+        "color" => &[PropertyId::Color],
+        "background" | "background-color" => &[PropertyId::BackgroundColor],
+        "border-color" => &[PropertyId::BorderColor],
+        "display" => &[PropertyId::Display],
+        _ => return,
+    };
+    for property in properties {
+        output.push(Declaration {
+            property: *property,
+            value: PropertyValue::CssWide(keyword),
+            important,
+        });
+    }
+}
+
+fn push_length(
+    output: &mut Vec<Declaration>,
+    property: PropertyId,
+    value: &str,
+    negative: bool,
+    important: bool,
+) {
     if let Some(mut value) = parse_px(value) {
         if !negative {
             value = value.max(0.0);
@@ -676,6 +946,7 @@ fn push_length(output: &mut Vec<Declaration>, property: PropertyId, value: &str,
         output.push(Declaration {
             property,
             value: PropertyValue::Length(value),
+            important,
         });
     }
 }
@@ -685,6 +956,7 @@ fn push_edges(
     value: &str,
     properties: [PropertyId; 4],
     negative: bool,
+    important: bool,
 ) {
     let Some(edges) = parse_edge_sizes(value) else {
         return;
@@ -697,6 +969,7 @@ fn push_edges(
         output.push(Declaration {
             property,
             value: PropertyValue::Length(value),
+            important,
         });
     }
 }

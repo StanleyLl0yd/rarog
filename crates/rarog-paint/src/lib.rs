@@ -478,7 +478,7 @@ fn collect(fragment: &Fragment, list: &mut DisplayList) {
                         content.size.width,
                         3.0,
                     ),
-                    color: Color::BLACK,
+                    color: fragment.style.color,
                 },
             );
         }
