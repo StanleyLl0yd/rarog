@@ -6,8 +6,8 @@ Tracking issue: #39.
 
 ## A — Standards HTML parsing
 
-- [ ] Land the `html5ever` adapter behind Rarog-owned parser types.
-- [ ] Add focused adapter tests for implied structure, character references, tree-builder insertion rules and foreign namespaces.
+- [x] Land the `html5ever` adapter behind Rarog-owned parser types.
+- [x] Add focused adapter tests for implied structure, character references, tree-builder insertion rules and foreign namespaces.
 - [ ] Add differential bootstrap-versus-standards fixtures to identify intentional semantic changes.
 - [ ] Switch the engine default parser to the standards adapter after resource/no-panic gates cover the new path.
 - [ ] Retire the bootstrap parser after the migration gate is green.
