@@ -60,6 +60,10 @@ impl EdgeSizes {
 pub struct ComputedStyle {
     pub width: Option<f32>,
     pub height: Option<f32>,
+    pub min_width: Option<f32>,
+    pub max_width: Option<f32>,
+    pub min_height: Option<f32>,
+    pub max_height: Option<f32>,
     pub margin: EdgeSizes,
     pub border_width: EdgeSizes,
     pub padding: EdgeSizes,
@@ -67,6 +71,7 @@ pub struct ComputedStyle {
     pub background: Color,
     pub border_color: Color,
     pub display_none: bool,
+    pub establishes_bfc: bool,
 }
 
 impl Default for ComputedStyle {
@@ -74,6 +79,10 @@ impl Default for ComputedStyle {
         Self {
             width: None,
             height: None,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
             margin: EdgeSizes::ZERO,
             border_width: EdgeSizes::ZERO,
             padding: EdgeSizes::ZERO,
@@ -81,6 +90,7 @@ impl Default for ComputedStyle {
             background: Color::TRANSPARENT,
             border_color: Color::TRANSPARENT,
             display_none: false,
+            establishes_bfc: false,
         }
     }
 }
@@ -236,6 +246,10 @@ pub fn style_sharing_key(document: &Document, node: NodeId) -> Option<StyleShari
 pub enum PropertyId {
     Width,
     Height,
+    MinWidth,
+    MaxWidth,
+    MinHeight,
+    MaxHeight,
     MarginTop,
     MarginRight,
     MarginBottom,
@@ -257,6 +271,7 @@ pub enum PropertyId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayValue {
     Block,
+    FlowRoot,
     None,
 }
 
@@ -272,6 +287,8 @@ pub enum CssWideKeyword {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PropertyValue {
     Length(f32),
+    Auto,
+    NoneKeyword,
     Color(Color),
     Display(DisplayValue),
     CssWide(CssWideKeyword),
@@ -647,6 +664,10 @@ fn copy_property_from_parent(
     match property {
         PropertyId::Width => style.width = parent.width,
         PropertyId::Height => style.height = parent.height,
+        PropertyId::MinWidth => style.min_width = parent.min_width,
+        PropertyId::MaxWidth => style.max_width = parent.max_width,
+        PropertyId::MinHeight => style.min_height = parent.min_height,
+        PropertyId::MaxHeight => style.max_height = parent.max_height,
         PropertyId::MarginTop => style.margin.top = parent.margin.top,
         PropertyId::MarginRight => style.margin.right = parent.margin.right,
         PropertyId::MarginBottom => style.margin.bottom = parent.margin.bottom,
@@ -662,7 +683,10 @@ fn copy_property_from_parent(
         PropertyId::Color => style.color = parent.color,
         PropertyId::BackgroundColor => style.background = parent.background,
         PropertyId::BorderColor => style.border_color = parent.border_color,
-        PropertyId::Display => style.display_none = parent.display_none,
+        PropertyId::Display => {
+            style.display_none = parent.display_none;
+            style.establishes_bfc = parent.establishes_bfc;
+        }
     }
 }
 
@@ -671,6 +695,10 @@ fn reset_property_to_initial(style: &mut ComputedStyle, property: PropertyId) {
     match property {
         PropertyId::Width => style.width = initial.width,
         PropertyId::Height => style.height = initial.height,
+        PropertyId::MinWidth => style.min_width = initial.min_width,
+        PropertyId::MaxWidth => style.max_width = initial.max_width,
+        PropertyId::MinHeight => style.min_height = initial.min_height,
+        PropertyId::MaxHeight => style.max_height = initial.max_height,
         PropertyId::MarginTop => style.margin.top = initial.margin.top,
         PropertyId::MarginRight => style.margin.right = initial.margin.right,
         PropertyId::MarginBottom => style.margin.bottom = initial.margin.bottom,
@@ -686,14 +714,35 @@ fn reset_property_to_initial(style: &mut ComputedStyle, property: PropertyId) {
         PropertyId::Color => style.color = initial.color,
         PropertyId::BackgroundColor => style.background = initial.background,
         PropertyId::BorderColor => style.border_color = initial.border_color,
-        PropertyId::Display => style.display_none = initial.display_none,
+        PropertyId::Display => {
+            style.display_none = initial.display_none;
+            style.establishes_bfc = initial.establishes_bfc;
+        }
     }
 }
 
 fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: PropertyValue) {
     match (property, value) {
         (PropertyId::Width, PropertyValue::Length(value)) => style.width = Some(value.max(0.0)),
+        (PropertyId::Width, PropertyValue::Auto) => style.width = None,
         (PropertyId::Height, PropertyValue::Length(value)) => style.height = Some(value.max(0.0)),
+        (PropertyId::Height, PropertyValue::Auto) => style.height = None,
+        (PropertyId::MinWidth, PropertyValue::Length(value)) => {
+            style.min_width = Some(value.max(0.0))
+        }
+        (PropertyId::MinWidth, PropertyValue::Auto) => style.min_width = None,
+        (PropertyId::MaxWidth, PropertyValue::Length(value)) => {
+            style.max_width = Some(value.max(0.0))
+        }
+        (PropertyId::MaxWidth, PropertyValue::NoneKeyword) => style.max_width = None,
+        (PropertyId::MinHeight, PropertyValue::Length(value)) => {
+            style.min_height = Some(value.max(0.0))
+        }
+        (PropertyId::MinHeight, PropertyValue::Auto) => style.min_height = None,
+        (PropertyId::MaxHeight, PropertyValue::Length(value)) => {
+            style.max_height = Some(value.max(0.0))
+        }
+        (PropertyId::MaxHeight, PropertyValue::NoneKeyword) => style.max_height = None,
         (PropertyId::MarginTop, PropertyValue::Length(value)) => style.margin.top = value,
         (PropertyId::MarginRight, PropertyValue::Length(value)) => style.margin.right = value,
         (PropertyId::MarginBottom, PropertyValue::Length(value)) => style.margin.bottom = value,
@@ -726,7 +775,8 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         (PropertyId::BackgroundColor, PropertyValue::Color(color)) => style.background = color,
         (PropertyId::BorderColor, PropertyValue::Color(color)) => style.border_color = color,
         (PropertyId::Display, PropertyValue::Display(display)) => {
-            style.display_none = display == DisplayValue::None
+            style.display_none = display == DisplayValue::None;
+            style.establishes_bfc = display == DisplayValue::FlowRoot;
         }
         (_, PropertyValue::CssWide(_)) | (_, _) => {}
     }
@@ -791,8 +841,20 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
     }
 
     match name {
-        "width" => push_length(output, PropertyId::Width, value, false, important),
-        "height" => push_length(output, PropertyId::Height, value, false, important),
+        "width" => push_sizing_value(output, PropertyId::Width, value, true, false, important),
+        "height" => push_sizing_value(output, PropertyId::Height, value, true, false, important),
+        "min-width" => {
+            push_sizing_value(output, PropertyId::MinWidth, value, true, false, important)
+        }
+        "max-width" => {
+            push_sizing_value(output, PropertyId::MaxWidth, value, false, true, important)
+        }
+        "min-height" => {
+            push_sizing_value(output, PropertyId::MinHeight, value, true, false, important)
+        }
+        "max-height" => {
+            push_sizing_value(output, PropertyId::MaxHeight, value, false, true, important)
+        }
         "margin" => push_edges(
             output,
             value,
@@ -888,6 +950,7 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
             let display = match value.to_ascii_lowercase().as_str() {
                 "none" => Some(DisplayValue::None),
                 "block" => Some(DisplayValue::Block),
+                "flow-root" => Some(DisplayValue::FlowRoot),
                 _ => None,
             };
             if let Some(display) = display {
@@ -922,6 +985,10 @@ fn push_css_wide(
     let properties: &[PropertyId] = match name {
         "width" => &[PropertyId::Width],
         "height" => &[PropertyId::Height],
+        "min-width" => &[PropertyId::MinWidth],
+        "max-width" => &[PropertyId::MaxWidth],
+        "min-height" => &[PropertyId::MinHeight],
+        "max-height" => &[PropertyId::MaxHeight],
         "margin" => &[
             PropertyId::MarginTop,
             PropertyId::MarginRight,
@@ -965,6 +1032,34 @@ fn push_css_wide(
             important,
         });
     }
+}
+
+fn push_sizing_value(
+    output: &mut Vec<Declaration>,
+    property: PropertyId,
+    value: &str,
+    allow_auto: bool,
+    allow_none: bool,
+    important: bool,
+) {
+    let normalized = value.trim().to_ascii_lowercase();
+    if allow_auto && normalized == "auto" {
+        output.push(Declaration {
+            property,
+            value: PropertyValue::Auto,
+            important,
+        });
+        return;
+    }
+    if allow_none && normalized == "none" {
+        output.push(Declaration {
+            property,
+            value: PropertyValue::NoneKeyword,
+            important,
+        });
+        return;
+    }
+    push_length(output, property, value, false, important);
 }
 
 fn push_length(
