@@ -1209,6 +1209,33 @@ pub fn relayout_tree(tree: &LayoutTree, viewport: Size) -> FragmentTree {
     fragment_builder.build(tree, viewport)
 }
 
+pub fn refresh_text_node(tree: &mut LayoutTree, document: &Document, dom_node: NodeId) -> bool {
+    let Some(NodeKind::Text(text)) = document.node(dom_node).map(|node| &node.kind) else {
+        return false;
+    };
+    refresh_text_node_recursive(&mut tree.root, dom_node, text)
+}
+
+fn refresh_text_node_recursive(node: &mut LayoutNode, dom_node: NodeId, text: &str) -> bool {
+    if node.dom_node == Some(dom_node) {
+        if !matches!(node.kind, LayoutNodeKind::Text(_)) {
+            return false;
+        }
+        node.kind = LayoutNodeKind::Text(TextRun::new(text.to_owned()));
+        node.intrinsic = intrinsic_sizes_for_node(&node.kind, node.style, &node.children);
+        return true;
+    }
+
+    let changed = node
+        .children
+        .iter_mut()
+        .any(|child| refresh_text_node_recursive(child, dom_node, text));
+    if changed {
+        node.intrinsic = intrinsic_sizes_for_node(&node.kind, node.style, &node.children);
+    }
+    changed
+}
+
 pub fn fragment_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Option<&Fragment> {
     find_fragment(&tree.root, dom_node)
 }
