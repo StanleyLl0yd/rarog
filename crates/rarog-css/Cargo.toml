@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+cssparser = { version = "0.37", default-features = false }
 rarog-dom = { path = "../rarog-dom" }
 rarog-types = { path = "../rarog-types" }
 

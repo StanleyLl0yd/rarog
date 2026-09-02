@@ -15,7 +15,7 @@ Tracking issue: #39.
 
 ## B — Standards CSS and cascade
 
-- [ ] Add a standards-oriented CSS tokenizer/parser adapter.
+- [x] Add a standards-oriented CSS tokenizer/parser adapter.
 - [ ] Add combinators, attribute selectors and pseudo-classes in measured slices.
 - [ ] Add `!important`, inheritance and CSS-wide values.
 
