@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/rarog-types",
+  "crates/rarog-resources",
   "crates/rarog-dom",
   "crates/rarog-html",
   "crates/rarog-css",

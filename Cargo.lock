@@ -238,6 +238,7 @@ name = "rarog-paint"
 version = "0.1.0"
 dependencies = [
  "rarog-layout",
+ "rarog-resources",
  "rarog-types",
 ]
 
@@ -250,6 +251,13 @@ name = "rarog-platform-windows"
 version = "0.1.0"
 dependencies = [
  "rarog-platform",
+]
+
+[[package]]
+name = "rarog-resources"
+version = "0.1.0"
+dependencies = [
+ "rarog-types",
 ]
 
 [[package]]

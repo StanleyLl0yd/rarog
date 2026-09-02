@@ -275,6 +275,14 @@ R0 supports bootstrap values for:
 
 This is a geometry foundation, **not** a claim of CSS box-model compliance. Margin collapsing, intrinsic sizing, min/max constraints, percentages, writing modes and formatting-context-specific behavior remain later work.
 
+## Image resource boundary
+
+R1 introduces `rarog-resources` as the platform-neutral ownership boundary for decoded image data. The crate owns typed `ImageResourceId` values, revisioned `ImageResourceRef` snapshots, an explicit pending/ready/failed lifecycle, RGBA8 decoded pixels, and bounded per-store retention. A store limits resource count, pixels per decoded image, and total retained decoded pixels; IDs are monotonic within the store and are not reused after removal.
+
+A ready reference includes both resource ID and revision. Replacing decoded pixels advances the revision and invalidates older references. This makes image content identity explicit in backend-neutral paint commands instead of relying on hidden mutable cache state. `rarog-paint` carries only `ImageResourceRef` plus destination geometry in `DisplayCommand::DrawImage`; software rasterization receives the resource store explicitly and treats missing, stale, pending or failed references as transparent/no-op content. Image revision changes therefore participate in ordinary display-list equality and damage tracking.
+
+The DOM and Layout Tree do not own decoded pixel buffers, and no process-global image cache is introduced. R1 does not claim URL resolution, Fetch, image format decoding, HTML replaced-element semantics, responsive images or asynchronous decode. Network/URL loading remains on the R2 roadmap and asynchronous image decoding remains R3 work; those layers must feed this bounded decoded-image boundary rather than leaking transport or decoder-specific types into layout/paint.
+
 ## Paint identity and damage tracking
 
 The display list remains backend-neutral. R0 `DisplayItemId` values now contain three explicit components: source identity, Fragment identity and paint-command slot. This prevents two fragments produced from the same DOM/layout source from colliding once fragmentation begins. Generated display lists assert ID uniqueness, and damage comparison rejects duplicate IDs instead of silently overwriting them in its index. Fragment identity is still snapshot-oriented in R0; retained/stable fragment ordinals remain a later fragmentation concern.
