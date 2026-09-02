@@ -1,4 +1,9 @@
+mod selector;
 mod syntax;
+
+pub use selector::{
+    AttributeSelector, Combinator, CompoundSelector, PseudoClass, Selector, parse_selector,
+};
 
 use rarog_dom::{Document, MutationKind, NodeId, NodeKind};
 use rarog_types::Color;
@@ -126,74 +131,12 @@ pub struct Specificity {
     pub types: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Selector {
-    pub tag: Option<String>,
-    pub id: Option<String>,
-    pub classes: Vec<String>,
-}
-
-impl Selector {
-    pub fn specificity(&self) -> Specificity {
-        Specificity {
-            ids: u16::from(self.id.is_some()),
-            classes: self.classes.len().min(u16::MAX as usize) as u16,
-            types: u16::from(self.tag.is_some()),
-        }
-    }
-
-    pub fn matches(&self, document: &Document, node: NodeId) -> bool {
-        let Some(node) = document.node(node) else {
-            return false;
-        };
-        let NodeKind::Element(element) = &node.kind else {
-            return false;
-        };
-
-        if let Some(tag) = &self.tag {
-            if element.tag_name.as_str() != tag {
-                return false;
-            }
-        }
-
-        if let Some(id) = &self.id {
-            if element.attributes.get("id") != Some(id) {
-                return false;
-            }
-        }
-
-        if !self.classes.is_empty() {
-            let element_classes = element
-                .attributes
-                .get("class")
-                .map(|value| value.split_whitespace().collect::<BTreeSet<_>>())
-                .unwrap_or_default();
-            if self
-                .classes
-                .iter()
-                .any(|class| !element_classes.contains(class.as_str()))
-            {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    pub fn invalidation_key(&self) -> SelectorInvalidationKey {
-        SelectorInvalidationKey {
-            tag: self.tag.clone(),
-            id: self.id.clone(),
-            classes: self.classes.iter().cloned().collect(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SelectorInvalidationKey {
     pub tag: Option<String>,
     pub id: Option<String>,
     pub classes: BTreeSet<String>,
+    pub attributes: BTreeSet<String>,
 }
 
 impl SelectorInvalidationKey {
@@ -201,15 +144,17 @@ impl SelectorInvalidationKey {
         match name {
             "id" => self.id.is_some(),
             "class" => !self.classes.is_empty(),
-            _ => false,
+            _ => self.attributes.contains(name),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SelectorDependencyScope {
+    SelfNode,
     Descendants,
     FollowingSiblings,
+    SiblingSet,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -352,12 +297,13 @@ impl Stylesheet {
             }
             for selector_text in parsed_rule.selectors {
                 if let Some(selector) = parse_selector(&selector_text) {
+                    let dependencies = selector.dependencies();
                     rules.push(StyleRule {
                         specificity: selector.specificity(),
                         selector,
                         declarations: declarations.clone(),
                         source_order,
-                        dependencies: Vec::new(),
+                        dependencies,
                     });
                     source_order = source_order.saturating_add(1);
                 }
@@ -621,64 +567,6 @@ fn collect_text(document: &Document, node: NodeId, output: &mut String) {
             _ => collect_text(document, *child, output),
         }
     }
-}
-
-pub fn parse_selector(input: &str) -> Option<Selector> {
-    let input = input.trim();
-    if input.is_empty()
-        || input.chars().any(char::is_whitespace)
-        || input.contains([':', '[', ']', '>', '+', '~'])
-    {
-        return None;
-    }
-
-    let bytes = input.as_bytes();
-    let mut cursor = 0usize;
-    let mut tag = None;
-    let mut id = None;
-    let mut classes = Vec::new();
-
-    if bytes.first().copied() == Some(b'*') {
-        cursor = 1;
-    } else if bytes
-        .first()
-        .is_some_and(|byte| *byte != b'.' && *byte != b'#')
-    {
-        let start = cursor;
-        while cursor < bytes.len() && bytes[cursor] != b'.' && bytes[cursor] != b'#' {
-            cursor += 1;
-        }
-        let value = input[start..cursor].trim();
-        if value.is_empty() {
-            return None;
-        }
-        tag = Some(value.to_ascii_lowercase());
-    }
-
-    while cursor < bytes.len() {
-        let marker = bytes[cursor];
-        if marker != b'.' && marker != b'#' {
-            return None;
-        }
-        cursor += 1;
-        let start = cursor;
-        while cursor < bytes.len() && bytes[cursor] != b'.' && bytes[cursor] != b'#' {
-            cursor += 1;
-        }
-        if start == cursor {
-            return None;
-        }
-        let value = input[start..cursor].to_string();
-        if marker == b'#' {
-            if id.replace(value).is_some() {
-                return None;
-            }
-        } else {
-            classes.push(value);
-        }
-    }
-
-    Some(Selector { tag, id, classes })
 }
 
 fn parse_declarations(input: &str) -> Vec<Declaration> {
@@ -981,18 +869,39 @@ impl InvalidationSet {
                             );
                         }
                     }
+                    if (old_connected || new_connected)
+                        && dependencies.has_scope(SelectorDependencyScope::SiblingSet)
+                    {
+                        if let Some(old_parent) = old_parent {
+                            set.mark_child_subtrees(
+                                document,
+                                *old_parent,
+                                DirtyFlags::STYLE_LAYOUT_PAINT,
+                            );
+                        }
+                        if let Some(new_parent) = new_parent {
+                            set.mark_child_subtrees(
+                                document,
+                                *new_parent,
+                                DirtyFlags::STYLE_LAYOUT_PAINT,
+                            );
+                        }
+                    }
                 }
                 MutationKind::Attribute { node, name } => {
                     if !document.is_connected(*node) {
                         continue;
                     }
+                    let mut affects_layout = false;
                     if matches!(name.as_str(), "id" | "class" | "style") {
                         set.mark(*node, DirtyFlags::STYLE_LAYOUT_PAINT);
+                        affects_layout = true;
+                    }
+                    affects_layout |=
+                        set.mark_selector_dependents(document, *node, name, dependencies);
+                    if affects_layout {
                         let parent = document.node(*node).and_then(|node| node.parent);
                         set.mark_ancestors(document, parent, DirtyFlags::LAYOUT_PAINT);
-                    }
-                    if matches!(name.as_str(), "id" | "class") {
-                        set.mark_relational_dependents(document, *node, name, dependencies);
                     }
                 }
                 MutationKind::CharacterData { node } => {
@@ -1034,15 +943,20 @@ impl InvalidationSet {
         }
     }
 
-    fn mark_relational_dependents(
+    fn mark_selector_dependents(
         &mut self,
         document: &Document,
         node: NodeId,
         attribute: &str,
         dependencies: &SelectorInvalidationDependencies,
-    ) {
+    ) -> bool {
+        let mut affected = false;
         for dependency in dependencies.for_attribute(attribute) {
+            affected = true;
             match dependency.scope {
+                SelectorDependencyScope::SelfNode => {
+                    self.mark(node, DirtyFlags::STYLE_LAYOUT_PAINT);
+                }
                 SelectorDependencyScope::Descendants => {
                     for child in document.children(node).unwrap_or(&[]) {
                         mark_subtree(document, *child, self, DirtyFlags::STYLE_LAYOUT_PAINT);
@@ -1058,8 +972,14 @@ impl InvalidationSet {
                         );
                     }
                 }
+                SelectorDependencyScope::SiblingSet => {
+                    if let Some(parent) = document.node(node).and_then(|node| node.parent) {
+                        self.mark_child_subtrees(document, parent, DirtyFlags::STYLE_LAYOUT_PAINT);
+                    }
+                }
             }
         }
+        affected
     }
 
     fn mark_structural_dependents(
@@ -1079,6 +999,9 @@ impl InvalidationSet {
                 child,
                 DirtyFlags::STYLE_LAYOUT_PAINT,
             );
+        }
+        if dependencies.has_scope(SelectorDependencyScope::SiblingSet) {
+            self.mark_child_subtrees(document, parent, DirtyFlags::STYLE_LAYOUT_PAINT);
         }
     }
 
@@ -1116,16 +1039,7 @@ fn mark_subtree(document: &Document, node: NodeId, set: &mut InvalidationSet, fl
 }
 
 fn selector_snapshot(selector: &Selector) -> String {
-    let mut output = selector.tag.clone().unwrap_or_else(|| "*".into());
-    if let Some(id) = &selector.id {
-        output.push('#');
-        output.push_str(id);
-    }
-    for class in &selector.classes {
-        output.push('.');
-        output.push_str(class);
-    }
-    output
+    selector.snapshot()
 }
 
 #[cfg(test)]
@@ -1263,6 +1177,7 @@ mod tests {
                 tag: None,
                 id: None,
                 classes: BTreeSet::from(["theme".into()]),
+                attributes: BTreeSet::new(),
             },
             scope: SelectorDependencyScope::Descendants,
         });
@@ -1300,6 +1215,7 @@ mod tests {
                 tag: None,
                 id: None,
                 classes: BTreeSet::from(["theme".into()]),
+                attributes: BTreeSet::new(),
             },
             scope: SelectorDependencyScope::Descendants,
         });
@@ -1348,6 +1264,7 @@ mod tests {
                 tag: None,
                 id: Some("lead".into()),
                 classes: BTreeSet::new(),
+                attributes: BTreeSet::new(),
             },
             scope: SelectorDependencyScope::FollowingSiblings,
         });
