@@ -39,7 +39,7 @@ Tracking issue: #39.
 ## D — Production text path
 
 - [x] Connect a production OpenType shaping backend behind the existing shaping request boundary.
-- [ ] Add the first Windows font discovery/text adapter.
+- [x] Add the first Windows font discovery/text adapter.
 
 ## E — Incremental rendering breadth
 
