@@ -102,7 +102,10 @@ impl fmt::Display for OpenTypeShapingError {
                 "shaper returned non-character cluster boundary {cluster}"
             ),
             Self::InvalidScale(size) => {
-                write!(formatter, "font size {size} cannot be represented at shaping precision")
+                write!(
+                    formatter,
+                    "font size {size} cannot be represented at shaping precision"
+                )
             }
         }
     }
@@ -187,8 +190,8 @@ impl OpenTypeShapingBackend {
             });
         }
 
-        let bytes = u64::try_from(data.len())
-            .map_err(|_| OpenTypeShapingError::FontByteCountOverflow)?;
+        let bytes =
+            u64::try_from(data.len()).map_err(|_| OpenTypeShapingError::FontByteCountOverflow)?;
         if bytes > self.limits.max_bytes_per_face {
             return Err(OpenTypeShapingError::FontByteLimitExceeded {
                 bytes,
@@ -267,11 +270,12 @@ impl OpenTypeShapingBackend {
         }
 
         let run_text = &text[start_byte..end_byte];
-        let font = FontRef::from_index(registered.data.as_ref(), registered.face_index).map_err(
-            |_| OpenTypeShapingError::InvalidFont {
-                face_index: registered.face_index,
-            },
-        )?;
+        let font =
+            FontRef::from_index(registered.data.as_ref(), registered.face_index).map_err(|_| {
+                OpenTypeShapingError::InvalidFont {
+                    face_index: registered.face_index,
+                }
+            })?;
 
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(run_text);
@@ -380,7 +384,10 @@ fn script_for_request(value: ShapingScript) -> harfrust::Script {
 }
 
 fn scalar_byte_boundaries(text: &str) -> Vec<usize> {
-    let mut boundaries = text.char_indices().map(|(index, _)| index).collect::<Vec<_>>();
+    let mut boundaries = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
     boundaries.push(text.len());
     boundaries
 }
@@ -394,7 +401,10 @@ fn cluster_starts(
     let mut starts = infos.iter().map(|info| info.cluster).collect::<Vec<_>>();
     if starts.iter().any(|cluster| *cluster >= text_len) && text_len != 0 {
         return Err(OpenTypeShapingError::InvalidClusterBoundary(
-            starts.into_iter().find(|cluster| *cluster >= text_len).unwrap_or(text_len),
+            starts
+                .into_iter()
+                .find(|cluster| *cluster >= text_len)
+                .unwrap_or(text_len),
         ));
     }
     starts.sort_unstable();
@@ -417,8 +427,8 @@ fn cluster_source_range(
         .ok_or(OpenTypeShapingError::InvalidClusterBoundary(cluster))?;
     let cluster_byte = usize::try_from(cluster)
         .map_err(|_| OpenTypeShapingError::InvalidClusterBoundary(cluster))?;
-    let next_byte = usize::try_from(next)
-        .map_err(|_| OpenTypeShapingError::InvalidClusterBoundary(next))?;
+    let next_byte =
+        usize::try_from(next).map_err(|_| OpenTypeShapingError::InvalidClusterBoundary(next))?;
     let local_start = scalar_boundaries
         .binary_search(&cluster_byte)
         .map_err(|_| OpenTypeShapingError::InvalidClusterBoundary(cluster))?;
@@ -552,14 +562,14 @@ mod tests {
             tag: OpenTypeTag::from_bytes(*b"liga"),
             value: 0,
         });
-        configured.variations.push(rarog_layout::VariationCoordinate {
-            axis: OpenTypeTag::from_bytes(*b"wght"),
-            value: 650.0,
-        });
+        configured
+            .variations
+            .push(rarog_layout::VariationCoordinate {
+                axis: OpenTypeTag::from_bytes(*b"wght"),
+                value: 650.0,
+            });
 
-        let shaped = backend
-            .try_shape_run("office", &configured, &face)
-            .unwrap();
+        let shaped = backend.try_shape_run("office", &configured, &face).unwrap();
         assert!(!shaped.glyphs.is_empty());
         assert!(shaped.advance > 0.0);
     }
