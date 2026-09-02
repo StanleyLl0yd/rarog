@@ -1,6 +1,9 @@
 use rarog_css::{ComputedStyle, StyleSet, VerticalAlign, computed_style_with_parent};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::sync::Arc;
 use unicode_bidi::BidiInfo;
 use unicode_linebreak::{BreakOpportunity as UnicodeBreakOpportunity, linebreaks};
 use unicode_script::{Script, UnicodeScript};
@@ -203,8 +206,130 @@ impl ShapingRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShapingError {
+    MissingFontFace(FontFaceId),
+    MissingOpenTypeData(FontFaceId),
+    InvalidOpenTypeData(FontFaceId),
+    InvalidLanguage(String),
+    InvalidRunRange(TextRange),
+    ClusterIndexOverflow(usize),
+    InvalidCluster { cluster: usize, range: TextRange },
+    InvalidPixelsPerEm,
+}
+
+impl fmt::Display for ShapingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingFontFace(face) => write!(formatter, "missing font face {}", face.value()),
+            Self::MissingOpenTypeData(face) => {
+                write!(formatter, "font face {} has no OpenType data", face.value())
+            }
+            Self::InvalidOpenTypeData(face) => {
+                write!(
+                    formatter,
+                    "font face {} contains invalid OpenType data",
+                    face.value()
+                )
+            }
+            Self::InvalidLanguage(language) => {
+                write!(formatter, "invalid shaping language {language:?}")
+            }
+            Self::InvalidRunRange(range) => write!(
+                formatter,
+                "invalid shaping run range {}..{}",
+                range.start, range.end
+            ),
+            Self::ClusterIndexOverflow(index) => {
+                write!(formatter, "shaping cluster index {index} exceeds u32")
+            }
+            Self::InvalidCluster { cluster, range } => write!(
+                formatter,
+                "shaper returned cluster {cluster} outside {}..{}",
+                range.start, range.end
+            ),
+            Self::InvalidPixelsPerEm => {
+                formatter.write_str("pixels-per-em must be finite and positive")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ShapingError {}
+
 pub trait ShapingBackend {
-    fn shape_run(&self, text: &str, request: &ShapingRequest, face: &FontFace) -> ShapedRun;
+    fn shape_run(
+        &self,
+        text: &str,
+        request: &ShapingRequest,
+        face: &FontFace,
+    ) -> Result<ShapedRun, ShapingError>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenTypeFontData {
+    bytes: Arc<[u8]>,
+    face_index: u32,
+    pixels_per_em: f32,
+}
+
+impl OpenTypeFontData {
+    pub fn try_new(
+        bytes: impl Into<Arc<[u8]>>,
+        face_index: u32,
+        pixels_per_em: f32,
+    ) -> Result<Self, ShapingError> {
+        if !pixels_per_em.is_finite() || pixels_per_em <= 0.0 {
+            return Err(ShapingError::InvalidPixelsPerEm);
+        }
+        let bytes = bytes.into();
+        harfrust::FontRef::from_index(&bytes, face_index)
+            .map_err(|_| ShapingError::InvalidOpenTypeData(FontFaceId::new(0)))?;
+        Ok(Self {
+            bytes,
+            face_index,
+            pixels_per_em,
+        })
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub const fn face_index(&self) -> u32 {
+        self.face_index
+    }
+
+    pub const fn pixels_per_em(&self) -> f32 {
+        self.pixels_per_em
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OpenTypeShaper {
+    fonts: BTreeMap<FontFaceId, OpenTypeFontData>,
+}
+
+impl OpenTypeShaper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert_font(
+        &mut self,
+        face: FontFaceId,
+        data: OpenTypeFontData,
+    ) -> Option<OpenTypeFontData> {
+        self.fonts.insert(face, data)
+    }
+
+    pub fn remove_font(&mut self, face: FontFaceId) -> Option<OpenTypeFontData> {
+        self.fonts.remove(&face)
+    }
+
+    pub fn contains_font(&self, face: FontFaceId) -> bool {
+        self.fonts.contains_key(&face)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -423,7 +548,12 @@ impl Default for FixedTextShaper {
 }
 
 impl ShapingBackend for FixedTextShaper {
-    fn shape_run(&self, text: &str, request: &ShapingRequest, face: &FontFace) -> ShapedRun {
+    fn shape_run(
+        &self,
+        text: &str,
+        request: &ShapingRequest,
+        face: &FontFace,
+    ) -> Result<ShapedRun, ShapingError> {
         let run = request.run;
         let characters = text.chars().collect::<Vec<_>>();
         let boundaries = grapheme_boundaries(text);
@@ -453,12 +583,142 @@ impl ShapingBackend for FixedTextShaper {
         if run.direction() == TextDirection::Rtl {
             glyphs.reverse();
         }
-        ShapedRun {
+        Ok(ShapedRun {
             advance: glyphs.iter().map(|glyph| glyph.advance).sum(),
             glyphs,
             run,
             metrics: face.metrics,
+        })
+    }
+}
+
+impl ShapingBackend for OpenTypeShaper {
+    fn shape_run(
+        &self,
+        text: &str,
+        request: &ShapingRequest,
+        face: &FontFace,
+    ) -> Result<ShapedRun, ShapingError> {
+        const POSITION_SCALE: f32 = 64.0;
+
+        let data = self
+            .fonts
+            .get(&face.id)
+            .ok_or(ShapingError::MissingOpenTypeData(face.id))?;
+        let font = harfrust::FontRef::from_index(data.bytes(), data.face_index())
+            .map_err(|_| ShapingError::InvalidOpenTypeData(face.id))?;
+        let characters = text.chars().collect::<Vec<_>>();
+        let range = request.run.range;
+        let slice = characters
+            .get(range.start..range.end)
+            .ok_or(ShapingError::InvalidRunRange(range))?;
+
+        let mut buffer = harfrust::UnicodeBuffer::new();
+        buffer.reserve(slice.len());
+        for (offset, character) in slice.iter().copied().enumerate() {
+            let cluster = range.start.saturating_add(offset);
+            let cluster =
+                u32::try_from(cluster).map_err(|_| ShapingError::ClusterIndexOverflow(cluster))?;
+            buffer.add(character, cluster);
         }
+        buffer.set_direction(match request.run.direction() {
+            TextDirection::Ltr => harfrust::Direction::LeftToRight,
+            TextDirection::Rtl => harfrust::Direction::RightToLeft,
+        });
+        buffer.set_script(harfrust_script(request.script));
+        let language = request
+            .language
+            .as_str()
+            .parse::<harfrust::Language>()
+            .map_err(|_| ShapingError::InvalidLanguage(request.language.as_str().into()))?;
+        buffer.set_language(language);
+
+        let features = request
+            .features
+            .iter()
+            .map(|feature| {
+                harfrust::Feature::new(
+                    harfrust::Tag::from_u32(feature.tag.value()),
+                    feature.value,
+                    ..,
+                )
+            })
+            .collect::<Vec<_>>();
+        let variations = request
+            .variations
+            .iter()
+            .map(|coordinate| harfrust::Variation {
+                tag: harfrust::Tag::from_u32(coordinate.axis.value()),
+                value: coordinate.value,
+            })
+            .collect::<Vec<_>>();
+        let instance = harfrust::ShaperInstance::from_variations(&font, variations);
+        let data_cache = harfrust::ShaperData::new(&font);
+        let shaper = data_cache.shaper(&font).instance(Some(&instance)).build();
+        let scaled = data.pixels_per_em() * POSITION_SCALE;
+        if !scaled.is_finite() || scaled <= 0.0 || scaled > i32::MAX as f32 {
+            return Err(ShapingError::InvalidPixelsPerEm);
+        }
+        let output = shaper.shape(
+            buffer,
+            harfrust::ShapeOptions::new()
+                .features(&features)
+                .scale(Some(scaled.round() as i32)),
+        );
+        let infos = output.glyph_infos();
+        let positions = output.glyph_positions();
+        let mut cluster_starts = infos
+            .iter()
+            .map(|info| info.cluster as usize)
+            .collect::<BTreeSet<_>>();
+        cluster_starts.insert(range.end);
+        let cluster_starts = cluster_starts.into_iter().collect::<Vec<_>>();
+        for cluster in cluster_starts
+            .iter()
+            .copied()
+            .filter(|cluster| *cluster != range.end)
+        {
+            if cluster < range.start || cluster >= range.end {
+                return Err(ShapingError::InvalidCluster { cluster, range });
+            }
+        }
+
+        let mut glyphs = Vec::with_capacity(infos.len());
+        for (info, position) in infos.iter().zip(positions.iter()) {
+            let cluster = info.cluster as usize;
+            let next = cluster_starts
+                .iter()
+                .copied()
+                .find(|candidate| *candidate > cluster)
+                .ok_or(ShapingError::InvalidCluster { cluster, range })?;
+            glyphs.push(PositionedGlyph {
+                id: GlyphId::new(info.glyph_id),
+                source: TextRange::new(cluster, next),
+                advance: position.x_advance as f32 / POSITION_SCALE,
+                offset: GlyphOffset {
+                    x: position.x_offset as f32 / POSITION_SCALE,
+                    y: position.y_offset as f32 / POSITION_SCALE,
+                },
+            });
+        }
+        Ok(ShapedRun {
+            advance: glyphs.iter().map(|glyph| glyph.advance).sum(),
+            glyphs,
+            run: request.run,
+            metrics: face.metrics,
+        })
+    }
+}
+
+fn harfrust_script(script: ShapingScript) -> harfrust::Script {
+    match script {
+        ShapingScript::Common | ShapingScript::Emoji => harfrust::script::COMMON,
+        ShapingScript::Latin => harfrust::script::LATIN,
+        ShapingScript::Cyrillic => harfrust::script::CYRILLIC,
+        ShapingScript::Hebrew => harfrust::script::HEBREW,
+        ShapingScript::Arabic => harfrust::script::ARABIC,
+        ShapingScript::Han => harfrust::script::HAN,
+        ShapingScript::Unknown => harfrust::script::UNKNOWN,
     }
 }
 
@@ -534,13 +794,14 @@ impl TextRun {
         &self,
         fallback: &FontFallbackChain,
         backend: &B,
-    ) -> Vec<ShapedRun> {
+    ) -> Result<Vec<ShapedRun>, ShapingError> {
         self.shaping_requests()
             .into_iter()
-            .filter_map(|request| {
-                fallback
+            .map(|request| {
+                let face = fallback
                     .face(request.run.face)
-                    .map(|face| backend.shape_run(&self.text, &request, face))
+                    .ok_or(ShapingError::MissingFontFace(request.run.face))?;
+                backend.shape_run(&self.text, &request, face)
             })
             .collect()
     }
@@ -3507,11 +3768,13 @@ mod tests {
         let shaped = runs
             .iter()
             .map(|run| {
-                backend.shape_run(
-                    text,
-                    &ShapingRequest::bootstrap(text, *run),
-                    fallback.face(run.face).unwrap(),
-                )
+                backend
+                    .shape_run(
+                        text,
+                        &ShapingRequest::bootstrap(text, *run),
+                        fallback.face(run.face).unwrap(),
+                    )
+                    .unwrap()
             })
             .collect::<Vec<_>>();
         assert_eq!(shaped.len(), 3);
@@ -3543,11 +3806,9 @@ mod tests {
             face: face.id,
             level: BidiLevel::new(0),
         };
-        let shaped = FixedTextShaper::default().shape_run(
-            "ab",
-            &ShapingRequest::bootstrap("ab", run),
-            &face,
-        );
+        let shaped = FixedTextShaper::default()
+            .shape_run("ab", &ShapingRequest::bootstrap("ab", run), &face)
+            .unwrap();
         assert_eq!(shaped.metrics, metrics);
         assert_eq!(shaped.advance, 22.0);
         assert_eq!(
@@ -3566,11 +3827,13 @@ mod tests {
         let fallback = FontFallbackChain::default();
         let run = shaping_runs(text, &fallback)[0];
         assert_eq!(run.direction(), TextDirection::Rtl);
-        let shaped = FixedTextShaper::default().shape_run(
-            text,
-            &ShapingRequest::bootstrap(text, run),
-            fallback.face(run.face).unwrap(),
-        );
+        let shaped = FixedTextShaper::default()
+            .shape_run(
+                text,
+                &ShapingRequest::bootstrap(text, run),
+                fallback.face(run.face).unwrap(),
+            )
+            .unwrap();
         assert_eq!(shaped.glyphs.len(), 2);
         assert_eq!(shaped.glyphs[0].source, TextRange::new(1, 2));
         assert_eq!(shaped.glyphs[1].source, TextRange::new(0, 1));
@@ -3580,7 +3843,9 @@ mod tests {
     fn text_run_can_shape_all_segments_through_backend_boundary() {
         let fallback = FontFallbackChain::default();
         let run = TextRun::with_fallback("abc שלום 世界".into(), &fallback);
-        let shaped = run.shape_with_backend(&fallback, &FixedTextShaper::default());
+        let shaped = run
+            .shape_with_backend(&fallback, &FixedTextShaper::default())
+            .unwrap();
         assert_eq!(shaped.len(), 4);
         assert_eq!(shaped[0].run.face, FontFaceId::new(0));
         assert_eq!(shaped[1].run.face, FontFaceId::new(1));
@@ -3676,7 +3941,9 @@ mod tests {
         let run = shaping_runs("abc", &fallback)[0];
         let face = fallback.face(run.face).unwrap();
         let backend = FixedTextShaper::default();
-        let baseline = backend.shape_run("abc", &ShapingRequest::bootstrap("abc", run), face);
+        let baseline = backend
+            .shape_run("abc", &ShapingRequest::bootstrap("abc", run), face)
+            .unwrap();
         let mut configured = ShapingRequest::bootstrap("abc", run);
         configured.language = LanguageTag::new("en");
         configured.features.push(OpenTypeFeature {
@@ -3687,7 +3954,7 @@ mod tests {
             axis: OpenTypeTag::from_bytes(*b"wght"),
             value: 700.0,
         });
-        let shaped = backend.shape_run("abc", &configured, face);
+        let shaped = backend.shape_run("abc", &configured, face).unwrap();
         assert_eq!(baseline, shaped);
     }
 
@@ -3700,5 +3967,102 @@ mod tests {
         assert_eq!(requests[0].script, ShapingScript::Latin);
         assert_eq!(requests[1].script, ShapingScript::Cyrillic);
         assert_eq!(requests[0].run.range.end, requests[1].run.range.start);
+    }
+
+    #[test]
+    fn opentype_font_data_rejects_invalid_inputs() {
+        assert_eq!(
+            OpenTypeFontData::try_new(Arc::<[u8]>::from(&b"not-a-font"[..]), 0, 16.0),
+            Err(ShapingError::InvalidOpenTypeData(FontFaceId::new(0)))
+        );
+        assert_eq!(
+            OpenTypeFontData::try_new(
+                Arc::<[u8]>::from(font_test_data::NOTOSERIF_AUTOHINT_SHAPING),
+                0,
+                0.0,
+            ),
+            Err(ShapingError::InvalidPixelsPerEm)
+        );
+    }
+
+    fn production_face() -> FontFace {
+        FontFace {
+            id: FontFaceId::new(42),
+            family: FontFamily("Noto Serif test subset".into()),
+            coverage: FontCoverage::LastResort,
+            metrics: FontMetrics {
+                ascent: 14.0,
+                descent: 4.0,
+                line_gap: 0.0,
+            },
+            advance: 8.0,
+        }
+    }
+
+    fn production_shaper(face: &FontFace) -> OpenTypeShaper {
+        let data = OpenTypeFontData::try_new(
+            Arc::<[u8]>::from(font_test_data::NOTOSERIF_AUTOHINT_SHAPING),
+            0,
+            16.0,
+        )
+        .unwrap();
+        let mut backend = OpenTypeShaper::new();
+        backend.insert_font(face.id, data);
+        backend
+    }
+
+    #[test]
+    fn production_opentype_shaper_forms_ligatures_with_source_ranges() {
+        let face = production_face();
+        let backend = production_shaper(&face);
+        let run = ShapingRun {
+            range: TextRange::new(0, 2),
+            face: face.id,
+            level: BidiLevel::new(0),
+        };
+        let shaped = backend
+            .shape_run("fi", &ShapingRequest::bootstrap("fi", run), &face)
+            .unwrap();
+
+        assert_eq!(shaped.glyphs.len(), 1);
+        assert_eq!(shaped.glyphs[0].source, TextRange::new(0, 2));
+        assert!(shaped.glyphs[0].id.value() > 0);
+        assert!(shaped.advance > 0.0);
+    }
+
+    #[test]
+    fn production_opentype_shaper_applies_feature_metadata() {
+        let face = production_face();
+        let backend = production_shaper(&face);
+        let run = ShapingRun {
+            range: TextRange::new(0, 2),
+            face: face.id,
+            level: BidiLevel::new(0),
+        };
+        let mut request = ShapingRequest::bootstrap("fi", run);
+        request.features.push(OpenTypeFeature {
+            tag: OpenTypeTag::from_bytes(*b"liga"),
+            value: 0,
+        });
+        let shaped = backend.shape_run("fi", &request, &face).unwrap();
+
+        assert_eq!(shaped.glyphs.len(), 2);
+        assert_eq!(shaped.glyphs[0].source, TextRange::new(0, 1));
+        assert_eq!(shaped.glyphs[1].source, TextRange::new(1, 2));
+    }
+
+    #[test]
+    fn production_opentype_shaper_fails_explicitly_without_registered_data() {
+        let face = production_face();
+        let backend = OpenTypeShaper::new();
+        let run = ShapingRun {
+            range: TextRange::new(0, 1),
+            face: face.id,
+            level: BidiLevel::new(0),
+        };
+        assert_eq!(
+            backend.shape_run("f", &ShapingRequest::bootstrap("f", run), &face),
+            Err(ShapingError::MissingOpenTypeData(face.id))
+        );
     }
 }

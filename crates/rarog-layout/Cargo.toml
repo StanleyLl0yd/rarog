@@ -9,6 +9,7 @@ rust-version.workspace = true
 rarog-dom = { path = "../rarog-dom" }
 rarog-css = { path = "../rarog-css" }
 rarog-types = { path = "../rarog-types" }
+harfrust = "=0.13.3"
 unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"
 unicode-script = "0.5.8"
@@ -16,3 +17,6 @@ unicode-segmentation = "1.13.3"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+font-test-data = "=0.7.0"

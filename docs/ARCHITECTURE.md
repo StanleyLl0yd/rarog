@@ -275,6 +275,14 @@ R0 supports bootstrap values for:
 
 This is a geometry foundation, **not** a claim of CSS box-model compliance. Margin collapsing, intrinsic sizing, min/max constraints, percentages, writing modes and formatting-context-specific behavior remain later work.
 
+## Production OpenType shaping boundary
+
+R1 keeps text segmentation, fallback selection and shaping metadata in Rarog-owned types while adding a real OpenType shaping implementation behind `ShapingBackend`. `OpenTypeShaper` owns validated immutable font bytes keyed by `FontFaceId`; HarfRust types do not cross the public shaping boundary. A production shaping call is explicitly fallible, because missing font data, invalid font bytes, invalid language metadata or invalid returned cluster mapping must not silently become synthetic glyphs.
+
+The adapter submits each existing bidi×font×script shaping request with explicit direction, script, language, OpenType feature settings and variable-font coordinates. HarfRust cluster values are Rarog character indices, not UTF-8 byte offsets. The adapter reconstructs logical `TextRange` ownership from the sorted cluster starts so ligatures and RTL output retain deterministic source mapping even when glyph order is visual.
+
+The current default `TextRun` geometry remains the deterministic fixed bootstrap shaper. R1 does not switch Web layout to production font metrics until the platform font-discovery layer can provide resolved real font faces. This keeps backend integration measurable without inventing a cross-platform default font policy. The first Windows font discovery/text adapter is the next production-text slice.
+
 ## Image resource boundary
 
 R1 introduces `rarog-resources` as the platform-neutral ownership boundary for decoded image data. The crate owns typed `ImageResourceId` values, revisioned `ImageResourceRef` snapshots, an explicit pending/ready/failed lifecycle, RGBA8 decoded pixels, and bounded per-store retention. A store limits resource count, pixels per decoded image, and total retained decoded pixels; IDs are monotonic within the store and are not reused after removal.
