@@ -725,7 +725,7 @@ pub fn render_html_against_with_limits(
     let total_started = Instant::now();
 
     let stage_started = Instant::now();
-    let document = rarog_html::parse(source);
+    let document = rarog_html::parse_standards(source);
     let parse = stage_started.elapsed();
     validate_document_limits(&document, limits)?;
 
@@ -970,16 +970,23 @@ mod tests {
     }
 
     fn first_element(document: &Document) -> NodeId {
-        *document
-            .children(document.root())
-            .expect("document root is valid")
-            .iter()
-            .find(|node| {
-                document
-                    .node(**node)
-                    .is_some_and(|node| matches!(&node.kind, NodeKind::Element(_)))
-            })
-            .expect("fixture contains an element")
+        fn find(document: &Document, node: NodeId) -> Option<NodeId> {
+            let current = document.node(node)?;
+            if let NodeKind::Element(element) = &current.kind {
+                if !matches!(
+                    element.tag_name.as_str(),
+                    "html" | "head" | "body" | "style"
+                ) {
+                    return Some(node);
+                }
+            }
+            current
+                .children
+                .iter()
+                .find_map(|child| find(document, *child))
+        }
+
+        find(document, document.root()).expect("fixture contains a content element")
     }
 
     fn element_with_id(document: &Document, id: &str) -> NodeId {
@@ -1062,7 +1069,9 @@ mod tests {
             },
         );
 
-        let fragment = &output.layout.fragments.root.children[0];
+        let node = first_element(&output.document);
+        let fragment =
+            fragment_for_dom(&output.layout.fragments, node).expect("content fragment exists");
         assert_eq!(fragment.boxes.content_box.size.width, 100.0);
         assert_eq!(fragment.boxes.border_box.size.width, 124.0);
         assert!(output.display_list.len() >= 6);
@@ -1071,7 +1080,9 @@ mod tests {
     #[test]
     fn author_stylesheet_cascade_reaches_rendering() {
         let output = render_ok(DETERMINISTIC_FIXTURE, deterministic_options());
-        let fragment = &output.layout.fragments.root.children[0];
+        let hero = element_with_id(&output.document, "hero");
+        let fragment =
+            fragment_for_dom(&output.layout.fragments, hero).expect("hero fragment exists");
 
         assert_eq!(fragment.boxes.content_box.size.width, 80.0);
         assert_eq!(fragment.style.background, Color::rgb(0x11, 0x22, 0x33));
@@ -1210,7 +1221,8 @@ mod tests {
         assert_eq!(report.mode, IncrementalMode::SubtreeRelayout);
         assert_eq!(session.layout().tree.snapshot(), layout_before);
         assert_eq!(
-            session.layout().fragments.root.children[0]
+            fragment_for_dom(&session.layout().fragments, node)
+                .expect("updated fragment exists")
                 .boxes
                 .content_box
                 .size
@@ -1256,7 +1268,7 @@ mod tests {
                 .margin_box
                 .origin
                 .y,
-            41.0
+            49.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
@@ -1332,11 +1344,11 @@ mod tests {
 
         assert_eq!(
             first.framebuffer.stable_hash64(),
-            13_219_555_538_035_458_927
+            18_007_819_523_596_154_863
         );
         assert_eq!(
             first.deterministic_signature_hash(),
-            16_985_642_107_972_200_629
+            9_860_244_826_400_266_395
         );
     }
 }
