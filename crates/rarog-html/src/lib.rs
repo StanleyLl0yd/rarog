@@ -1,3 +1,5 @@
+mod standards;
+
 use rarog_dom::{Document, ElementData, NodeId, NodeKind};
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -28,6 +30,7 @@ pub enum ParseDiagnosticCode {
     UnexpectedEndTag,
     UnclosedElement,
     UnterminatedTag,
+    StandardsParseError,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +127,51 @@ pub fn parse(input: &str) -> Document {
 
 pub fn parse_with_diagnostics(input: &str) -> ParseOutput {
     parse_stream(StreamingInput::complete(input)).expect("complete input is closed")
+}
+
+pub fn parse_standards(input: &str) -> Document {
+    parse_standards_with_diagnostics(input).document
+}
+
+pub fn parse_standards_with_diagnostics(input: &str) -> ParseOutput {
+    let output = standards::parse(input);
+    let diagnostics = output
+        .errors
+        .into_iter()
+        .map(|(line, message)| ParseDiagnostic {
+            severity: DiagnosticSeverity::Error,
+            code: ParseDiagnosticCode::StandardsParseError,
+            span: line_span(input, line),
+            message,
+        })
+        .collect();
+    ParseOutput {
+        document: output.document,
+        diagnostics,
+    }
+}
+
+fn line_span(input: &str, line: u64) -> SourceSpan {
+    if line == 0 {
+        return SourceSpan::new(0, 0);
+    }
+    let target = line as usize;
+    let mut current = 1usize;
+    let mut start = 0usize;
+    for (index, character) in input.char_indices() {
+        if current == target && character == '\n' {
+            return SourceSpan::new(start, index);
+        }
+        if character == '\n' {
+            current += 1;
+            start = index + character.len_utf8();
+        }
+    }
+    if current == target {
+        SourceSpan::new(start, input.len())
+    } else {
+        SourceSpan::new(input.len(), input.len())
+    }
 }
 
 pub fn parse_stream(input: StreamingInput) -> Result<ParseOutput, ParseError> {

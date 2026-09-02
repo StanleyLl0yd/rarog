@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+html5ever = "0.39"
 rarog-dom = { path = "../rarog-dom" }
 
 [lints]
