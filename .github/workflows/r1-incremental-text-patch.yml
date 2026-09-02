@@ -1,0 +1,282 @@
+name: R1 incremental text patch
+
+on:
+  push:
+    branches:
+      - r1/incremental-text-reflow
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Apply incremental text reflow slice
+        shell: python
+        run: |
+          from pathlib import Path
+
+          layout = Path("crates/rarog-layout/src/lib.rs")
+          text = layout.read_text()
+          marker = '''pub fn fragment_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Option<&Fragment> {
+          '''
+          addition = '''pub fn refresh_text_node(
+              tree: &mut LayoutTree,
+              document: &Document,
+              dom_node: NodeId,
+          ) -> bool {
+              let Some(NodeKind::Text(text)) = document.node(dom_node).map(|node| &node.kind) else {
+                  return false;
+              };
+              refresh_text_node_recursive(&mut tree.root, dom_node, text)
+          }
+
+          fn refresh_text_node_recursive(node: &mut LayoutNode, dom_node: NodeId, text: &str) -> bool {
+              if node.dom_node == Some(dom_node) {
+                  if !matches!(node.kind, LayoutNodeKind::Text(_)) {
+                      return false;
+                  }
+                  node.kind = LayoutNodeKind::Text(TextRun::new(text.to_owned()));
+                  node.intrinsic = intrinsic_sizes_for_node(&node.kind, node.style, &node.children);
+                  return true;
+              }
+
+              for child in &mut node.children {
+                  if refresh_text_node_recursive(child, dom_node, text) {
+                      node.intrinsic = intrinsic_sizes_for_node(&node.kind, node.style, &node.children);
+                      return true;
+                  }
+              }
+              false
+          }
+
+          pub fn fragment_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Option<&Fragment> {
+          '''
+          if "pub fn refresh_text_node(" not in text:
+              if marker not in text:
+                  raise SystemExit("layout insertion marker not found")
+              text = text.replace(marker, addition, 1)
+              layout.write_text(text)
+
+          engine = Path("crates/rarog-engine/src/lib.rs")
+          text = engine.read_text()
+          old_import = '''    Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_for_dom, fragments_for_dom,
+              layout_document_with_styles, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
+          '''
+          new_import = '''    Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_for_dom, fragments_for_dom,
+              layout_document_with_styles, refresh_text_node, relayout_fragment_flow,
+              relayout_fragment_subtree, relayout_tree,
+          '''
+          if "refresh_text_node," not in text:
+              if old_import not in text:
+                  raise SystemExit("engine import marker not found")
+              text = text.replace(old_import, new_import, 1)
+
+          old_state = '''        let mut style_candidates = self
+              .dirty
+              .entries()
+              .iter()
+              .filter_map(|(node, flags)| flags.style.then_some(*node))
+              .collect::<BTreeSet<_>>();
+          let mut requires_full_rebuild = mutation_history_lost;
+          '''
+          new_state = '''        let mut style_candidates = self
+              .dirty
+              .entries()
+              .iter()
+              .filter_map(|(node, flags)| flags.style.then_some(*node))
+              .collect::<BTreeSet<_>>();
+          let mut text_relayout_nodes = BTreeSet::new();
+          let mut requires_full_rebuild = mutation_history_lost;
+          '''
+          if "let mut text_relayout_nodes = BTreeSet::new();" not in text:
+              if old_state not in text:
+                  raise SystemExit("engine state marker not found")
+              text = text.replace(old_state, new_state, 1)
+
+          old_character = '''                MutationKind::CharacterData { node } => {
+                      requires_full_rebuild = true;
+                      stylesheet_sources_changed |=
+                          node_is_within_style_element(&self.document, *node);
+                  }
+          '''
+          new_character = '''                MutationKind::CharacterData { node } => {
+                      if node_is_within_style_element(&self.document, *node) {
+                          requires_full_rebuild = true;
+                          stylesheet_sources_changed = true;
+                      } else {
+                          text_relayout_nodes.insert(*node);
+                      }
+                  }
+          '''
+          if "text_relayout_nodes.insert(*node);" not in text:
+              if old_character not in text:
+                  raise SystemExit("character-data marker not found")
+              text = text.replace(old_character, new_character, 1)
+
+          before_mode = '''        let mode;
+          let patched_nodes;
+          if requires_full_rebuild {
+          '''
+          with_refresh = '''        if !requires_full_rebuild {
+              for node in &text_relayout_nodes {
+                  if !refresh_text_node(&mut self.layout.tree, &self.document, *node) {
+                      requires_full_rebuild = true;
+                      break;
+                  }
+                  geometry_changed = true;
+                  subtree_relayout_safe = false;
+                  flow_relayout_nodes.insert(*node);
+              }
+          }
+
+          let mode;
+          let patched_nodes;
+          if requires_full_rebuild {
+          '''
+          if "for node in &text_relayout_nodes" not in text:
+              if before_mode not in text:
+                  raise SystemExit("mode insertion marker not found")
+              text = text.replace(before_mode, with_refresh, 1)
+
+          old_unchanged = '''        } else if style_updates.is_empty() {
+              self.styles = new_styles;
+          '''
+          new_unchanged = '''        } else if style_updates.is_empty() && text_relayout_nodes.is_empty() {
+              self.styles = new_styles;
+          '''
+          if old_unchanged in text:
+              text = text.replace(old_unchanged, new_unchanged, 1)
+
+          old_flow_count = '''        } else if geometry_changed {
+              let previous_display_list = self.display_list.clone();
+              patched_nodes = style_updates.len();
+          '''
+          new_flow_count = '''        } else if geometry_changed {
+              let previous_display_list = self.display_list.clone();
+              patched_nodes = style_updates.len() + text_relayout_nodes.len();
+          '''
+          if old_flow_count in text:
+              text = text.replace(old_flow_count, new_flow_count, 1)
+
+          test_marker = '''    #[test]
+              fn structural_change_still_falls_back_to_full_rebuild() {
+          '''
+          test = '''    #[test]
+              fn character_data_change_reflows_existing_text_without_full_rebuild() {
+                  let source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"target\" style=\"width:48px;background:#112233\">one</div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+                  let expected_source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"target\" style=\"width:48px;background:#112233\">one two three four</div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+                  let mut session = session(source, deterministic_options());
+                  let before = element_with_id(session.document(), "before");
+                  let target = element_with_id(session.document(), "target");
+                  let text = *session
+                      .document()
+                      .children(target)
+                      .and_then(|children| children.first())
+                      .expect("target contains a text node");
+                  let before_fragment_id = fragment_for_dom(&session.layout().fragments, before)
+                      .expect("before fragment exists")
+                      .id;
+                  let layout_node_count = session.layout().tree.node_count();
+
+                  session
+                      .document_mut()
+                      .set_text(text, "one two three four")
+                      .unwrap();
+                  let report = session.update().expect("incremental text update succeeds");
+                  let expected = render_ok(expected_source, deterministic_options());
+
+                  assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+                  assert_eq!(report.patched_nodes, 1);
+                  assert_eq!(session.layout().tree.node_count(), layout_node_count);
+                  assert_eq!(
+                      fragment_for_dom(&session.layout().fragments, before)
+                          .expect("unaffected prefix fragment remains")
+                          .id,
+                      before_fragment_id
+                  );
+                  assert_eq!(
+                      session.framebuffer().stable_hash64(),
+                      expected.framebuffer.stable_hash64()
+                  );
+                  assert_eq!(
+                      session.layout().fragments.snapshot(),
+                      expected.layout.fragments.snapshot()
+                  );
+                  assert!(!session.damage().rects.is_empty());
+              }
+
+              #[test]
+              fn style_element_character_data_still_requires_full_rebuild() {
+                  let mut session = session(
+                      "<style>#target { background:#112233; }</style><div id=\"target\" style=\"height:20px\"></div>",
+                      deterministic_options(),
+                  );
+                  let style = session
+                      .document()
+                      .children(session.document().root())
+                      .unwrap_or(&[])
+                      .iter()
+                      .copied()
+                      .find(|node| {
+                          session.document().node(*node).is_some_and(|node| {
+                              matches!(&node.kind, NodeKind::Element(element) if element.tag_name.as_str() == "html")
+                          })
+                      });
+                  let mut stack = style.into_iter().collect::<Vec<_>>();
+                  let mut style_text = None;
+                  while let Some(node) = stack.pop() {
+                      if session.document().node(node).is_some_and(|node| matches!(node.kind, NodeKind::Text(_)))
+                          && node_is_within_style_element(session.document(), node)
+                      {
+                          style_text = Some(node);
+                          break;
+                      }
+                      stack.extend_from_slice(session.document().children(node).unwrap_or(&[]));
+                  }
+                  let style_text = style_text.expect("fixture contains style text");
+
+                  session
+                      .document_mut()
+                      .set_text(style_text, "#target { background:#445566; }")
+                      .unwrap();
+                  let report = session.update().expect("stylesheet text update succeeds");
+
+                  assert_eq!(report.mode, IncrementalMode::FullRebuild);
+              }
+
+              #[test]
+              fn structural_change_still_falls_back_to_full_rebuild() {
+          '''
+          if "fn character_data_change_reflows_existing_text_without_full_rebuild()" not in text:
+              if test_marker not in text:
+                  raise SystemExit("test insertion marker not found")
+              text = text.replace(test_marker, test, 1)
+
+          engine.write_text(text)
+      - name: Format
+        run: cargo fmt --all
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Strict Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test layout and engine
+        run: cargo test -p rarog-layout -p rarog-engine
+      - name: Commit verified slice
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Patch already present"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/rarog-layout/src/lib.rs crates/rarog-engine/src/lib.rs
+          git commit -m "R1: add incremental character-data reflow"
+          git push origin HEAD:r1/incremental-text-reflow
