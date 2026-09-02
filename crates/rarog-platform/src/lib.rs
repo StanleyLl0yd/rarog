@@ -96,9 +96,9 @@ impl PlatformFontRequest {
         if !self.size_px.is_finite() || self.size_px <= 0.0 {
             return Err(PlatformFontError::InvalidSize(self.size_px));
         }
-        if self.families.iter().any(|family| {
-            matches!(family, PlatformFontFamily::Named(name) if name.trim().is_empty())
-        }) {
+        if self.families.iter().any(
+            |family| matches!(family, PlatformFontFamily::Named(name) if name.trim().is_empty()),
+        ) {
             return Err(PlatformFontError::EmptyNamedFamily);
         }
         Ok(())
@@ -254,9 +254,6 @@ mod tests {
 
         let mut request = PlatformFontRequest::default();
         request.size_px = 0.0;
-        assert_eq!(
-            request.validate(),
-            Err(PlatformFontError::InvalidSize(0.0))
-        );
+        assert_eq!(request.validate(), Err(PlatformFontError::InvalidSize(0.0)));
     }
 }
