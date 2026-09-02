@@ -89,7 +89,6 @@ fn resolve_system_font(
     use font_kit::error::SelectionError;
     use font_kit::family_name::FamilyName;
     use font_kit::handle::Handle;
-    use font_kit::loader::Loader;
     use font_kit::properties::{Properties, Stretch, Style, Weight};
     use font_kit::source::SystemSource;
     use rarog_platform::{
