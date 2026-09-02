@@ -27,7 +27,7 @@ Tracking issue: #39.
   - [x] Add block auto/min/max sizing and explicit BFC boundary rules.
 - [ ] Add inline formatting context foundations.
   - [x] Add explicit atomic inline boxes with horizontal line packing and block interruption.
-  - [ ] Share one line builder across text and inline boxes while preserving Unicode shaping and line-break source ranges.
+  - [x] Share one line builder across text and inline boxes while preserving Unicode shaping and line-break source ranges.
   - [ ] Add baseline/vertical-align behavior and inline fragmentation.
 - [ ] Add image resource abstraction.
 
