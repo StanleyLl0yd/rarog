@@ -1,4 +1,4 @@
-use rarog_css::{ComputedStyle, StyleSet, computed_style};
+use rarog_css::{ComputedStyle, StyleSet, computed_style_with_parent};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
 use unicode_bidi::BidiInfo;
@@ -1154,7 +1154,7 @@ pub fn layout_document(doc: &Document, viewport: Size) -> LayoutOutput {
 pub fn build_layout_tree(doc: &Document, styles: &StyleSet) -> LayoutTree {
     let mut tree_builder = LayoutTreeBuilder::new(styles);
     let root = tree_builder
-        .build_node(doc, doc.root())
+        .build_node(doc, doc.root(), None)
         .expect("document root always creates a layout root");
     LayoutTree { root }
 }
@@ -1357,16 +1357,21 @@ impl<'a> LayoutTreeBuilder<'a> {
         Self { next_id: 0, styles }
     }
 
-    fn build_node(&mut self, doc: &Document, node: NodeId) -> Option<LayoutNode> {
+    fn build_node(
+        &mut self,
+        doc: &Document,
+        node: NodeId,
+        parent_style: Option<ComputedStyle>,
+    ) -> Option<LayoutNode> {
         let dom_node = doc.node(node)?;
         let (kind, style) = match &dom_node.kind {
             NodeKind::Document => (LayoutNodeKind::Root, ComputedStyle::default()),
             NodeKind::Text(text) => (
                 LayoutNodeKind::Text(TextRun::new(text.clone())),
-                ComputedStyle::default(),
+                computed_style_with_parent(doc, node, self.styles, parent_style),
             ),
             NodeKind::Element(_) => {
-                let style = computed_style(doc, node, self.styles);
+                let style = computed_style_with_parent(doc, node, self.styles, parent_style);
                 if style.display_none {
                     return None;
                 }
@@ -1377,7 +1382,7 @@ impl<'a> LayoutTreeBuilder<'a> {
         let id = self.allocate_id();
         let mut children = Vec::new();
         for child in doc.children(node).unwrap_or(&[]) {
-            if let Some(layout_child) = self.build_node(doc, *child) {
+            if let Some(layout_child) = self.build_node(doc, *child, Some(style)) {
                 children.push(layout_child);
             }
         }

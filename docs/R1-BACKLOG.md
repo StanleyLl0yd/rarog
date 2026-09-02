@@ -16,7 +16,7 @@ Tracking issue: #39.
 ## B — Standards CSS and cascade
 
 - [x] Add a standards-oriented CSS tokenizer/parser adapter.
-- [ ] Add combinators, attribute selectors and pseudo-classes in measured slices.
+- [x] Add combinators, attribute selectors and pseudo-classes in measured slices.
 - [ ] Add `!important`, inheritance and CSS-wide values.
 
 ## C — Formatting contexts and resources

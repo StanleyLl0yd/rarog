@@ -514,7 +514,11 @@ impl RenderSession {
         let mut flow_relayout_nodes = BTreeSet::new();
 
         if !requires_full_rebuild {
-            for node in style_candidates {
+            let mut processed_style_nodes = BTreeSet::new();
+            while let Some(node) = style_candidates.pop_first() {
+                if !processed_style_nodes.insert(node) {
+                    continue;
+                }
                 let Some(old_style) = layout_style_for_dom(&self.layout.tree.root, node) else {
                     requires_full_rebuild = true;
                     break;
@@ -525,6 +529,13 @@ impl RenderSession {
                     break;
                 }
                 if old_style != new_style {
+                    if old_style.color != new_style.color {
+                        collect_layout_descendant_dom_nodes(
+                            &self.layout.tree.root,
+                            node,
+                            &mut style_candidates,
+                        );
+                    }
                     let layout_changed = layout_style_changed(old_style, new_style);
                     geometry_changed |= layout_changed;
                     if layout_changed && vertical_footprint_changed(old_style, new_style) {
@@ -889,6 +900,31 @@ fn layout_style_for_dom(node: &LayoutNode, dom_node: NodeId) -> Option<ComputedS
     node.children
         .iter()
         .find_map(|child| layout_style_for_dom(child, dom_node))
+}
+
+fn collect_layout_descendant_dom_nodes(
+    node: &LayoutNode,
+    dom_node: NodeId,
+    output: &mut BTreeSet<NodeId>,
+) -> bool {
+    if node.dom_node == Some(dom_node) {
+        for child in &node.children {
+            collect_layout_dom_nodes(child, output);
+        }
+        return true;
+    }
+    node.children
+        .iter()
+        .any(|child| collect_layout_descendant_dom_nodes(child, dom_node, output))
+}
+
+fn collect_layout_dom_nodes(node: &LayoutNode, output: &mut BTreeSet<NodeId>) {
+    if let Some(dom_node) = node.dom_node {
+        output.insert(dom_node);
+    }
+    for child in &node.children {
+        collect_layout_dom_nodes(child, output);
+    }
 }
 
 fn patch_layout_style(node: &mut LayoutNode, dom_node: NodeId, style: ComputedStyle) {
