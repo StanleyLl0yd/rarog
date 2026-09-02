@@ -54,7 +54,7 @@ fn text_and_atomic_inline_box_share_one_line() {
     assert_eq!(text[0].boxes.content_box.origin.x, 0.0);
     assert_eq!(text[0].boxes.content_box.origin.y, 0.0);
     assert_eq!(inline.boxes.border_box.origin.x, 24.0);
-    assert_eq!(inline.boxes.border_box.origin.y, 0.0);
+    assert_eq!(inline.boxes.border_box.origin.y, 4.0);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn mandatory_text_break_flushes_before_following_inline_box() {
     assert_eq!(fragments[1].text_range, Some(TextRange::new(2, 3)));
     assert_eq!(fragments[1].boxes.content_box.origin.y, 18.0);
     assert_eq!(inline.boxes.border_box.origin.x, 8.0);
-    assert_eq!(inline.boxes.border_box.origin.y, 18.0);
+    assert_eq!(inline.boxes.border_box.origin.y, 22.0);
 }
 
 #[test]

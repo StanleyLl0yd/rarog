@@ -56,6 +56,13 @@ impl EdgeSizes {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerticalAlign {
+    Baseline,
+    Top,
+    Bottom,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedStyle {
     pub width: Option<f32>,
@@ -73,6 +80,7 @@ pub struct ComputedStyle {
     pub display_none: bool,
     pub display_inline: bool,
     pub establishes_bfc: bool,
+    pub vertical_align: VerticalAlign,
 }
 
 impl Default for ComputedStyle {
@@ -93,6 +101,7 @@ impl Default for ComputedStyle {
             display_none: false,
             display_inline: false,
             establishes_bfc: false,
+            vertical_align: VerticalAlign::Baseline,
         }
     }
 }
@@ -268,6 +277,7 @@ pub enum PropertyId {
     BackgroundColor,
     BorderColor,
     Display,
+    VerticalAlign,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -294,6 +304,7 @@ pub enum PropertyValue {
     NoneKeyword,
     Color(Color),
     Display(DisplayValue),
+    VerticalAlign(VerticalAlign),
     CssWide(CssWideKeyword),
 }
 
@@ -691,6 +702,7 @@ fn copy_property_from_parent(
             style.display_inline = parent.display_inline;
             style.establishes_bfc = parent.establishes_bfc;
         }
+        PropertyId::VerticalAlign => style.vertical_align = parent.vertical_align,
     }
 }
 
@@ -723,6 +735,7 @@ fn reset_property_to_initial(style: &mut ComputedStyle, property: PropertyId) {
             style.display_inline = initial.display_inline;
             style.establishes_bfc = initial.establishes_bfc;
         }
+        PropertyId::VerticalAlign => style.vertical_align = initial.vertical_align,
     }
 }
 
@@ -783,6 +796,9 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
             style.display_none = display == DisplayValue::None;
             style.display_inline = display == DisplayValue::Inline;
             style.establishes_bfc = display == DisplayValue::FlowRoot;
+        }
+        (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
+            style.vertical_align = value
         }
         (_, PropertyValue::CssWide(_)) | (_, _) => {}
     }
@@ -968,6 +984,21 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 });
             }
         }
+        "vertical-align" => {
+            let value = match value.trim().to_ascii_lowercase().as_str() {
+                "baseline" => Some(VerticalAlign::Baseline),
+                "top" => Some(VerticalAlign::Top),
+                "bottom" => Some(VerticalAlign::Bottom),
+                _ => None,
+            };
+            if let Some(value) = value {
+                output.push(Declaration {
+                    property: PropertyId::VerticalAlign,
+                    value: PropertyValue::VerticalAlign(value),
+                    important,
+                });
+            }
+        }
         _ => {}
     }
 }
@@ -1030,6 +1061,7 @@ fn push_css_wide(
         "background" | "background-color" => &[PropertyId::BackgroundColor],
         "border-color" => &[PropertyId::BorderColor],
         "display" => &[PropertyId::Display],
+        "vertical-align" => &[PropertyId::VerticalAlign],
         _ => return,
     };
     for property in properties {

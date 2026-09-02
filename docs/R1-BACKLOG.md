@@ -29,6 +29,8 @@ Tracking issue: #39.
   - [x] Add explicit atomic inline boxes with horizontal line packing and block interruption.
   - [x] Share one line builder across text and inline boxes while preserving Unicode shaping and line-break source ranges.
   - [ ] Add baseline/vertical-align behavior and inline fragmentation.
+    - [x] Align text and atomic inline boxes with `baseline`, `top` and `bottom`.
+    - [ ] Fragment non-atomic inline boxes across line boundaries.
 - [ ] Add image resource abstraction.
 
 ## D — Production text path
