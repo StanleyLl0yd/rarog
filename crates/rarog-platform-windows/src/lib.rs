@@ -31,7 +31,10 @@ impl WindowsFontService {
 }
 
 impl PlatformFontService for WindowsFontService {
-    fn resolve(&self, request: &PlatformFontRequest) -> Result<ResolvedPlatformFont, PlatformFontError> {
+    fn resolve(
+        &self,
+        request: &PlatformFontRequest,
+    ) -> Result<ResolvedPlatformFont, PlatformFontError> {
         request.validate()?;
         resolve_system_font(request)
     }
@@ -187,7 +190,9 @@ fn resolve_system_font(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rarog_platform::{PlatformFontFamily, PlatformService};
+    use rarog_platform::PlatformService;
+    #[cfg(target_os = "windows")]
+    use rarog_platform::PlatformFontFamily;
 
     #[test]
     fn construction_matches_compilation_target() {
@@ -209,10 +214,10 @@ mod tests {
             families: Vec::new(),
             ..PlatformFontRequest::default()
         };
-        assert_eq!(
+        assert!(matches!(
             service.resolve(&request),
             Err(PlatformFontError::EmptyFamilyList)
-        );
+        ));
     }
 
     #[cfg(target_os = "windows")]
@@ -220,7 +225,10 @@ mod tests {
     fn resolves_a_directwrite_system_font_with_bytes_and_scaled_metrics() {
         let service = WindowsFontService::new();
         let request = PlatformFontRequest {
-            families: vec![PlatformFontFamily::Named("Segoe UI".into()), PlatformFontFamily::SansSerif],
+            families: vec![
+                PlatformFontFamily::Named("Segoe UI".into()),
+                PlatformFontFamily::SansSerif,
+            ],
             size_px: 20.0,
             ..PlatformFontRequest::default()
         };
