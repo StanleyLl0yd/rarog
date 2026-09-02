@@ -45,6 +45,7 @@ Tracking issue: #39.
 
 - [ ] Extend invalidation into standards-aware style/layout dependencies.
   - [x] Reflow ordinary `CharacterData` mutations through retained text layout nodes and flow-aware fragment rebuilding.
+  - [x] Combine ordinary text reflow with paint-only style mutations while preserving geometry-changing mixed updates as full-rebuild fallbacks.
 - [ ] Extend retained/damage-aware paint across richer formatting and stacking behavior.
 
 ## Scope boundary
