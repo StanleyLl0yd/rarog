@@ -1284,6 +1284,26 @@ fn preceding_flow_state(
         let node = &tree.root.children[index];
         let fragment = &fragments.root.children[index];
         match node.kind {
+            LayoutNodeKind::Box if node.style.display_inline => {
+                let mut max_bottom =
+                    fragment.boxes.margin_box.origin.y + fragment.boxes.margin_box.size.height;
+                while index > 0 {
+                    let previous_index = index - 1;
+                    let previous_node = &tree.root.children[previous_index];
+                    if !matches!(previous_node.kind, LayoutNodeKind::Box)
+                        || !previous_node.style.display_inline
+                    {
+                        break;
+                    }
+                    let previous_fragment = &fragments.root.children[previous_index];
+                    max_bottom = max_bottom.max(
+                        previous_fragment.boxes.margin_box.origin.y
+                            + previous_fragment.boxes.margin_box.size.height,
+                    );
+                    index = previous_index;
+                }
+                return (max_bottom, MarginStrut::default());
+            }
             LayoutNodeKind::Box => {
                 let profile = builder.margin_profile(node);
                 if profile.through {
@@ -1315,7 +1335,7 @@ fn collect_margin_profiles(
     for child in &node.children {
         collect_margin_profiles(child, profiles);
     }
-    if matches!(node.kind, LayoutNodeKind::Box) {
+    if matches!(node.kind, LayoutNodeKind::Box) && !node.style.display_inline {
         let profile = block_margin_profile(node, profiles);
         profiles.insert(node.id, profile);
     }
@@ -1737,9 +1757,55 @@ impl FragmentBuilder {
         mut suppress_leading_margin: bool,
     ) -> (Vec<Fragment>, MarginStrut) {
         let mut fragments = Vec::new();
+        let line_start_x = containing_block.origin.x;
+        let line_right = line_start_x + containing_block.available.width.max(0.0);
+        let mut inline_x = line_start_x;
+        let mut inline_line_height: f32 = 0.0;
+        let mut inline_active = false;
+
         for node in nodes {
             match node.kind {
+                LayoutNodeKind::Box if node.style.display_inline => {
+                    suppress_leading_margin = false;
+                    if !inline_active {
+                        *cursor_y += pending_margin.resolved();
+                        pending_margin = MarginStrut::default();
+                        inline_x = line_start_x;
+                        inline_line_height = 0.0;
+                    }
+
+                    let outer_width = self.inline_outer_width(node);
+                    if inline_active
+                        && inline_x > line_start_x
+                        && inline_x + outer_width > line_right
+                    {
+                        *cursor_y += inline_line_height;
+                        inline_x = line_start_x;
+                        inline_line_height = 0.0;
+                    }
+
+                    let fragment = self.layout_inline_box(
+                        node,
+                        containing_block,
+                        Point {
+                            x: inline_x,
+                            y: *cursor_y,
+                        },
+                    );
+                    inline_x += fragment.boxes.margin_box.size.width;
+                    inline_line_height =
+                        inline_line_height.max(fragment.boxes.margin_box.size.height);
+                    inline_active = true;
+                    fragments.push(fragment);
+                }
                 LayoutNodeKind::Box => {
+                    if inline_active {
+                        *cursor_y += inline_line_height;
+                        inline_x = line_start_x;
+                        inline_line_height = 0.0;
+                        inline_active = false;
+                    }
+
                     let profile = self.margin_profile(node);
                     if profile.through {
                         if !suppress_leading_margin {
@@ -1759,6 +1825,12 @@ impl FragmentBuilder {
                     pending_margin = profile.after;
                 }
                 LayoutNodeKind::Text(_) => {
+                    if inline_active {
+                        *cursor_y += inline_line_height;
+                        inline_x = line_start_x;
+                        inline_line_height = 0.0;
+                        inline_active = false;
+                    }
                     suppress_leading_margin = false;
                     *cursor_y += pending_margin.resolved();
                     pending_margin = MarginStrut::default();
@@ -1768,6 +1840,10 @@ impl FragmentBuilder {
                     unreachable!("only the layout root may have Root kind")
                 }
             }
+        }
+
+        if inline_active {
+            *cursor_y += inline_line_height;
         }
         (fragments, pending_margin)
     }
@@ -1781,6 +1857,14 @@ impl FragmentBuilder {
         match &node.kind {
             LayoutNodeKind::Root => unreachable!("only the layout root may have Root kind"),
             LayoutNodeKind::Text(run) => self.layout_text(node, run, containing_block, cursor_y),
+            LayoutNodeKind::Box if node.style.display_inline => vec![self.layout_inline_box(
+                node,
+                containing_block,
+                Point {
+                    x: containing_block.origin.x,
+                    y: *cursor_y,
+                },
+            )],
             LayoutNodeKind::Box => vec![self.layout_box(node, containing_block, cursor_y)],
         }
     }
@@ -1819,6 +1903,105 @@ impl FragmentBuilder {
             });
         }
         fragments
+    }
+
+    fn inline_content_width(&self, node: &LayoutNode) -> f32 {
+        let style = node.style;
+        let non_content = style.padding.horizontal() + style.border_width.horizontal();
+        let intrinsic_content = (node.intrinsic.max_content - non_content).max(0.0);
+        clamp_used_dimension(
+            style.width.unwrap_or(intrinsic_content),
+            style.min_width,
+            style.max_width,
+        )
+    }
+
+    fn inline_outer_width(&self, node: &LayoutNode) -> f32 {
+        let style = node.style;
+        self.inline_content_width(node)
+            + style.padding.horizontal()
+            + style.border_width.horizontal()
+            + style.margin.horizontal()
+    }
+
+    fn layout_inline_box(
+        &mut self,
+        node: &LayoutNode,
+        containing_block: ContainingBlock,
+        origin: Point,
+    ) -> Fragment {
+        let style = node.style;
+        let content_width = self.inline_content_width(node);
+        let border_x = origin.x + style.margin.left;
+        let border_y = origin.y + style.margin.top;
+        let padding_x = border_x + style.border_width.left;
+        let padding_y = border_y + style.border_width.top;
+        let content_x = padding_x + style.padding.left;
+        let content_y = padding_y + style.padding.top;
+
+        let child_containing_block = ContainingBlock {
+            origin: Point {
+                x: content_x,
+                y: content_y,
+            },
+            available: Size {
+                width: content_width,
+                height: containing_block.available.height,
+            },
+        };
+        let mut child_y = child_containing_block.origin.y;
+        let (children, trailing_margin) = self.layout_siblings(
+            &node.children,
+            child_containing_block,
+            &mut child_y,
+            MarginStrut::default(),
+            false,
+        );
+        child_y += trailing_margin.resolved();
+
+        let natural_content_height = (child_y - content_y).max(0.0);
+        let content_height = clamp_used_dimension(
+            style.height.unwrap_or(natural_content_height),
+            style.min_height,
+            style.max_height,
+        );
+        let content_box = Rect::new(content_x, content_y, content_width, content_height);
+        let padding_box = Rect::new(
+            padding_x,
+            padding_y,
+            content_width + style.padding.horizontal(),
+            content_height + style.padding.vertical(),
+        );
+        let border_box = Rect::new(
+            border_x,
+            border_y,
+            padding_box.size.width + style.border_width.horizontal(),
+            padding_box.size.height + style.border_width.vertical(),
+        );
+        let margin_box = Rect::new(
+            origin.x,
+            origin.y,
+            border_box.size.width + style.margin.horizontal(),
+            border_box.size.height + style.margin.vertical(),
+        );
+
+        Fragment {
+            id: self.allocate_id(),
+            ordinal: FragmentOrdinal(0),
+            layout_node: node.id,
+            dom_node: node.dom_node,
+            kind: FragmentKind::Box,
+            boxes: BoxModel {
+                margin_box,
+                border_box,
+                padding_box,
+                content_box,
+            },
+            style,
+            text_range: None,
+            line_box: None,
+            children,
+        }
     }
 
     fn layout_box(

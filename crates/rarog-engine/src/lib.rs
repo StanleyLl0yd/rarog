@@ -525,6 +525,7 @@ impl RenderSession {
                 };
                 let new_style = computed_style(&self.document, node, &new_styles);
                 if old_style.display_none != new_style.display_none
+                    || old_style.display_inline != new_style.display_inline
                     || old_style.establishes_bfc != new_style.establishes_bfc
                 {
                     requires_full_rebuild = true;
@@ -539,6 +540,10 @@ impl RenderSession {
                         );
                     }
                     let layout_changed = layout_style_changed(old_style, new_style);
+                    if layout_changed && (old_style.display_inline || new_style.display_inline) {
+                        requires_full_rebuild = true;
+                        break;
+                    }
                     geometry_changed |= layout_changed;
                     if layout_changed && vertical_footprint_changed(old_style, new_style) {
                         subtree_relayout_safe = false;
@@ -958,6 +963,7 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
         || before.border_width != after.border_width
         || before.padding != after.padding
         || before.display_none != after.display_none
+        || before.display_inline != after.display_inline
         || before.establishes_bfc != after.establishes_bfc
 }
 

@@ -71,6 +71,7 @@ pub struct ComputedStyle {
     pub background: Color,
     pub border_color: Color,
     pub display_none: bool,
+    pub display_inline: bool,
     pub establishes_bfc: bool,
 }
 
@@ -90,6 +91,7 @@ impl Default for ComputedStyle {
             background: Color::TRANSPARENT,
             border_color: Color::TRANSPARENT,
             display_none: false,
+            display_inline: false,
             establishes_bfc: false,
         }
     }
@@ -271,6 +273,7 @@ pub enum PropertyId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayValue {
     Block,
+    Inline,
     FlowRoot,
     None,
 }
@@ -685,6 +688,7 @@ fn copy_property_from_parent(
         PropertyId::BorderColor => style.border_color = parent.border_color,
         PropertyId::Display => {
             style.display_none = parent.display_none;
+            style.display_inline = parent.display_inline;
             style.establishes_bfc = parent.establishes_bfc;
         }
     }
@@ -716,6 +720,7 @@ fn reset_property_to_initial(style: &mut ComputedStyle, property: PropertyId) {
         PropertyId::BorderColor => style.border_color = initial.border_color,
         PropertyId::Display => {
             style.display_none = initial.display_none;
+            style.display_inline = initial.display_inline;
             style.establishes_bfc = initial.establishes_bfc;
         }
     }
@@ -776,6 +781,7 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         (PropertyId::BorderColor, PropertyValue::Color(color)) => style.border_color = color,
         (PropertyId::Display, PropertyValue::Display(display)) => {
             style.display_none = display == DisplayValue::None;
+            style.display_inline = display == DisplayValue::Inline;
             style.establishes_bfc = display == DisplayValue::FlowRoot;
         }
         (_, PropertyValue::CssWide(_)) | (_, _) => {}
@@ -950,6 +956,7 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
             let display = match value.to_ascii_lowercase().as_str() {
                 "none" => Some(DisplayValue::None),
                 "block" => Some(DisplayValue::Block),
+                "inline" => Some(DisplayValue::Inline),
                 "flow-root" => Some(DisplayValue::FlowRoot),
                 _ => None,
             };
