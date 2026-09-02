@@ -190,8 +190,27 @@ fn resolve_system_font(
 mod tests {
     use super::*;
     #[cfg(target_os = "windows")]
+    use rarog_layout::{
+        BidiLevel, FontCoverage, FontFace, FontFaceId, FontFamily,
+        FontMetrics as LayoutFontMetrics, ShapingRequest, ShapingRun, TextRange,
+    };
+    #[cfg(target_os = "windows")]
     use rarog_platform::PlatformFontFamily;
     use rarog_platform::PlatformService;
+    #[cfg(target_os = "windows")]
+    use rarog_text_opentype::OpenTypeShapingBackend;
+
+    #[cfg(target_os = "windows")]
+    fn windows_sans_request(size_px: f32) -> PlatformFontRequest {
+        PlatformFontRequest {
+            families: vec![
+                PlatformFontFamily::Named("Segoe UI".into()),
+                PlatformFontFamily::SansSerif,
+            ],
+            size_px,
+            ..PlatformFontRequest::default()
+        }
+    }
 
     #[test]
     fn construction_matches_compilation_target() {
@@ -223,16 +242,8 @@ mod tests {
     #[test]
     fn resolves_a_directwrite_system_font_with_bytes_and_scaled_metrics() {
         let service = WindowsFontService::new();
-        let request = PlatformFontRequest {
-            families: vec![
-                PlatformFontFamily::Named("Segoe UI".into()),
-                PlatformFontFamily::SansSerif,
-            ],
-            size_px: 20.0,
-            ..PlatformFontRequest::default()
-        };
         let resolved = service
-            .resolve(&request)
+            .resolve(&windows_sans_request(20.0))
             .expect("Windows CI should expose a default system sans-serif font");
 
         assert!(!resolved.family_name.trim().is_empty());
@@ -243,5 +254,59 @@ mod tests {
         assert!(resolved.metrics.line_height() > 0.0);
         assert!((1.0..=1000.0).contains(&resolved.properties.weight));
         assert!((0.5..=2.0).contains(&resolved.properties.stretch));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolved_directwrite_face_shapes_through_the_production_opentype_backend() {
+        let service = WindowsFontService::new();
+        let resolved = service
+            .resolve(&windows_sans_request(20.0))
+            .expect("Windows CI should expose a system font usable for shaping");
+        let face_id = FontFaceId::new(77);
+        let face = FontFace {
+            id: face_id,
+            family: FontFamily(resolved.family_name.clone()),
+            coverage: FontCoverage::LastResort,
+            metrics: LayoutFontMetrics {
+                ascent: resolved.metrics.ascent,
+                descent: resolved.metrics.descent,
+                line_gap: resolved.metrics.line_gap,
+            },
+            advance: 8.0,
+        };
+        let mut backend = OpenTypeShapingBackend::default();
+        backend
+            .register_face(
+                face_id,
+                resolved.data.clone(),
+                resolved.face_index,
+                resolved.size_px,
+            )
+            .expect("DirectWrite-selected OpenType face should register in HarfRust");
+
+        let text = "Rarog office";
+        let request = ShapingRequest::bootstrap(
+            text,
+            ShapingRun {
+                range: TextRange::new(0, text.chars().count()),
+                face: face_id,
+                level: BidiLevel::new(0),
+            },
+        );
+        let shaped = backend
+            .try_shape_run(text, &request, &face)
+            .expect("DirectWrite-selected font should shape through HarfRust");
+
+        assert!(!shaped.glyphs.is_empty());
+        assert!(shaped.advance > 0.0);
+        assert!(shaped.glyphs.iter().all(|glyph| {
+            glyph.source.start < glyph.source.end && glyph.source.end <= text.chars().count()
+        }));
+        assert_eq!(shaped.metrics, face.metrics);
+        assert!(shaped
+            .glyphs
+            .iter()
+            .any(|glyph| glyph.id.value() != text.chars().next().unwrap_or_default() as u32));
     }
 }
