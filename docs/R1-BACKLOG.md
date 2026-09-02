@@ -34,7 +34,7 @@ Tracking issue: #39.
     - [x] Slice first/middle/last horizontal box edges for direct-text inline fragments.
     - [x] Fragment arbitrary unsized inline-owner chains around one shaped text leaf.
     - [x] Generalize inline fragmentation across multiple nested/sibling inline leaves.
-- [ ] Add image resource abstraction.
+- [x] Add image resource abstraction.
 
 ## D — Production text path
 

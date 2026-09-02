@@ -1,4 +1,5 @@
 use rarog_layout::{Fragment, FragmentKind, FragmentTree};
+use rarog_resources::{DecodedImage, ImageResourceRef, ImageResourceStore};
 use rarog_types::{Color, Point, Rect, Size};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -107,6 +108,7 @@ enum StructuralScope {
 pub enum DisplayCommand {
     FillRect { rect: Rect, color: Color },
     TextPlaceholder { rect: Rect, color: Color },
+    DrawImage { rect: Rect, image: ImageResourceRef },
     PushClip { rect: Rect },
     PopClip,
     PushStackingContext { id: StackingContextId },
@@ -122,6 +124,7 @@ impl DisplayCommand {
         match self {
             Self::FillRect { rect, .. }
             | Self::TextPlaceholder { rect, .. }
+            | Self::DrawImage { rect, .. }
             | Self::PushClip { rect } => Some(rect),
             Self::PopClip
             | Self::PushStackingContext { .. }
@@ -270,6 +273,13 @@ impl DisplayList {
                     color.g,
                     color.b,
                     color.a
+                )),
+                DisplayCommand::DrawImage { rect, image } => output.push_str(&format!(
+                    "{}|image|{}|{}:{}\n",
+                    display_item_id_snapshot(*id),
+                    rect_snapshot(*rect),
+                    image.id().get(),
+                    image.revision()
                 )),
                 DisplayCommand::PushClip { rect } => output.push_str(&format!(
                     "{}|push-clip|{}\n",
@@ -434,7 +444,9 @@ fn apply_scope_command(command: DisplayCommand, scopes: &mut Vec<StructuralScope
         DisplayCommand::PopTransform => return scopes.pop() == Some(StructuralScope::Transform),
         DisplayCommand::PushOpacity { .. } => scopes.push(StructuralScope::Opacity),
         DisplayCommand::PopOpacity => return scopes.pop() == Some(StructuralScope::Opacity),
-        DisplayCommand::FillRect { .. } | DisplayCommand::TextPlaceholder { .. } => {}
+        DisplayCommand::FillRect { .. }
+        | DisplayCommand::TextPlaceholder { .. }
+        | DisplayCommand::DrawImage { .. } => {}
     }
     true
 }
@@ -697,7 +709,8 @@ fn effective_paint_bounds(list: &DisplayList) -> Vec<Rect> {
     for command in &list.commands {
         match *command {
             DisplayCommand::FillRect { rect, .. }
-            | DisplayCommand::TextPlaceholder { rect, .. } => {
+            | DisplayCommand::TextPlaceholder { rect, .. }
+            | DisplayCommand::DrawImage { rect, .. } => {
                 let rect = transform_rect(rect, &transforms);
                 let bounds = match *clips.last().expect("clip state") {
                     Some(clip) => intersection(rect, clip),
@@ -804,6 +817,14 @@ impl Framebuffer {
     }
 
     pub fn rasterize(&mut self, list: &DisplayList) {
+        self.rasterize_internal(list, None);
+    }
+
+    pub fn rasterize_with_images(&mut self, list: &DisplayList, images: &ImageResourceStore) {
+        self.rasterize_internal(list, Some(images));
+    }
+
+    fn rasterize_internal(&mut self, list: &DisplayList, images: Option<&ImageResourceStore>) {
         let framebuffer_clip = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
         let mut clips = vec![framebuffer_clip];
         let mut transforms = Vec::new();
@@ -816,6 +837,21 @@ impl Framebuffer {
                     if let Some(clipped) = intersection(rect, *clips.last().expect("clip stack")) {
                         let color = apply_opacity(color, *opacities.last().expect("opacity stack"));
                         self.fill_rect(clipped, color);
+                    }
+                }
+                DisplayCommand::DrawImage { rect, image } => {
+                    let destination = transform_rect(rect, &transforms);
+                    let decoded = images.and_then(|store| store.image(image));
+                    if let (Some(decoded), Some(clipped)) = (
+                        decoded,
+                        intersection(destination, *clips.last().expect("clip stack")),
+                    ) {
+                        self.draw_image(
+                            destination,
+                            clipped,
+                            decoded,
+                            *opacities.last().expect("opacity stack"),
+                        );
                     }
                 }
                 DisplayCommand::PushClip { rect } => {
@@ -850,6 +886,26 @@ impl Framebuffer {
         damage: &DamageRegion,
         background: Color,
     ) {
+        self.rasterize_damage_internal(list, damage, background, None);
+    }
+
+    pub fn rasterize_damage_with_images(
+        &mut self,
+        list: &DisplayList,
+        damage: &DamageRegion,
+        background: Color,
+        images: &ImageResourceStore,
+    ) {
+        self.rasterize_damage_internal(list, damage, background, Some(images));
+    }
+
+    fn rasterize_damage_internal(
+        &mut self,
+        list: &DisplayList,
+        damage: &DamageRegion,
+        background: Color,
+        images: Option<&ImageResourceStore>,
+    ) {
         if list
             .commands
             .iter()
@@ -860,15 +916,27 @@ impl Framebuffer {
                 Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
                 background,
             );
-            self.rasterize(list);
+            self.rasterize_internal(list, images);
             return;
         }
         for damaged in &damage.rects {
             self.clear_rect(*damaged, background);
             for command in &list.commands {
-                let (rect, color) = match *command {
+                match *command {
                     DisplayCommand::FillRect { rect, color }
-                    | DisplayCommand::TextPlaceholder { rect, color } => (rect, color),
+                    | DisplayCommand::TextPlaceholder { rect, color } => {
+                        if let Some(clipped) = intersection(rect, *damaged) {
+                            self.fill_rect(clipped, color);
+                        }
+                    }
+                    DisplayCommand::DrawImage { rect, image } => {
+                        let Some(decoded) = images.and_then(|store| store.image(image)) else {
+                            continue;
+                        };
+                        if let Some(clipped) = intersection(rect, *damaged) {
+                            self.draw_image(rect, clipped, decoded, Opacity::ONE);
+                        }
+                    }
                     DisplayCommand::PushClip { .. }
                     | DisplayCommand::PopClip
                     | DisplayCommand::PushStackingContext { .. }
@@ -876,11 +944,48 @@ impl Framebuffer {
                     | DisplayCommand::PushTransform { .. }
                     | DisplayCommand::PopTransform
                     | DisplayCommand::PushOpacity { .. }
-                    | DisplayCommand::PopOpacity => continue,
-                };
-                if let Some(clipped) = intersection(rect, *damaged) {
-                    self.fill_rect(clipped, color);
+                    | DisplayCommand::PopOpacity => {}
                 }
+            }
+        }
+    }
+
+    fn draw_image(
+        &mut self,
+        destination: Rect,
+        clipped: Rect,
+        image: &DecodedImage,
+        opacity: Opacity,
+    ) {
+        if destination.size.width <= 0.0 || destination.size.height <= 0.0 {
+            return;
+        }
+        let x0 = clipped.origin.x.floor().max(0.0) as u32;
+        let y0 = clipped.origin.y.floor().max(0.0) as u32;
+        let x1 = (clipped.origin.x + clipped.size.width)
+            .ceil()
+            .clamp(0.0, self.width as f32) as u32;
+        let y1 = (clipped.origin.y + clipped.size.height)
+            .ceil()
+            .clamp(0.0, self.height as f32) as u32;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let normalized_x = ((x as f32 + 0.5 - destination.origin.x)
+                    / destination.size.width)
+                    .clamp(0.0, 1.0);
+                let normalized_y = ((y as f32 + 0.5 - destination.origin.y)
+                    / destination.size.height)
+                    .clamp(0.0, 1.0);
+                let source_x =
+                    ((normalized_x * image.width() as f32).floor() as u32).min(image.width() - 1);
+                let source_y =
+                    ((normalized_y * image.height() as f32).floor() as u32).min(image.height() - 1);
+                let Some(color) = image.pixel(source_x, source_y) else {
+                    continue;
+                };
+                let color = apply_opacity(color, opacity);
+                let index = (y * self.width + x) as usize;
+                self.pixels[index] = blend_over(self.pixels[index], color);
             }
         }
     }
@@ -1009,6 +1114,104 @@ mod tests {
             command_ids: vec![DisplayItemId::test(id)],
             commands: vec![DisplayCommand::FillRect { rect, color }],
         }
+    }
+
+    #[test]
+    fn decoded_image_command_rasterizes_nearest_neighbor_pixels() {
+        let red = Color {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        let green = Color {
+            r: 0,
+            g: 255,
+            b: 0,
+            a: 255,
+        };
+        let blue = Color {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255,
+        };
+        let mut images = ImageResourceStore::default();
+        let id = images.reserve().unwrap();
+        let image = DecodedImage::try_new(2, 2, vec![red, green, blue, Color::WHITE]).unwrap();
+        let image = images.resolve(id, image).unwrap();
+        let list = DisplayList::try_from_parts(
+            vec![DisplayItemId::test(1)],
+            vec![DisplayCommand::DrawImage {
+                rect: Rect::new(0.0, 0.0, 4.0, 4.0),
+                image,
+            }],
+        )
+        .unwrap();
+        let mut framebuffer = Framebuffer::new(
+            Size {
+                width: 4.0,
+                height: 4.0,
+            },
+            Color::TRANSPARENT,
+        );
+        framebuffer.rasterize_with_images(&list, &images);
+
+        assert_eq!(framebuffer.pixels[0], red);
+        assert_eq!(framebuffer.pixels[3], green);
+        assert_eq!(framebuffer.pixels[12], blue);
+        assert_eq!(framebuffer.pixels[15], Color::WHITE);
+        assert!(list.snapshot().contains("|image|0.0,0.0,4.0,4.0|1:1"));
+    }
+
+    #[test]
+    fn image_revision_change_participates_in_damage_and_matches_full_raster() {
+        let mut images = ImageResourceStore::default();
+        let id = images.reserve().unwrap();
+        let first = images
+            .resolve(id, DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap())
+            .unwrap();
+        let before = DisplayList::try_from_parts(
+            vec![DisplayItemId::test(1)],
+            vec![DisplayCommand::DrawImage {
+                rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: first,
+            }],
+        )
+        .unwrap();
+        let mut incremental = Framebuffer::new(
+            Size {
+                width: 2.0,
+                height: 2.0,
+            },
+            Color::TRANSPARENT,
+        );
+        incremental.rasterize_with_images(&before, &images);
+
+        let second = images
+            .replace_ready(id, DecodedImage::try_new(1, 1, vec![Color::WHITE]).unwrap())
+            .unwrap();
+        let after = DisplayList::try_from_parts(
+            vec![DisplayItemId::test(1)],
+            vec![DisplayCommand::DrawImage {
+                rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: second,
+            }],
+        )
+        .unwrap();
+        let damage = DamageRegion::between(Some(&before), &after);
+        assert_eq!(damage.rects, vec![Rect::new(0.0, 0.0, 2.0, 2.0)]);
+        incremental.rasterize_damage_with_images(&after, &damage, Color::TRANSPARENT, &images);
+
+        let mut full = Framebuffer::new(
+            Size {
+                width: 2.0,
+                height: 2.0,
+            },
+            Color::TRANSPARENT,
+        );
+        full.rasterize_with_images(&after, &images);
+        assert_eq!(incremental.stable_hash64(), full.stable_hash64());
     }
 
     #[test]
