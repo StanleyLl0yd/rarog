@@ -5,7 +5,8 @@ use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_s
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
     Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_for_dom, fragments_for_dom,
-    layout_document_with_styles, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
+    layout_document_with_styles, refresh_text_node, relayout_fragment_flow,
+    relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, build_display_list,
@@ -478,6 +479,7 @@ impl RenderSession {
             .iter()
             .filter_map(|(node, flags)| flags.style.then_some(*node))
             .collect::<BTreeSet<_>>();
+        let mut text_relayout_nodes = BTreeSet::new();
         let mut requires_full_rebuild = mutation_history_lost;
         let mut stylesheet_sources_changed = mutation_history_lost;
         for mutation in &mutations {
@@ -495,11 +497,18 @@ impl RenderSession {
                     stylesheet_sources_changed = true;
                 }
                 MutationKind::CharacterData { node } => {
-                    requires_full_rebuild = true;
-                    stylesheet_sources_changed |=
-                        node_is_within_style_element(&self.document, *node);
+                    if node_is_within_style_element(&self.document, *node) {
+                        requires_full_rebuild = true;
+                        stylesheet_sources_changed = true;
+                    } else {
+                        text_relayout_nodes.insert(*node);
+                    }
                 }
             }
+        }
+
+        if !text_relayout_nodes.is_empty() && !style_candidates.is_empty() {
+            requires_full_rebuild = true;
         }
 
         let new_styles = if stylesheet_sources_changed {
@@ -558,13 +567,25 @@ impl RenderSession {
             }
         }
 
+        if !requires_full_rebuild {
+            for node in &text_relayout_nodes {
+                if !refresh_text_node(&mut self.layout.tree, &self.document, *node) {
+                    requires_full_rebuild = true;
+                    break;
+                }
+                geometry_changed = true;
+                subtree_relayout_safe = false;
+                flow_relayout_nodes.insert(*node);
+            }
+        }
+
         let mode;
         let patched_nodes;
         if requires_full_rebuild {
             self.full_rebuild(new_styles);
             mode = IncrementalMode::FullRebuild;
             patched_nodes = 0;
-        } else if style_updates.is_empty() {
+        } else if style_updates.is_empty() && text_relayout_nodes.is_empty() {
             self.styles = new_styles;
             self.damage = DamageRegion::default();
             mode = IncrementalMode::Unchanged;
@@ -623,7 +644,7 @@ impl RenderSession {
             );
         } else if geometry_changed {
             let previous_display_list = self.display_list.clone();
-            patched_nodes = style_updates.len();
+            patched_nodes = style_updates.len() + text_relayout_nodes.len();
             for &(node, style) in &style_updates {
                 patch_layout_style(&mut self.layout.tree.root, node, style);
             }
@@ -1331,6 +1352,77 @@ mod tests {
             expected.framebuffer.stable_hash64()
         );
         assert!(!session.damage().rects.is_empty());
+    }
+
+    #[test]
+    fn character_data_change_reflows_existing_text_without_full_rebuild() {
+        let source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"target\" style=\"width:48px;background:#112233\">one</div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+        let expected_source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"target\" style=\"width:48px;background:#112233\">one two three four</div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+        let mut session = session(source, deterministic_options());
+        let before = element_with_id(session.document(), "before");
+        let target = element_with_id(session.document(), "target");
+        let text = *session
+            .document()
+            .children(target)
+            .and_then(|children| children.first())
+            .expect("target contains a text node");
+        let before_fragment_id = fragment_for_dom(&session.layout().fragments, before)
+            .expect("before fragment exists")
+            .id;
+        let layout_node_count = session.layout().tree.node_count();
+
+        session
+            .document_mut()
+            .set_text(text, "one two three four")
+            .unwrap();
+        let report = session.update().expect("incremental text update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert_eq!(report.patched_nodes, 1);
+        assert_eq!(session.layout().tree.node_count(), layout_node_count);
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, before)
+                .expect("unaffected prefix fragment remains")
+                .id,
+            before_fragment_id
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert!(!session.damage().rects.is_empty());
+    }
+
+    #[test]
+    fn style_element_character_data_still_requires_full_rebuild() {
+        let mut session = session(
+            "<style>#target { background:#112233; }</style><div id=\"target\" style=\"height:20px\"></div>",
+            deterministic_options(),
+        );
+        let mut stack = vec![session.document().root()];
+        let mut style_text = None;
+        while let Some(node) = stack.pop() {
+            if session
+                .document()
+                .node(node)
+                .is_some_and(|node| matches!(node.kind, NodeKind::Text(_)))
+                && node_is_within_style_element(session.document(), node)
+            {
+                style_text = Some(node);
+                break;
+            }
+            stack.extend_from_slice(session.document().children(node).unwrap_or(&[]));
+        }
+        let style_text = style_text.expect("fixture contains style text");
+
+        session
+            .document_mut()
+            .set_text(style_text, "#target { background:#445566; }")
+            .unwrap();
+        let report = session.update().expect("stylesheet text update succeeds");
+
+        assert_eq!(report.mode, IncrementalMode::FullRebuild);
     }
 
     #[test]
