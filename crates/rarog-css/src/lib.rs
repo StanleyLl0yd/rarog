@@ -265,6 +265,8 @@ pub enum CssWideKeyword {
     Initial,
     Inherit,
     Unset,
+    Revert,
+    RevertLayer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -449,7 +451,7 @@ fn cascade_layer_rank(important: bool, layer: CascadeLayer) -> u16 {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Winner {
+struct CascadeCandidate {
     priority: CascadePriority,
     value: PropertyValue,
 }
@@ -487,7 +489,7 @@ pub fn computed_style_with_parent(
         return inherited_style(parent_style);
     };
 
-    let mut winners = BTreeMap::<PropertyId, Winner>::new();
+    let mut candidates = BTreeMap::<PropertyId, Vec<CascadeCandidate>>::new();
 
     for (sheet_order, stylesheet) in styles.stylesheets.iter().enumerate() {
         for rule in &stylesheet.rules {
@@ -495,7 +497,7 @@ pub fn computed_style_with_parent(
                 continue;
             }
             apply_declarations(
-                &mut winners,
+                &mut candidates,
                 &rule.declarations,
                 CascadePriority {
                     important: false,
@@ -513,7 +515,7 @@ pub fn computed_style_with_parent(
     if let Some(inline) = element.attributes.get("style") {
         let declarations = parse_declarations(inline);
         apply_declarations(
-            &mut winners,
+            &mut candidates,
             &declarations,
             CascadePriority {
                 important: false,
@@ -531,7 +533,7 @@ pub fn computed_style_with_parent(
         );
     }
 
-    style_from_winners(&winners, parent_style)
+    style_from_candidates(&candidates, parent_style)
 }
 
 fn inherited_style(parent_style: Option<ComputedStyle>) -> ComputedStyle {
@@ -543,7 +545,7 @@ fn inherited_style(parent_style: Option<ComputedStyle>) -> ComputedStyle {
 }
 
 fn apply_declarations(
-    winners: &mut BTreeMap<PropertyId, Winner>,
+    candidates: &mut BTreeMap<PropertyId, Vec<CascadeCandidate>>,
     declarations: &[Declaration],
     base_priority: CascadePriority,
 ) {
@@ -553,29 +555,26 @@ fn apply_declarations(
             declaration_order: declaration_order as u32,
             ..base_priority
         };
-        let replace = winners
-            .get(&declaration.property)
-            .map(|winner| priority >= winner.priority)
-            .unwrap_or(true);
-        if replace {
-            winners.insert(
-                declaration.property,
-                Winner {
-                    priority,
-                    value: declaration.value,
-                },
-            );
-        }
+        candidates
+            .entry(declaration.property)
+            .or_default()
+            .push(CascadeCandidate {
+                priority,
+                value: declaration.value,
+            });
     }
 }
 
-fn style_from_winners(
-    winners: &BTreeMap<PropertyId, Winner>,
+fn style_from_candidates(
+    candidates: &BTreeMap<PropertyId, Vec<CascadeCandidate>>,
     parent_style: Option<ComputedStyle>,
 ) -> ComputedStyle {
     let mut style = inherited_style(parent_style);
-    for (property, winner) in winners {
-        match winner.value {
+    for (property, property_candidates) in candidates {
+        let Some(value) = resolve_cascade_value(property_candidates) else {
+            continue;
+        };
+        match value {
             PropertyValue::CssWide(keyword) => {
                 apply_css_wide(&mut style, *property, keyword, parent_style);
             }
@@ -583,6 +582,39 @@ fn style_from_winners(
         }
     }
     style
+}
+
+fn resolve_cascade_value(candidates: &[CascadeCandidate]) -> Option<PropertyValue> {
+    let mut ordered = candidates.to_vec();
+    ordered.sort_by_key(|candidate| std::cmp::Reverse(candidate.priority));
+
+    let mut reverted_author_origin = false;
+    let mut reverted_layers = BTreeSet::new();
+
+    for candidate in ordered {
+        let origin = candidate.priority.origin;
+        let author_origin = matches!(origin, StyleOrigin::Author | StyleOrigin::Inline);
+        if (author_origin && reverted_author_origin)
+            || reverted_layers.contains(&(origin, candidate.priority.layer))
+        {
+            continue;
+        }
+
+        match candidate.value {
+            PropertyValue::CssWide(CssWideKeyword::Revert) => {
+                if author_origin {
+                    reverted_author_origin = true;
+                } else {
+                    return Some(PropertyValue::CssWide(CssWideKeyword::Unset));
+                }
+            }
+            PropertyValue::CssWide(CssWideKeyword::RevertLayer) => {
+                reverted_layers.insert((origin, candidate.priority.layer));
+            }
+            value => return Some(value),
+        }
+    }
+    None
 }
 
 fn apply_css_wide(
@@ -598,6 +630,7 @@ fn apply_css_wide(
             copy_property_from_parent(style, property, parent_style)
         }
         CssWideKeyword::Unset => reset_property_to_initial(style, property),
+        CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {}
     }
 }
 
@@ -874,6 +907,8 @@ fn parse_css_wide(value: &str) -> Option<CssWideKeyword> {
         "initial" => Some(CssWideKeyword::Initial),
         "inherit" => Some(CssWideKeyword::Inherit),
         "unset" => Some(CssWideKeyword::Unset),
+        "revert" => Some(CssWideKeyword::Revert),
+        "revert-layer" => Some(CssWideKeyword::RevertLayer),
         _ => None,
     }
 }

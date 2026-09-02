@@ -17,7 +17,7 @@ Tracking issue: #39.
 
 - [x] Add a standards-oriented CSS tokenizer/parser adapter.
 - [x] Add combinators, attribute selectors and pseudo-classes in measured slices.
-- [ ] Add `!important`, inheritance and CSS-wide values.
+- [x] Add `!important`, inheritance and CSS-wide values.
 
 ## C — Formatting contexts and resources
 
