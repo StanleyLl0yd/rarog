@@ -8,8 +8,8 @@ Tracking issue: #39.
 
 - [x] Land the `html5ever` adapter behind Rarog-owned parser types.
 - [x] Add focused adapter tests for implied structure, character references, tree-builder insertion rules and foreign namespaces.
-- [ ] Add differential bootstrap-versus-standards fixtures to identify intentional semantic changes.
-- [ ] Switch the engine default parser to the standards adapter after resource/no-panic gates cover the new path.
+- [x] Add differential bootstrap-versus-standards fixtures to identify intentional semantic changes.
+- [ ] Switch the engine default parser to the standards adapter after resource/no-panic gates cover the new path and document scaffolding has correct layout semantics.
 - [ ] Retire the bootstrap parser after the migration gate is green.
 - [ ] Expand the focused R1 WPT manifest with the first executable HTML parser subset.
 
