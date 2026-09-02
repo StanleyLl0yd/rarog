@@ -20,7 +20,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Apply integration
-        run: python3 tools/r1_opentype_shaper_patch.py
+        run: |
+          python3 tools/r1_opentype_shaper_patch.py
+          python3 tools/r1_opentype_shaper_test_fix.py
       - name: Format
         run: cargo fmt --all
       - name: Layout tests
@@ -40,7 +42,7 @@ jobs:
       - name: Commit integration
         shell: bash
         run: |
-          rm tools/r1_opentype_shaper_patch.py .github/workflows/r1-opentype-shaper-preflight.yml
+          rm tools/r1_opentype_shaper_patch.py tools/r1_opentype_shaper_test_fix.py .github/workflows/r1-opentype-shaper-preflight.yml
           rm -f fuzz/Cargo.lock
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
