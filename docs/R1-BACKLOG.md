@@ -32,7 +32,8 @@ Tracking issue: #39.
     - [x] Align text and atomic inline boxes with `baseline`, `top` and `bottom`.
     - [x] Fragment direct-text non-atomic inline containers across line boundaries with stable fragment ordinals.
     - [x] Slice first/middle/last horizontal box edges for direct-text inline fragments.
-    - [ ] Generalize inline fragmentation across nested inline descendants.
+    - [x] Fragment arbitrary unsized inline-owner chains around one shaped text leaf.
+    - [ ] Generalize inline fragmentation across multiple nested/sibling inline leaves.
 - [ ] Add image resource abstraction.
 
 ## D — Production text path

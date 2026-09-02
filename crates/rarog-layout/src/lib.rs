@@ -1300,30 +1300,52 @@ pub fn relayout_fragment_flow(
     true
 }
 
-fn fragmenting_inline_text_child(node: &LayoutNode) -> Option<(&LayoutNode, &TextRun)> {
+struct FragmentingInlineTextChain<'a> {
+    boxes: Vec<&'a LayoutNode>,
+    text_node: &'a LayoutNode,
+    run: &'a TextRun,
+}
+
+fn fragmenting_inline_box_is_supported(node: &LayoutNode, nested: bool) -> bool {
     let style = node.style;
-    if !style.display_inline
-        || style.width.is_some()
-        || style.height.is_some()
-        || style.min_width.is_some()
-        || style.max_width.is_some()
-        || style.min_height.is_some()
-        || style.max_height.is_some()
-        || style.margin.top != 0.0
-        || style.margin.bottom != 0.0
-        || style.border_width.top != 0.0
-        || style.border_width.bottom != 0.0
-        || style.padding.top != 0.0
-        || style.padding.bottom != 0.0
-        || node.children.len() != 1
-    {
-        return None;
+    style.display_inline
+        && style.width.is_none()
+        && style.height.is_none()
+        && style.min_width.is_none()
+        && style.max_width.is_none()
+        && style.min_height.is_none()
+        && style.max_height.is_none()
+        && style.margin.top == 0.0
+        && style.margin.bottom == 0.0
+        && style.border_width.top == 0.0
+        && style.border_width.bottom == 0.0
+        && style.padding.top == 0.0
+        && style.padding.bottom == 0.0
+        && (!nested || style.vertical_align == VerticalAlign::Baseline)
+        && node.children.len() == 1
+}
+
+fn fragmenting_inline_text_chain(node: &LayoutNode) -> Option<FragmentingInlineTextChain<'_>> {
+    let mut boxes = Vec::new();
+    let mut current = node;
+    loop {
+        if !fragmenting_inline_box_is_supported(current, !boxes.is_empty()) {
+            return None;
+        }
+        boxes.push(current);
+        let child = &current.children[0];
+        match &child.kind {
+            LayoutNodeKind::Text(run) => {
+                return Some(FragmentingInlineTextChain {
+                    boxes,
+                    text_node: child,
+                    run,
+                });
+            }
+            LayoutNodeKind::Box => current = child,
+            LayoutNodeKind::Root => return None,
+        }
     }
-    let child = &node.children[0];
-    let LayoutNodeKind::Text(run) = &child.kind else {
-        return None;
-    };
-    Some((child, run))
 }
 
 fn is_inline_flow_node(node: &LayoutNode) -> bool {
@@ -1923,18 +1945,16 @@ impl FragmentBuilder {
 
         for node in nodes {
             match &node.kind {
-                LayoutNodeKind::Box if fragmenting_inline_text_child(node).is_some() => {
+                LayoutNodeKind::Box if fragmenting_inline_text_chain(node).is_some() => {
                     suppress_leading_margin = false;
                     if !line.active {
                         *cursor_y += pending_margin.resolved();
                         pending_margin = MarginStrut::default();
                     }
-                    let (text_node, run) = fragmenting_inline_text_child(node)
-                        .expect("fragmenting inline guard validated the text child");
-                    self.layout_inline_text_container_flow(
-                        node,
-                        text_node,
-                        run,
+                    let chain = fragmenting_inline_text_chain(node)
+                        .expect("fragmenting inline guard validated the text chain");
+                    self.layout_inline_text_chain_flow(
+                        chain,
                         InlineTextContainerFlow {
                             containing_block,
                             cursor_y,
@@ -2041,11 +2061,9 @@ impl FragmentBuilder {
         }
     }
 
-    fn layout_inline_text_container_flow(
+    fn layout_inline_text_chain_flow(
         &mut self,
-        node: &LayoutNode,
-        text_node: &LayoutNode,
-        run: &TextRun,
+        chain: FragmentingInlineTextChain<'_>,
         flow: InlineTextContainerFlow<'_>,
     ) {
         let InlineTextContainerFlow {
@@ -2054,12 +2072,26 @@ impl FragmentBuilder {
             line,
             fragments,
         } = flow;
-        let style = node.style;
-        let first_outer_edge = style.margin.left + style.border_width.left + style.padding.left;
-        let last_outer_edge = style.padding.right + style.border_width.right + style.margin.right;
+        let first_outer_edge = chain
+            .boxes
+            .iter()
+            .map(|box_node| {
+                let style = box_node.style;
+                style.margin.left + style.border_width.left + style.padding.left
+            })
+            .sum::<f32>();
+        let last_outer_edge = chain
+            .boxes
+            .iter()
+            .map(|box_node| {
+                let style = box_node.style;
+                style.padding.right + style.border_width.right + style.margin.right
+            })
+            .sum::<f32>();
         let full_width = containing_block.available.width.max(0.0);
         if line.active
-            && run
+            && chain
+                .run
                 .shaped
                 .clusters
                 .first()
@@ -2074,98 +2106,134 @@ impl FragmentBuilder {
             (full_width - first_outer_edge).max(0.0)
         };
         let ranges = UnicodeLineBreaker.break_text_with_widths_and_terminal_reserve(
-            run,
+            chain.run,
             first_width,
             full_width,
             last_outer_edge,
         );
-        let characters = run.text.chars().collect::<Vec<_>>();
+        let characters = chain.run.text.chars().collect::<Vec<_>>();
         let range_count = ranges.len();
 
         for (ordinal, text_range) in ranges.into_iter().enumerate() {
             let is_first = ordinal == 0;
             let is_last = ordinal + 1 == range_count;
-            let mut fragment_style = style;
-            if !is_first {
-                fragment_style.margin.left = 0.0;
-                fragment_style.border_width.left = 0.0;
-                fragment_style.padding.left = 0.0;
-            }
-            if !is_last {
-                fragment_style.margin.right = 0.0;
-                fragment_style.border_width.right = 0.0;
-                fragment_style.padding.right = 0.0;
+            let mut styles = chain
+                .boxes
+                .iter()
+                .map(|box_node| box_node.style)
+                .collect::<Vec<_>>();
+            for style in &mut styles {
+                if !is_first {
+                    style.margin.left = 0.0;
+                    style.border_width.left = 0.0;
+                    style.padding.left = 0.0;
+                }
+                if !is_last {
+                    style.margin.right = 0.0;
+                    style.border_width.right = 0.0;
+                    style.padding.right = 0.0;
+                }
             }
 
-            let margin_x = line.x;
-            let border_x = margin_x + fragment_style.margin.left;
-            let padding_x = border_x + fragment_style.border_width.left;
-            let content_x = padding_x + fragment_style.padding.left;
-            let horizontal_edges = fragment_style.margin.horizontal()
-                + fragment_style.border_width.horizontal()
-                + fragment_style.padding.horizontal();
+            let horizontal_edges = styles
+                .iter()
+                .map(|style| {
+                    style.margin.horizontal()
+                        + style.border_width.horizontal()
+                        + style.padding.horizontal()
+                })
+                .sum::<f32>();
             let available_content = (line.remaining_width() - horizontal_edges).max(0.0);
-            let content_width = run.advance_for_range(text_range).min(available_content);
-            let content_box = Rect::new(content_x, *cursor_y, content_width, run.line_height);
-            let padding_box = Rect::new(
-                padding_x,
-                *cursor_y,
-                content_width + fragment_style.padding.horizontal(),
-                run.line_height,
-            );
-            let border_box = Rect::new(
-                border_x,
-                *cursor_y,
-                padding_box.size.width + fragment_style.border_width.horizontal(),
-                run.line_height,
-            );
-            let margin_box = Rect::new(
-                margin_x,
-                *cursor_y,
-                border_box.size.width + fragment_style.margin.horizontal(),
-                run.line_height,
-            );
+            let content_width = chain
+                .run
+                .advance_for_range(text_range)
+                .min(available_content);
+
+            let mut origins = Vec::with_capacity(styles.len());
+            let mut x = line.x;
+            for style in &styles {
+                let margin_x = x;
+                let border_x = margin_x + style.margin.left;
+                let padding_x = border_x + style.border_width.left;
+                let content_x = padding_x + style.padding.left;
+                origins.push((margin_x, border_x, padding_x, content_x));
+                x = content_x;
+            }
+            let text_rect = Rect::new(x, *cursor_y, content_width, chain.run.line_height);
             let line_box = LineBox {
                 ordinal: ordinal as u32,
-                rect: content_box,
+                rect: text_rect,
                 text_range,
             };
-            let text_fragment = Fragment {
+            let mut nested = Fragment {
                 id: self.allocate_id(),
                 ordinal: FragmentOrdinal(ordinal as u32),
-                layout_node: text_node.id,
-                dom_node: text_node.dom_node,
+                layout_node: chain.text_node.id,
+                dom_node: chain.text_node.dom_node,
                 kind: FragmentKind::Text,
-                boxes: BoxModel::single(content_box),
-                style: text_node.style,
+                boxes: BoxModel::single(text_rect),
+                style: chain.text_node.style,
                 text_range: Some(text_range),
                 line_box: Some(line_box),
                 children: Vec::new(),
             };
-            let fragment_index = fragments.len();
-            fragments.push(Fragment {
-                id: self.allocate_id(),
-                ordinal: FragmentOrdinal(ordinal as u32),
-                layout_node: node.id,
-                dom_node: node.dom_node,
-                kind: FragmentKind::Box,
-                boxes: BoxModel {
-                    margin_box,
-                    border_box,
-                    padding_box,
-                    content_box,
-                },
-                style: fragment_style,
-                text_range: None,
-                line_box: None,
-                children: vec![text_fragment],
-            });
+            let mut nested_outer_width = content_width;
 
-            line.x += margin_box.size.width;
+            for ((box_node, style), (margin_x, border_x, padding_x, content_x)) in
+                chain.boxes.iter().zip(styles.iter()).zip(origins).rev()
+            {
+                let content_box = Rect::new(
+                    content_x,
+                    *cursor_y,
+                    nested_outer_width,
+                    chain.run.line_height,
+                );
+                let padding_box = Rect::new(
+                    padding_x,
+                    *cursor_y,
+                    content_box.size.width + style.padding.horizontal(),
+                    chain.run.line_height,
+                );
+                let border_box = Rect::new(
+                    border_x,
+                    *cursor_y,
+                    padding_box.size.width + style.border_width.horizontal(),
+                    chain.run.line_height,
+                );
+                let margin_box = Rect::new(
+                    margin_x,
+                    *cursor_y,
+                    border_box.size.width + style.margin.horizontal(),
+                    chain.run.line_height,
+                );
+                nested_outer_width = margin_box.size.width;
+                nested = Fragment {
+                    id: self.allocate_id(),
+                    ordinal: FragmentOrdinal(ordinal as u32),
+                    layout_node: box_node.id,
+                    dom_node: box_node.dom_node,
+                    kind: FragmentKind::Box,
+                    boxes: BoxModel {
+                        margin_box,
+                        border_box,
+                        padding_box,
+                        content_box,
+                    },
+                    style: *style,
+                    text_range: None,
+                    line_box: None,
+                    children: vec![nested],
+                };
+            }
+
+            let fragment_index = fragments.len();
+            fragments.push(nested);
+            line.x += nested_outer_width;
+            let outer_style = chain.boxes[0].style;
             line.record(
                 fragment_index,
-                node.style.vertical_align,
-                Some(run.shaped.metrics.ascent),
+                outer_style.vertical_align,
+                Some(chain.run.shaped.metrics.ascent),
             );
             let mandatory = text_range
                 .end
