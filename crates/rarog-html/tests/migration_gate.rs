@@ -1,5 +1,5 @@
 use rarog_dom::{Document, NodeId, NodeKind};
-use rarog_html::{parse_standards_with_diagnostics, parse_with_diagnostics};
+use rarog_html::{parse, parse_standards};
 
 fn find_element(document: &Document, tag_name: &str) -> Option<NodeId> {
     let mut stack = vec![document.root()];
@@ -35,44 +35,24 @@ fn descendant_text(document: &Document, root: NodeId) -> String {
 }
 
 #[test]
-fn well_formed_bootstrap_subset_matches_standards_tree() {
-    let fixtures = [
-        "<!doctype html><html><head><title>x</title></head><body><p id=\"x\">hello</p></body></html>",
-        "<!doctype html><html><head></head><body><div><span>x</span><br><img src=\"x\"></div></body></html>",
-    ];
+fn canonical_and_standards_entry_points_are_identical() {
+    let source = "<!doctype html><html><body><p id=\"x\">hello</p></body></html>";
 
-    for source in fixtures {
-        let bootstrap = parse_with_diagnostics(source);
-        let standards = parse_standards_with_diagnostics(source);
-        assert_eq!(bootstrap.document.snapshot(), standards.document.snapshot());
-    }
+    assert_eq!(parse(source).snapshot(), parse_standards(source).snapshot());
 }
 
 #[test]
-fn character_references_are_an_intentional_standards_change() {
-    let source = "<!doctype html><html><head></head><body><p>A&amp;B&nbsp;C</p></body></html>";
-    let bootstrap = parse_with_diagnostics(source);
-    let standards = parse_standards_with_diagnostics(source);
-    let bootstrap_p = find_element(&bootstrap.document, "p").unwrap();
-    let standards_p = find_element(&standards.document, "p").unwrap();
+fn canonical_parser_resolves_character_references() {
+    let document = parse("<!doctype html><html><body><p>A&amp;B&nbsp;C</p></body></html>");
+    let paragraph = find_element(&document, "p").unwrap();
 
-    assert_eq!(
-        descendant_text(&bootstrap.document, bootstrap_p),
-        "A&amp;B&nbsp;C"
-    );
-    assert_eq!(
-        descendant_text(&standards.document, standards_p),
-        "A&B\u{00a0}C"
-    );
+    assert_eq!(descendant_text(&document, paragraph), "A&B\u{00a0}C");
 }
 
 #[test]
-fn table_insertion_is_an_intentional_standards_change() {
-    let source =
-        "<!doctype html><html><head></head><body><table><tr><td>x</td></tr></table></body></html>";
-    let bootstrap = parse_with_diagnostics(source);
-    let standards = parse_standards_with_diagnostics(source);
+fn canonical_parser_applies_table_insertion_rules() {
+    let document =
+        parse("<!doctype html><html><body><table><tr><td>x</td></tr></table></body></html>");
 
-    assert!(find_element(&bootstrap.document, "tbody").is_none());
-    assert!(find_element(&standards.document, "tbody").is_some());
+    assert!(find_element(&document, "tbody").is_some());
 }
