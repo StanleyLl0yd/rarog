@@ -21,10 +21,10 @@ Tracking issue: #39.
 
 ## C — Formatting contexts and resources
 
-- [ ] Add block formatting context foundations.
+- [x] Add block formatting context foundations.
   - [x] Collapse adjoining vertical margins between in-flow block siblings, including negative margins.
   - [x] Add parent/child and empty-block margin collapsing boundaries.
-  - [ ] Add block auto/min/max sizing and explicit BFC boundary rules.
+  - [x] Add block auto/min/max sizing and explicit BFC boundary rules.
 - [ ] Add inline formatting context foundations.
 - [ ] Add image resource abstraction.
 

@@ -1331,7 +1331,8 @@ fn block_margin_profile(
     let bottom_boundary = node.margin_collapse_boundary
         || style.border_width.bottom != 0.0
         || style.padding.bottom != 0.0
-        || style.height.is_some();
+        || style.height.is_some()
+        || style.min_height.is_some_and(|height| height > 0.0);
 
     let children_collapse_through = node.children.iter().all(|child| match child.kind {
         LayoutNodeKind::Box => profiles
@@ -1343,6 +1344,7 @@ fn block_margin_profile(
         && style.border_width.vertical() == 0.0
         && style.padding.vertical() == 0.0
         && style.height.is_none_or(|height| height == 0.0)
+        && style.min_height.is_none_or(|height| height == 0.0)
         && children_collapse_through;
 
     if through {
@@ -1541,7 +1543,8 @@ impl<'a> LayoutTreeBuilder<'a> {
         let margin_collapse_boundary = matches!(dom_node.kind, NodeKind::Document)
             || dom_node
                 .parent
-                .is_some_and(|parent| document_node_is_root(doc, parent));
+                .is_some_and(|parent| document_node_is_root(doc, parent))
+            || style.establishes_bfc;
 
         let id = self.allocate_id();
         let mut children = Vec::new();
@@ -1605,19 +1608,33 @@ fn intrinsic_sizes_for_node(
                 .map(|child| child.intrinsic.max_content)
                 .fold(0.0, f32::max);
             if let Some(width) = style.width {
-                let outer = width.max(0.0) + horizontal_edges;
+                let outer = clamp_used_dimension(width, style.min_width, style.max_width)
+                    + horizontal_edges;
                 IntrinsicSizes {
                     min_content: outer,
                     max_content: outer,
                 }
             } else {
                 IntrinsicSizes {
-                    min_content: child_min + horizontal_edges,
-                    max_content: child_max + horizontal_edges,
+                    min_content: clamp_used_dimension(child_min, style.min_width, style.max_width)
+                        + horizontal_edges,
+                    max_content: clamp_used_dimension(child_max, style.min_width, style.max_width)
+                        + horizontal_edges,
                 }
             }
         }
     }
+}
+
+fn clamp_used_dimension(value: f32, minimum: Option<f32>, maximum: Option<f32>) -> f32 {
+    let mut used = value.max(0.0);
+    if let Some(maximum) = maximum {
+        used = used.min(maximum.max(0.0));
+    }
+    if let Some(minimum) = minimum {
+        used = used.max(minimum.max(0.0));
+    }
+    used
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1817,10 +1834,13 @@ impl FragmentBuilder {
             + style.border_width.horizontal()
             + style.padding.horizontal();
 
-        let content_width = style
-            .width
-            .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0))
-            .max(0.0);
+        let content_width = clamp_used_dimension(
+            style
+                .width
+                .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0)),
+            style.min_width,
+            style.max_width,
+        );
 
         let border_x = x + style.margin.left;
         let border_y = *cursor_y;
@@ -1854,7 +1874,11 @@ impl FragmentBuilder {
         }
 
         let natural_content_height = (child_y - content_y).max(0.0);
-        let content_height = style.height.unwrap_or(natural_content_height).max(0.0);
+        let content_height = clamp_used_dimension(
+            style.height.unwrap_or(natural_content_height),
+            style.min_height,
+            style.max_height,
+        );
 
         let content_box = Rect::new(content_x, content_y, content_width, content_height);
         let padding_box = Rect::new(

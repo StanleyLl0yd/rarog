@@ -524,7 +524,9 @@ impl RenderSession {
                     break;
                 };
                 let new_style = computed_style(&self.document, node, &new_styles);
-                if old_style.display_none != new_style.display_none {
+                if old_style.display_none != new_style.display_none
+                    || old_style.establishes_bfc != new_style.establishes_bfc
+                {
                     requires_full_rebuild = true;
                     break;
                 }
@@ -948,14 +950,21 @@ fn patch_fragment_style(fragment: &mut Fragment, dom_node: NodeId, style: Comput
 fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
     before.width != after.width
         || before.height != after.height
+        || before.min_width != after.min_width
+        || before.max_width != after.max_width
+        || before.min_height != after.min_height
+        || before.max_height != after.max_height
         || before.margin != after.margin
         || before.border_width != after.border_width
         || before.padding != after.padding
         || before.display_none != after.display_none
+        || before.establishes_bfc != after.establishes_bfc
 }
 
 fn vertical_footprint_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
     before.height != after.height
+        || before.min_height != after.min_height
+        || before.max_height != after.max_height
         || before.margin.top != after.margin.top
         || before.margin.bottom != after.margin.bottom
         || before.border_width.top != after.border_width.top
