@@ -1,0 +1,16 @@
+[package]
+name = "rarog-text-opentype"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+harfrust = "0.13.3"
+rarog-layout = { path = "../rarog-layout" }
+
+[dev-dependencies]
+font-test-data = "0.7.0"
+
+[lints]
+workspace = true
