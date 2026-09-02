@@ -304,9 +304,11 @@ mod tests {
             glyph.source.start < glyph.source.end && glyph.source.end <= text.chars().count()
         }));
         assert_eq!(shaped.metrics, face.metrics);
-        assert!(shaped
-            .glyphs
-            .iter()
-            .any(|glyph| glyph.id.value() != text.chars().next().unwrap_or_default() as u32));
+        assert!(
+            shaped
+                .glyphs
+                .iter()
+                .any(|glyph| glyph.id.value() != text.chars().next().unwrap_or_default() as u32)
+        );
     }
 }
