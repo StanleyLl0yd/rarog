@@ -566,7 +566,9 @@ name = "rarog-platform-windows"
 version = "0.1.0"
 dependencies = [
  "font-kit",
+ "rarog-layout",
  "rarog-platform",
+ "rarog-text-opentype",
 ]
 
 [[package]]
