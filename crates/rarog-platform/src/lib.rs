@@ -153,7 +153,9 @@ pub enum PlatformFontError {
 impl fmt::Display for PlatformFontError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedTarget => formatter.write_str("font platform is unavailable on this target"),
+            Self::UnsupportedTarget => {
+                formatter.write_str("font platform is unavailable on this target")
+            }
             Self::EmptyFamilyList => formatter.write_str("font family list must not be empty"),
             Self::EmptyNamedFamily => formatter.write_str("named font family must not be empty"),
             Self::InvalidWeight(value) => write!(formatter, "invalid font weight {value}"),
@@ -161,8 +163,12 @@ impl fmt::Display for PlatformFontError {
             Self::InvalidSize(value) => write!(formatter, "invalid font size {value}"),
             Self::NotFound => formatter.write_str("no matching system font was found"),
             Self::LoadFailed => formatter.write_str("selected system font could not be loaded"),
-            Self::DataUnavailable => formatter.write_str("selected system font data is unavailable"),
-            Self::InvalidMetrics => formatter.write_str("selected system font exposed invalid metrics"),
+            Self::DataUnavailable => {
+                formatter.write_str("selected system font data is unavailable")
+            }
+            Self::InvalidMetrics => {
+                formatter.write_str("selected system font exposed invalid metrics")
+            }
         }
     }
 }
@@ -170,7 +176,10 @@ impl fmt::Display for PlatformFontError {
 impl std::error::Error for PlatformFontError {}
 
 pub trait PlatformFontService: Send + Sync {
-    fn resolve(&self, request: &PlatformFontRequest) -> Result<ResolvedPlatformFont, PlatformFontError>;
+    fn resolve(
+        &self,
+        request: &PlatformFontRequest,
+    ) -> Result<ResolvedPlatformFont, PlatformFontError>;
 }
 
 pub trait PlatformHost: Send + Sync {
@@ -238,10 +247,16 @@ mod tests {
 
         let mut request = PlatformFontRequest::default();
         request.stretch = 2.1;
-        assert_eq!(request.validate(), Err(PlatformFontError::InvalidStretch(2.1)));
+        assert_eq!(
+            request.validate(),
+            Err(PlatformFontError::InvalidStretch(2.1))
+        );
 
         let mut request = PlatformFontRequest::default();
         request.size_px = 0.0;
-        assert_eq!(request.validate(), Err(PlatformFontError::InvalidSize(0.0)));
+        assert_eq!(
+            request.validate(),
+            Err(PlatformFontError::InvalidSize(0.0))
+        );
     }
 }
