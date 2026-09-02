@@ -17,7 +17,8 @@ The retained LayoutNode and its ID remain stable. The fragment flow is rebuilt f
 The first R1 slice remains conservative:
 - character data inside a `<style>` element uses `FullRebuild`;
 - structural mutations use `FullRebuild`;
-- mixed style and text mutations in one update use `FullRebuild`;
+- mixed text and geometry-affecting style mutations use `FullRebuild`;
+- mixed text and paint-only style mutations may share the incremental flow path as defined by ADR-0036;
 - if the retained text LayoutNode cannot be found or refreshed, use `FullRebuild`.
 
 Incremental correctness is checked against a fresh full render for the same final DOM.
@@ -27,7 +28,7 @@ Incremental correctness is checked against a fresh full render for the same fina
 - Common text edits no longer require rebuilding the entire Layout Tree.
 - Text width and line-count changes reuse the existing flow-aware reflow algorithm.
 - Layout identity can survive ordinary character-data edits.
-- This does not yet make style/text mixed updates or structural DOM changes incremental.
+- Geometry-affecting mixed style/text updates and structural DOM changes remain conservative full-rebuild boundaries.
 - Production font integration remains orthogonal to this invalidation/reflow decision.
 
 ## Invariants

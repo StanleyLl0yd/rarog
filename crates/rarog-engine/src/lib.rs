@@ -507,10 +507,6 @@ impl RenderSession {
             }
         }
 
-        if !text_relayout_nodes.is_empty() && !style_candidates.is_empty() {
-            requires_full_rebuild = true;
-        }
-
         let new_styles = if stylesheet_sources_changed {
             StyleSet::for_document(&self.document)
         } else {
@@ -553,7 +549,11 @@ impl RenderSession {
                         );
                     }
                     let layout_changed = layout_style_changed(old_style, new_style);
-                    if layout_changed && (old_style.display_inline || new_style.display_inline) {
+                    if layout_changed
+                        && (!text_relayout_nodes.is_empty()
+                            || old_style.display_inline
+                            || new_style.display_inline)
+                    {
                         requires_full_rebuild = true;
                         break;
                     }
@@ -1392,6 +1392,71 @@ mod tests {
             expected.framebuffer.stable_hash64()
         );
         assert!(!session.damage().rects.is_empty());
+    }
+
+    #[test]
+    fn character_data_and_paint_only_style_update_share_flow_relayout() {
+        let source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"target\" style=\"width:48px;background:#112233\">one</div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+        let expected_source = "<div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"target\" style=\"width:48px;background:#778899\">one two three four</div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+        let mut session = session(source, deterministic_options());
+        let target = element_with_id(session.document(), "target");
+        let text = *session
+            .document()
+            .children(target)
+            .and_then(|children| children.first())
+            .expect("target contains a text node");
+
+        session
+            .document_mut()
+            .set_text(text, "one two three four")
+            .unwrap();
+        session
+            .document_mut()
+            .set_attribute(target, "style", "width:48px;background:#778899")
+            .unwrap();
+
+        let report = session.update().expect("mixed incremental update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert_eq!(report.patched_nodes, 2);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert!(!session.damage().rects.is_empty());
+    }
+
+    #[test]
+    fn character_data_and_geometry_style_update_remain_full_rebuild() {
+        let source = "<div id=\"target\" style=\"width:48px;background:#112233\">one</div>";
+        let expected_source =
+            "<div id=\"target\" style=\"width:72px;background:#778899\">one two three four</div>";
+        let mut session = session(source, deterministic_options());
+        let target = element_with_id(session.document(), "target");
+        let text = *session
+            .document()
+            .children(target)
+            .and_then(|children| children.first())
+            .expect("target contains a text node");
+
+        session
+            .document_mut()
+            .set_text(text, "one two three four")
+            .unwrap();
+        session
+            .document_mut()
+            .set_attribute(target, "style", "width:72px;background:#778899")
+            .unwrap();
+
+        let report = session.update().expect("mixed fallback update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
     }
 
     #[test]
