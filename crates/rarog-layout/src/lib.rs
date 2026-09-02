@@ -1232,6 +1232,11 @@ pub fn relayout_fragment_flow(
         let previous = &fragments.root.children[start_index - 1];
         previous.boxes.margin_box.origin.y + previous.boxes.margin_box.size.height
     };
+    let mut retained_ids = std::collections::BTreeMap::new();
+    for child in &fragments.root.children[start_index..] {
+        collect_fragment_ids(child, &mut retained_ids);
+    }
+
     let next_id = max_fragment_id(&fragments.root).saturating_add(1);
     let mut builder = FragmentBuilder { next_id };
     let mut rebuilt = Vec::with_capacity(tree.root.children.len() - start_index);
@@ -1239,10 +1244,35 @@ pub fn relayout_fragment_flow(
     for child in &tree.root.children[start_index..] {
         rebuilt.extend(builder.layout_node(child, containing_block, &mut cursor_y));
     }
+    for child in &mut rebuilt {
+        reuse_fragment_ids(child, &retained_ids);
+    }
 
     fragments.root.children.truncate(start_index);
     fragments.root.children.extend(rebuilt);
     true
+}
+
+fn collect_fragment_ids(
+    fragment: &Fragment,
+    ids: &mut std::collections::BTreeMap<(LayoutNodeId, FragmentOrdinal), FragmentId>,
+) {
+    ids.insert((fragment.layout_node, fragment.ordinal), fragment.id);
+    for child in &fragment.children {
+        collect_fragment_ids(child, ids);
+    }
+}
+
+fn reuse_fragment_ids(
+    fragment: &mut Fragment,
+    ids: &std::collections::BTreeMap<(LayoutNodeId, FragmentOrdinal), FragmentId>,
+) {
+    if let Some(id) = ids.get(&(fragment.layout_node, fragment.ordinal)) {
+        fragment.id = *id;
+    }
+    for child in &mut fragment.children {
+        reuse_fragment_ids(child, ids);
+    }
 }
 
 fn layout_node_contains(node: &LayoutNode, dom_node: NodeId) -> bool {
