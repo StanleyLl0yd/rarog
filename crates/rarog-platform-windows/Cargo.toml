@@ -8,5 +8,8 @@ rust-version.workspace = true
 [dependencies]
 rarog-platform = { path = "../rarog-platform" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+font-kit = { version = "0.14.3", default-features = false, features = ["source"] }
+
 [lints]
 workspace = true
