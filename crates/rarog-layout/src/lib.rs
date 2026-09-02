@@ -1239,11 +1239,16 @@ pub fn relayout_fragment_flow(
 
     let next_id = max_fragment_id(&fragments.root).saturating_add(1);
     let mut builder = FragmentBuilder { next_id };
-    let mut rebuilt = Vec::with_capacity(tree.root.children.len() - start_index);
-
-    for child in &tree.root.children[start_index..] {
-        rebuilt.extend(builder.layout_node(child, containing_block, &mut cursor_y));
-    }
+    let previous_block_margin_bottom = start_index.checked_sub(1).and_then(|index| {
+        let previous = &tree.root.children[index];
+        matches!(previous.kind, LayoutNodeKind::Box).then_some(previous.style.margin.bottom)
+    });
+    let mut rebuilt = builder.layout_siblings(
+        &tree.root.children[start_index..],
+        containing_block,
+        &mut cursor_y,
+        previous_block_margin_bottom,
+    );
     for child in &mut rebuilt {
         reuse_fragment_ids(child, &retained_ids);
     }
@@ -1449,6 +1454,10 @@ fn intrinsic_sizes_for_node(
     }
 }
 
+fn collapse_vertical_margins(first: f32, second: f32) -> f32 {
+    first.max(second).max(0.0) + first.min(second).min(0.0)
+}
+
 #[derive(Default)]
 struct FragmentBuilder {
     next_id: usize,
@@ -1465,11 +1474,8 @@ impl FragmentBuilder {
             },
         };
         let mut cursor_y = containing_block.origin.y;
-        let mut children = Vec::new();
-
-        for child in &tree.root.children {
-            children.extend(self.layout_node(child, containing_block, &mut cursor_y));
-        }
+        let children =
+            self.layout_siblings(&tree.root.children, containing_block, &mut cursor_y, None);
 
         FragmentTree {
             root: Fragment {
@@ -1485,6 +1491,37 @@ impl FragmentBuilder {
                 children,
             },
         }
+    }
+
+    fn layout_siblings(
+        &mut self,
+        nodes: &[LayoutNode],
+        containing_block: ContainingBlock,
+        cursor_y: &mut f32,
+        mut previous_block_margin_bottom: Option<f32>,
+    ) -> Vec<Fragment> {
+        let mut fragments = Vec::new();
+        for node in nodes {
+            match node.kind {
+                LayoutNodeKind::Box => {
+                    if let Some(previous_margin) = previous_block_margin_bottom {
+                        let collapsed =
+                            collapse_vertical_margins(previous_margin, node.style.margin.top);
+                        *cursor_y += collapsed - previous_margin - node.style.margin.top;
+                    }
+                    fragments.extend(self.layout_node(node, containing_block, cursor_y));
+                    previous_block_margin_bottom = Some(node.style.margin.bottom);
+                }
+                LayoutNodeKind::Text(_) => {
+                    fragments.extend(self.layout_node(node, containing_block, cursor_y));
+                    previous_block_margin_bottom = None;
+                }
+                LayoutNodeKind::Root => {
+                    unreachable!("only the layout root may have Root kind")
+                }
+            }
+        }
+        fragments
     }
 
     fn layout_node(
@@ -1573,10 +1610,8 @@ impl FragmentBuilder {
             },
         };
         let mut child_y = child_containing_block.origin.y;
-        let mut children = Vec::new();
-        for child in &node.children {
-            children.extend(self.layout_node(child, child_containing_block, &mut child_y));
-        }
+        let children =
+            self.layout_siblings(&node.children, child_containing_block, &mut child_y, None);
 
         let natural_content_height = (child_y - content_y).max(0.0);
         let content_height = style.height.unwrap_or(natural_content_height).max(0.0);
