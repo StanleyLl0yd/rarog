@@ -30,7 +30,8 @@ Tracking issue: #39.
   - [x] Share one line builder across text and inline boxes while preserving Unicode shaping and line-break source ranges.
   - [ ] Add baseline/vertical-align behavior and inline fragmentation.
     - [x] Align text and atomic inline boxes with `baseline`, `top` and `bottom`.
-    - [ ] Fragment non-atomic inline boxes across line boundaries.
+    - [x] Fragment direct-text non-atomic inline containers across line boundaries with stable fragment ordinals.
+    - [ ] Generalize inline fragmentation across nested inline descendants and sliced horizontal box edges.
 - [ ] Add image resource abstraction.
 
 ## D — Production text path
