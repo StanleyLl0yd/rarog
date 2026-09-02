@@ -1263,17 +1263,16 @@ pub fn relayout_fragment_subtree(
     relayout_fragment_child(&mut fragments.root, layout_node, dom_node, &mut builder)
 }
 
-pub fn relayout_fragment_flow(
+pub fn fragment_flow_start_index(
     tree: &LayoutTree,
-    fragments: &mut FragmentTree,
+    fragments: &FragmentTree,
     dirty_nodes: &[NodeId],
-) -> bool {
+) -> Option<usize> {
     if dirty_nodes.is_empty() || tree.root.children.len() != fragments.root.children.len() {
-        return false;
+        return None;
     }
 
-    let Some(start_index) = tree
-        .root
+    tree.root
         .children
         .iter()
         .enumerate()
@@ -1284,7 +1283,14 @@ pub fn relayout_fragment_flow(
         })
         .map(|(index, _)| index)
         .min()
-    else {
+}
+
+pub fn relayout_fragment_flow(
+    tree: &LayoutTree,
+    fragments: &mut FragmentTree,
+    dirty_nodes: &[NodeId],
+) -> bool {
+    let Some(start_index) = fragment_flow_start_index(tree, fragments, dirty_nodes) else {
         return false;
     };
 

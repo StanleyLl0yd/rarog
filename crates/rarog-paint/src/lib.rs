@@ -336,6 +336,24 @@ pub fn build_display_list_for_fragment(fragment: &Fragment) -> DisplayList {
     list
 }
 
+pub fn build_display_list_for_fragments(fragments: &[Fragment]) -> DisplayList {
+    let mut list = DisplayList::default();
+    for fragment in fragments {
+        collect(fragment, &mut list);
+    }
+    list
+}
+
+pub fn replace_display_items_for_fragments(
+    list: &mut DisplayList,
+    previous: &[Fragment],
+    current: &[Fragment],
+) -> bool {
+    let previous_items = build_display_list_for_fragments(previous);
+    let current_items = build_display_list_for_fragments(current);
+    replace_display_items(list, &previous_items, &current_items)
+}
+
 pub fn replace_display_items_for_fragment(
     list: &mut DisplayList,
     previous: &Fragment,
