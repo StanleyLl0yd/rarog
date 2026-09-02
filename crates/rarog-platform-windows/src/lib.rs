@@ -1,6 +1,6 @@
 use rarog_platform::{
-    PlatformCapabilities, PlatformFontError, PlatformFontRequest, PlatformFontService, PlatformHost,
-    ResolvedPlatformFont,
+    PlatformCapabilities, PlatformFontError, PlatformFontRequest, PlatformFontService,
+    PlatformHost, ResolvedPlatformFont,
 };
 use std::fmt;
 
@@ -190,9 +190,9 @@ fn resolve_system_font(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rarog_platform::PlatformService;
     #[cfg(target_os = "windows")]
     use rarog_platform::PlatformFontFamily;
+    use rarog_platform::PlatformService;
 
     #[test]
     fn construction_matches_compilation_target() {
