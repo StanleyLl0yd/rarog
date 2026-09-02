@@ -10,6 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+rarog-css = { path = "../crates/rarog-css" }
 rarog-engine = { path = "../crates/rarog-engine" }
 rarog-html = { path = "../crates/rarog-html" }
 
@@ -23,6 +24,13 @@ bench = false
 [[bin]]
 name = "render_html"
 path = "fuzz_targets/render_html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "css_stylesheet"
+path = "fuzz_targets/css_stylesheet.rs"
 test = false
 doc = false
 bench = false

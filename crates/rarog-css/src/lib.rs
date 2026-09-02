@@ -1,3 +1,5 @@
+mod syntax;
+
 use rarog_dom::{Document, MutationKind, NodeId, NodeKind};
 use rarog_types::Color;
 use std::collections::{BTreeMap, BTreeSet};
@@ -341,37 +343,25 @@ pub struct Stylesheet {
 impl Stylesheet {
     pub fn parse(source: StyleSource, input: &str) -> Self {
         let mut rules = Vec::new();
-        let mut cursor = 0usize;
         let mut source_order = 0u32;
 
-        while cursor < input.len() {
-            let Some(open_relative) = input[cursor..].find('{') else {
-                break;
-            };
-            let open = cursor + open_relative;
-            let Some(close_relative) = input[open + 1..].find('}') else {
-                break;
-            };
-            let close = open + 1 + close_relative;
-            let selector_text = input[cursor..open].trim();
-            let declarations = parse_declarations(&input[open + 1..close]);
-
-            if !declarations.is_empty() {
-                for selector_text in selector_text.split(',') {
-                    if let Some(selector) = parse_selector(selector_text.trim()) {
-                        rules.push(StyleRule {
-                            specificity: selector.specificity(),
-                            selector,
-                            declarations: declarations.clone(),
-                            source_order,
-                            dependencies: Vec::new(),
-                        });
-                        source_order = source_order.saturating_add(1);
-                    }
+        for parsed_rule in syntax::parse_stylesheet(input) {
+            let declarations = declarations_from_syntax(&parsed_rule.declarations);
+            if declarations.is_empty() {
+                continue;
+            }
+            for selector_text in parsed_rule.selectors {
+                if let Some(selector) = parse_selector(&selector_text) {
+                    rules.push(StyleRule {
+                        specificity: selector.specificity(),
+                        selector,
+                        declarations: declarations.clone(),
+                        source_order,
+                        dependencies: Vec::new(),
+                    });
+                    source_order = source_order.saturating_add(1);
                 }
             }
-
-            cursor = close + 1;
         }
 
         Self { source, rules }
@@ -692,15 +682,17 @@ pub fn parse_selector(input: &str) -> Option<Selector> {
 }
 
 fn parse_declarations(input: &str) -> Vec<Declaration> {
+    let declarations = syntax::parse_declarations(input);
+    declarations_from_syntax(&declarations)
+}
+
+fn declarations_from_syntax(input: &[syntax::ParsedDeclaration]) -> Vec<Declaration> {
     let mut declarations = Vec::new();
-    for declaration in input.split(';') {
-        let Some((name, value)) = declaration.split_once(':') else {
-            continue;
-        };
+    for declaration in input {
         append_property(
             &mut declarations,
-            name.trim().to_ascii_lowercase().as_str(),
-            value.trim(),
+            declaration.name.as_str(),
+            declaration.value.as_str(),
         );
     }
     declarations

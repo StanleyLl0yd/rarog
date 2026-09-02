@@ -29,6 +29,16 @@ Components should be selected by technical evaluation and isolated behind adapte
 - TLS: mature platform/Rust TLS implementation; never custom cryptography
 - URL parsing: standards-oriented library if semantics fit Rarog's security model
 
+## Selected adapters
+
+### `cssparser` 0.37
+
+R1 uses the published `cssparser` 0.37 release as the CSS Syntax tokenizer/parser backend with default features disabled.
+
+The dependency is limited to the private `rarog-css` syntax adapter. Rarog continues to own selector representation and matching, specificity, cascade, invalidation dependencies, typed property/value conversion and computed style. No `cssparser` type is part of a public Rarog API.
+
+The dependency is MPL-2.0 licensed and satisfies the workspace Rust 1.85 build gate. The adapter is covered by malformed-input regression tests and a dedicated CSS stylesheet fuzz target. Upgrading the backend must preserve these boundaries and pass the same compatibility and deterministic-render gates.
+
 ## Selection rules
 
 A third-party dependency must have:
