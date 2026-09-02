@@ -1,4 +1,4 @@
-use rarog_css::{ComputedStyle, EdgeSizes, StyleSet, VerticalAlign, computed_style_with_parent};
+use rarog_css::{ComputedStyle, StyleSet, VerticalAlign, computed_style_with_parent};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
 use unicode_bidi::BidiInfo;
@@ -958,6 +958,21 @@ impl UnicodeLineBreaker {
         first_line_width: f32,
         following_line_width: f32,
     ) -> Vec<TextRange> {
+        self.break_text_with_widths_and_terminal_reserve(
+            run,
+            first_line_width,
+            following_line_width,
+            0.0,
+        )
+    }
+
+    fn break_text_with_widths_and_terminal_reserve(
+        &self,
+        run: &TextRun,
+        first_line_width: f32,
+        following_line_width: f32,
+        terminal_reserve: f32,
+    ) -> Vec<TextRange> {
         if run.shaped.clusters.is_empty() {
             return vec![TextRange::new(0, 0)];
         }
@@ -996,7 +1011,12 @@ impl UnicodeLineBreaker {
                 continue;
             }
 
-            if line_limit.is_finite() && line_limit >= 0.0 && width > line_limit {
+            let terminal = if boundary == run.character_count() {
+                terminal_reserve
+            } else {
+                0.0
+            };
+            if line_limit.is_finite() && line_limit >= 0.0 && width + terminal > line_limit {
                 let emergency = cluster.source.start;
                 let break_at = last_soft.filter(|value| *value > line_start).or_else(|| {
                     (emergency > line_start
@@ -1289,9 +1309,12 @@ fn fragmenting_inline_text_child(node: &LayoutNode) -> Option<(&LayoutNode, &Tex
         || style.max_width.is_some()
         || style.min_height.is_some()
         || style.max_height.is_some()
-        || style.margin != EdgeSizes::ZERO
-        || style.border_width != EdgeSizes::ZERO
-        || style.padding != EdgeSizes::ZERO
+        || style.margin.top != 0.0
+        || style.margin.bottom != 0.0
+        || style.border_width.top != 0.0
+        || style.border_width.bottom != 0.0
+        || style.padding.top != 0.0
+        || style.padding.bottom != 0.0
         || node.children.len() != 1
     {
         return None;
@@ -2031,33 +2054,80 @@ impl FragmentBuilder {
             line,
             fragments,
         } = flow;
+        let style = node.style;
+        let first_outer_edge = style.margin.left + style.border_width.left + style.padding.left;
+        let last_outer_edge = style.padding.right + style.border_width.right + style.margin.right;
         let full_width = containing_block.available.width.max(0.0);
         if line.active
             && run
                 .shaped
                 .clusters
                 .first()
-                .is_some_and(|cluster| cluster.advance > line.remaining_width())
+                .is_some_and(|cluster| cluster.advance + first_outer_edge > line.remaining_width())
         {
             self.flush_inline_line(line, fragments, cursor_y);
         }
 
         let first_width = if line.active {
-            line.remaining_width()
+            (line.remaining_width() - first_outer_edge).max(0.0)
         } else {
-            full_width
+            (full_width - first_outer_edge).max(0.0)
         };
-        let ranges = UnicodeLineBreaker.break_text_with_widths(run, first_width, full_width);
+        let ranges = UnicodeLineBreaker.break_text_with_widths_and_terminal_reserve(
+            run,
+            first_width,
+            full_width,
+            last_outer_edge,
+        );
         let characters = run.text.chars().collect::<Vec<_>>();
         let range_count = ranges.len();
 
         for (ordinal, text_range) in ranges.into_iter().enumerate() {
-            let available_width = line.remaining_width();
-            let width = run.advance_for_range(text_range).min(available_width);
-            let rect = Rect::new(line.x, *cursor_y, width, run.line_height);
+            let is_first = ordinal == 0;
+            let is_last = ordinal + 1 == range_count;
+            let mut fragment_style = style;
+            if !is_first {
+                fragment_style.margin.left = 0.0;
+                fragment_style.border_width.left = 0.0;
+                fragment_style.padding.left = 0.0;
+            }
+            if !is_last {
+                fragment_style.margin.right = 0.0;
+                fragment_style.border_width.right = 0.0;
+                fragment_style.padding.right = 0.0;
+            }
+
+            let margin_x = line.x;
+            let border_x = margin_x + fragment_style.margin.left;
+            let padding_x = border_x + fragment_style.border_width.left;
+            let content_x = padding_x + fragment_style.padding.left;
+            let horizontal_edges = fragment_style.margin.horizontal()
+                + fragment_style.border_width.horizontal()
+                + fragment_style.padding.horizontal();
+            let available_content = (line.remaining_width() - horizontal_edges).max(0.0);
+            let content_width = run.advance_for_range(text_range).min(available_content);
+            let content_box = Rect::new(content_x, *cursor_y, content_width, run.line_height);
+            let padding_box = Rect::new(
+                padding_x,
+                *cursor_y,
+                content_width + fragment_style.padding.horizontal(),
+                run.line_height,
+            );
+            let border_box = Rect::new(
+                border_x,
+                *cursor_y,
+                padding_box.size.width + fragment_style.border_width.horizontal(),
+                run.line_height,
+            );
+            let margin_box = Rect::new(
+                margin_x,
+                *cursor_y,
+                border_box.size.width + fragment_style.margin.horizontal(),
+                run.line_height,
+            );
             let line_box = LineBox {
                 ordinal: ordinal as u32,
-                rect,
+                rect: content_box,
                 text_range,
             };
             let text_fragment = Fragment {
@@ -2066,7 +2136,7 @@ impl FragmentBuilder {
                 layout_node: text_node.id,
                 dom_node: text_node.dom_node,
                 kind: FragmentKind::Text,
-                boxes: BoxModel::single(rect),
+                boxes: BoxModel::single(content_box),
                 style: text_node.style,
                 text_range: Some(text_range),
                 line_box: Some(line_box),
@@ -2079,14 +2149,19 @@ impl FragmentBuilder {
                 layout_node: node.id,
                 dom_node: node.dom_node,
                 kind: FragmentKind::Box,
-                boxes: BoxModel::single(rect),
-                style: node.style,
+                boxes: BoxModel {
+                    margin_box,
+                    border_box,
+                    padding_box,
+                    content_box,
+                },
+                style: fragment_style,
                 text_range: None,
                 line_box: None,
                 children: vec![text_fragment],
             });
 
-            line.x += width;
+            line.x += margin_box.size.width;
             line.record(
                 fragment_index,
                 node.style.vertical_align,
