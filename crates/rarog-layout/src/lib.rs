@@ -1050,6 +1050,7 @@ pub struct LayoutNode {
     pub style: ComputedStyle,
     pub intrinsic: IntrinsicSizes,
     pub children: Vec<LayoutNode>,
+    margin_collapse_boundary: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1193,7 +1194,11 @@ pub fn relayout_fragment_subtree(
         return false;
     };
     let next_id = max_fragment_id(&fragments.root).saturating_add(1);
-    let mut builder = FragmentBuilder { next_id };
+    let mut builder = FragmentBuilder {
+        next_id,
+        ..FragmentBuilder::default()
+    };
+    builder.prepare_margin_profiles(&tree.root);
     relayout_fragment_child(&mut fragments.root, layout_node, dom_node, &mut builder)
 }
 
@@ -1226,28 +1231,31 @@ pub fn relayout_fragment_flow(
         origin: fragments.root.boxes.content_box.origin,
         available: fragments.root.boxes.content_box.size,
     };
-    let mut cursor_y = if start_index == 0 {
-        containing_block.origin.y
-    } else {
-        let previous = &fragments.root.children[start_index - 1];
-        previous.boxes.margin_box.origin.y + previous.boxes.margin_box.size.height
+    let next_id = max_fragment_id(&fragments.root).saturating_add(1);
+    let mut builder = FragmentBuilder {
+        next_id,
+        ..FragmentBuilder::default()
     };
+    builder.prepare_margin_profiles(&tree.root);
+
+    let (mut cursor_y, pending_margin) = preceding_flow_state(
+        tree,
+        fragments,
+        start_index,
+        containing_block.origin.y,
+        &builder,
+    );
     let mut retained_ids = std::collections::BTreeMap::new();
     for child in &fragments.root.children[start_index..] {
         collect_fragment_ids(child, &mut retained_ids);
     }
 
-    let next_id = max_fragment_id(&fragments.root).saturating_add(1);
-    let mut builder = FragmentBuilder { next_id };
-    let previous_block_margin_bottom = start_index.checked_sub(1).and_then(|index| {
-        let previous = &tree.root.children[index];
-        matches!(previous.kind, LayoutNodeKind::Box).then_some(previous.style.margin.bottom)
-    });
-    let mut rebuilt = builder.layout_siblings(
+    let (mut rebuilt, _) = builder.layout_siblings(
         &tree.root.children[start_index..],
         containing_block,
         &mut cursor_y,
-        previous_block_margin_bottom,
+        pending_margin,
+        false,
     );
     for child in &mut rebuilt {
         reuse_fragment_ids(child, &retained_ids);
@@ -1256,6 +1264,152 @@ pub fn relayout_fragment_flow(
     fragments.root.children.truncate(start_index);
     fragments.root.children.extend(rebuilt);
     true
+}
+
+fn preceding_flow_state(
+    tree: &LayoutTree,
+    fragments: &FragmentTree,
+    start_index: usize,
+    origin_y: f32,
+    builder: &FragmentBuilder,
+) -> (f32, MarginStrut) {
+    if start_index == 0 {
+        return (origin_y, MarginStrut::default());
+    }
+
+    let mut pending = MarginStrut::default();
+    let mut index = start_index;
+    while index > 0 {
+        index -= 1;
+        let node = &tree.root.children[index];
+        let fragment = &fragments.root.children[index];
+        match node.kind {
+            LayoutNodeKind::Box => {
+                let profile = builder.margin_profile(node);
+                if profile.through {
+                    pending.adjoin(profile.before);
+                    continue;
+                }
+                pending.adjoin(profile.after);
+                return (
+                    fragment.boxes.border_box.origin.y + fragment.boxes.border_box.size.height,
+                    pending,
+                );
+            }
+            LayoutNodeKind::Text(_) => {
+                return (
+                    fragment.boxes.content_box.origin.y + fragment.boxes.content_box.size.height,
+                    MarginStrut::default(),
+                );
+            }
+            LayoutNodeKind::Root => unreachable!("root cannot be its own child"),
+        }
+    }
+    (origin_y, pending)
+}
+
+fn collect_margin_profiles(
+    node: &LayoutNode,
+    profiles: &mut std::collections::BTreeMap<LayoutNodeId, BlockMarginProfile>,
+) {
+    for child in &node.children {
+        collect_margin_profiles(child, profiles);
+    }
+    if matches!(node.kind, LayoutNodeKind::Box) {
+        let profile = block_margin_profile(node, profiles);
+        profiles.insert(node.id, profile);
+    }
+}
+
+fn block_margin_profile(
+    node: &LayoutNode,
+    profiles: &std::collections::BTreeMap<LayoutNodeId, BlockMarginProfile>,
+) -> BlockMarginProfile {
+    let style = node.style;
+    let top_boundary =
+        node.margin_collapse_boundary || style.border_width.top != 0.0 || style.padding.top != 0.0;
+    let bottom_boundary = node.margin_collapse_boundary
+        || style.border_width.bottom != 0.0
+        || style.padding.bottom != 0.0
+        || style.height.is_some();
+
+    let children_collapse_through = node.children.iter().all(|child| match child.kind {
+        LayoutNodeKind::Box => profiles
+            .get(&child.id)
+            .is_some_and(|profile| profile.through),
+        LayoutNodeKind::Text(_) | LayoutNodeKind::Root => false,
+    });
+    let through = !node.margin_collapse_boundary
+        && style.border_width.vertical() == 0.0
+        && style.padding.vertical() == 0.0
+        && style.height.is_none_or(|height| height == 0.0)
+        && children_collapse_through;
+
+    if through {
+        let mut combined = MarginStrut::from_margin(style.margin.top);
+        combined.adjoin_margin(style.margin.bottom);
+        for child in &node.children {
+            if let Some(profile) = profiles.get(&child.id) {
+                combined.adjoin(profile.before);
+                combined.adjoin(profile.after);
+            }
+        }
+        return BlockMarginProfile {
+            before: combined,
+            after: combined,
+            through: true,
+            collapse_first_child: !node.children.is_empty(),
+            collapse_last_child: !node.children.is_empty(),
+        };
+    }
+
+    let mut before = MarginStrut::from_margin(style.margin.top);
+    let mut collapse_first_child = false;
+    if !top_boundary {
+        for child in &node.children {
+            let LayoutNodeKind::Box = child.kind else {
+                break;
+            };
+            let Some(profile) = profiles.get(&child.id) else {
+                break;
+            };
+            collapse_first_child = true;
+            before.adjoin(profile.before);
+            if profile.through {
+                before.adjoin(profile.after);
+            } else {
+                break;
+            }
+        }
+    }
+
+    let mut after = MarginStrut::from_margin(style.margin.bottom);
+    let mut collapse_last_child = false;
+    if !bottom_boundary {
+        for child in node.children.iter().rev() {
+            let LayoutNodeKind::Box = child.kind else {
+                break;
+            };
+            let Some(profile) = profiles.get(&child.id) else {
+                break;
+            };
+            collapse_last_child = true;
+            after.adjoin(profile.after);
+            if profile.through {
+                after.adjoin(profile.before);
+            } else {
+                break;
+            }
+        }
+    }
+
+    BlockMarginProfile {
+        before,
+        after,
+        through: false,
+        collapse_first_child,
+        collapse_last_child,
+    }
 }
 
 fn collect_fragment_ids(
@@ -1337,7 +1491,7 @@ fn relayout_fragment_child(
 
     for child in &mut parent.children {
         if child.dom_node == Some(dom_node) {
-            let mut cursor_y = child.boxes.margin_box.origin.y;
+            let mut cursor_y = child.boxes.border_box.origin.y;
             let mut replacement = builder.layout_node(layout_node, containing_block, &mut cursor_y);
             if replacement.len() != 1 {
                 return false;
@@ -1384,6 +1538,11 @@ impl<'a> LayoutTreeBuilder<'a> {
             }
         };
 
+        let margin_collapse_boundary = matches!(dom_node.kind, NodeKind::Document)
+            || dom_node
+                .parent
+                .is_some_and(|parent| document_node_is_root(doc, parent));
+
         let id = self.allocate_id();
         let mut children = Vec::new();
         for child in doc.children(node).unwrap_or(&[]) {
@@ -1401,6 +1560,7 @@ impl<'a> LayoutTreeBuilder<'a> {
             style,
             intrinsic,
             children,
+            margin_collapse_boundary,
         })
     }
 
@@ -1409,6 +1569,12 @@ impl<'a> LayoutTreeBuilder<'a> {
         self.next_id += 1;
         id
     }
+}
+
+fn document_node_is_root(document: &Document, node: NodeId) -> bool {
+    document
+        .node(node)
+        .is_some_and(|node| matches!(node.kind, NodeKind::Document))
 }
 
 fn intrinsic_sizes_for_node(
@@ -1454,17 +1620,64 @@ fn intrinsic_sizes_for_node(
     }
 }
 
-fn collapse_vertical_margins(first: f32, second: f32) -> f32 {
-    first.max(second).max(0.0) + first.min(second).min(0.0)
+#[derive(Clone, Copy, Debug, Default)]
+struct MarginStrut {
+    positive: f32,
+    negative: f32,
+}
+
+impl MarginStrut {
+    fn from_margin(value: f32) -> Self {
+        let mut strut = Self::default();
+        strut.adjoin_margin(value);
+        strut
+    }
+
+    fn adjoin_margin(&mut self, value: f32) {
+        self.positive = self.positive.max(value.max(0.0));
+        self.negative = self.negative.min(value.min(0.0));
+    }
+
+    fn adjoin(&mut self, other: Self) {
+        self.positive = self.positive.max(other.positive);
+        self.negative = self.negative.min(other.negative);
+    }
+
+    fn resolved(self) -> f32 {
+        self.positive + self.negative
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BlockMarginProfile {
+    before: MarginStrut,
+    after: MarginStrut,
+    through: bool,
+    collapse_first_child: bool,
+    collapse_last_child: bool,
 }
 
 #[derive(Default)]
 struct FragmentBuilder {
     next_id: usize,
+    margin_profiles: std::collections::BTreeMap<LayoutNodeId, BlockMarginProfile>,
 }
 
 impl FragmentBuilder {
+    fn prepare_margin_profiles(&mut self, root: &LayoutNode) {
+        self.margin_profiles.clear();
+        collect_margin_profiles(root, &mut self.margin_profiles);
+    }
+
+    fn margin_profile(&self, node: &LayoutNode) -> BlockMarginProfile {
+        self.margin_profiles
+            .get(&node.id)
+            .copied()
+            .unwrap_or_default()
+    }
+
     fn build(&mut self, tree: &LayoutTree, viewport: Size) -> FragmentTree {
+        self.prepare_margin_profiles(&tree.root);
         let viewport_rect = Rect::new(0.0, 0.0, viewport.width, viewport.height);
         let containing_block = ContainingBlock {
             origin: Point { x: 0.0, y: 0.0 },
@@ -1474,8 +1687,13 @@ impl FragmentBuilder {
             },
         };
         let mut cursor_y = containing_block.origin.y;
-        let children =
-            self.layout_siblings(&tree.root.children, containing_block, &mut cursor_y, None);
+        let (children, _) = self.layout_siblings(
+            &tree.root.children,
+            containing_block,
+            &mut cursor_y,
+            MarginStrut::default(),
+            false,
+        );
 
         FragmentTree {
             root: Fragment {
@@ -1498,30 +1716,43 @@ impl FragmentBuilder {
         nodes: &[LayoutNode],
         containing_block: ContainingBlock,
         cursor_y: &mut f32,
-        mut previous_block_margin_bottom: Option<f32>,
-    ) -> Vec<Fragment> {
+        mut pending_margin: MarginStrut,
+        mut suppress_leading_margin: bool,
+    ) -> (Vec<Fragment>, MarginStrut) {
         let mut fragments = Vec::new();
         for node in nodes {
             match node.kind {
                 LayoutNodeKind::Box => {
-                    if let Some(previous_margin) = previous_block_margin_bottom {
-                        let collapsed =
-                            collapse_vertical_margins(previous_margin, node.style.margin.top);
-                        *cursor_y += collapsed - previous_margin - node.style.margin.top;
+                    let profile = self.margin_profile(node);
+                    if profile.through {
+                        if !suppress_leading_margin {
+                            pending_margin.adjoin(profile.before);
+                        }
+                        fragments.extend(self.layout_node(node, containing_block, cursor_y));
+                        continue;
+                    }
+
+                    if suppress_leading_margin {
+                        suppress_leading_margin = false;
+                    } else {
+                        pending_margin.adjoin(profile.before);
+                        *cursor_y += pending_margin.resolved();
                     }
                     fragments.extend(self.layout_node(node, containing_block, cursor_y));
-                    previous_block_margin_bottom = Some(node.style.margin.bottom);
+                    pending_margin = profile.after;
                 }
                 LayoutNodeKind::Text(_) => {
+                    suppress_leading_margin = false;
+                    *cursor_y += pending_margin.resolved();
+                    pending_margin = MarginStrut::default();
                     fragments.extend(self.layout_node(node, containing_block, cursor_y));
-                    previous_block_margin_bottom = None;
                 }
                 LayoutNodeKind::Root => {
                     unreachable!("only the layout root may have Root kind")
                 }
             }
         }
-        fragments
+        (fragments, pending_margin)
     }
 
     fn layout_node(
@@ -1591,9 +1822,9 @@ impl FragmentBuilder {
             .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0))
             .max(0.0);
 
-        let margin_top = *cursor_y;
         let border_x = x + style.margin.left;
-        let border_y = margin_top + style.margin.top;
+        let border_y = *cursor_y;
+        let margin_top = border_y - style.margin.top;
         let padding_x = border_x + style.border_width.left;
         let padding_y = border_y + style.border_width.top;
         let content_x = padding_x + style.padding.left;
@@ -1609,9 +1840,18 @@ impl FragmentBuilder {
                 height: containing_block.available.height,
             },
         };
+        let profile = self.margin_profile(node);
         let mut child_y = child_containing_block.origin.y;
-        let children =
-            self.layout_siblings(&node.children, child_containing_block, &mut child_y, None);
+        let (children, trailing_margin) = self.layout_siblings(
+            &node.children,
+            child_containing_block,
+            &mut child_y,
+            MarginStrut::default(),
+            profile.collapse_first_child,
+        );
+        if !profile.collapse_last_child {
+            child_y += trailing_margin.resolved();
+        }
 
         let natural_content_height = (child_y - content_y).max(0.0);
         let content_height = style.height.unwrap_or(natural_content_height).max(0.0);
@@ -1636,7 +1876,7 @@ impl FragmentBuilder {
             border_box.size.height + style.margin.vertical(),
         );
 
-        *cursor_y = margin_box.origin.y + margin_box.size.height;
+        *cursor_y = border_box.origin.y + border_box.size.height;
 
         Fragment {
             id: self.allocate_id(),
