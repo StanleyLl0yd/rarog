@@ -234,26 +234,34 @@ mod tests {
 
     #[test]
     fn invalid_font_requests_are_rejected_before_platform_calls() {
-        let mut request = PlatformFontRequest::default();
-        request.families.clear();
+        let request = PlatformFontRequest {
+            families: Vec::new(),
+            ..PlatformFontRequest::default()
+        };
         assert_eq!(request.validate(), Err(PlatformFontError::EmptyFamilyList));
 
-        let mut request = PlatformFontRequest::default();
-        request.weight = f32::NAN;
+        let request = PlatformFontRequest {
+            weight: f32::NAN,
+            ..PlatformFontRequest::default()
+        };
         assert!(matches!(
             request.validate(),
             Err(PlatformFontError::InvalidWeight(value)) if value.is_nan()
         ));
 
-        let mut request = PlatformFontRequest::default();
-        request.stretch = 2.1;
+        let request = PlatformFontRequest {
+            stretch: 2.1,
+            ..PlatformFontRequest::default()
+        };
         assert_eq!(
             request.validate(),
             Err(PlatformFontError::InvalidStretch(2.1))
         );
 
-        let mut request = PlatformFontRequest::default();
-        request.size_px = 0.0;
+        let request = PlatformFontRequest {
+            size_px: 0.0,
+            ..PlatformFontRequest::default()
+        };
         assert_eq!(request.validate(), Err(PlatformFontError::InvalidSize(0.0)));
     }
 }
