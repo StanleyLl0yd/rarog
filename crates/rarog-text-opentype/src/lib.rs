@@ -120,20 +120,11 @@ struct RegisteredFont {
     shaper_data: ShaperData,
 }
 
+#[derive(Default)]
 pub struct OpenTypeShapingBackend {
     limits: OpenTypeShapingLimits,
     total_bytes: u64,
     faces: BTreeMap<FontFaceId, RegisteredFont>,
-}
-
-impl Default for OpenTypeShapingBackend {
-    fn default() -> Self {
-        Self {
-            limits: OpenTypeShapingLimits::default(),
-            total_bytes: 0,
-            faces: BTreeMap::new(),
-        }
-    }
 }
 
 impl OpenTypeShapingBackend {
