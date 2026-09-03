@@ -67,10 +67,7 @@ pub enum SchedulerError {
     MicrotaskQueueFull,
     WorkInProgress(WorkId),
     NoActiveWork,
-    WrongCompletion {
-        expected: WorkId,
-        actual: WorkId,
-    },
+    WrongCompletion { expected: WorkId, actual: WorkId },
 }
 
 impl fmt::Display for SchedulerError {
@@ -356,9 +353,7 @@ mod tests {
             panic!("expected microtask");
         };
         assert_eq!(microtask.payload, "microtask");
-        scheduler
-            .complete(WorkId::Microtask(microtask.id))
-            .unwrap();
+        scheduler.complete(WorkId::Microtask(microtask.id)).unwrap();
         assert!(matches!(
             scheduler.next_step().unwrap().unwrap(),
             SchedulerStep::MicrotaskCheckpointComplete
@@ -442,12 +437,8 @@ mod tests {
     #[test]
     fn queued_tasks_can_be_cancelled_without_touching_active_work() {
         let mut scheduler = scheduler();
-        let active = scheduler
-            .queue_task(TaskSource::Timer, "active")
-            .unwrap();
-        let queued = scheduler
-            .queue_task(TaskSource::Timer, "queued")
-            .unwrap();
+        let active = scheduler.queue_task(TaskSource::Timer, "active").unwrap();
+        let queued = scheduler.queue_task(TaskSource::Timer, "queued").unwrap();
         scheduler.next_step().unwrap().unwrap();
         assert!(!scheduler.cancel_task(active));
         assert!(scheduler.cancel_task(queued));
@@ -485,9 +476,7 @@ mod tests {
     fn identity_exhaustion_is_reported_without_reusing_ids() {
         let mut scheduler = scheduler();
         scheduler.next_serial = u64::MAX;
-        let last = scheduler
-            .queue_task(TaskSource::Other(7), "last")
-            .unwrap();
+        let last = scheduler.queue_task(TaskSource::Other(7), "last").unwrap();
         assert_eq!(last.serial.get(), u64::MAX);
         assert_eq!(
             scheduler
