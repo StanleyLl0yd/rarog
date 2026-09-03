@@ -315,10 +315,7 @@ mod tests {
             KeyValue::character(""),
             Err(PlatformInputError::EmptyKeyValue)
         );
-        assert_eq!(
-            KeyValue::named(" "),
-            Err(PlatformInputError::EmptyKeyValue)
-        );
+        assert_eq!(KeyValue::named(" "), Err(PlatformInputError::EmptyKeyValue));
     }
 
     #[test]
@@ -352,7 +349,10 @@ mod tests {
 
     #[test]
     fn text_ranges_and_input_state_are_explicitly_validated() {
-        assert_eq!(TextRange::try_new(2, 4).unwrap(), TextRange { start: 2, end: 4 });
+        assert_eq!(
+            TextRange::try_new(2, 4).unwrap(),
+            TextRange { start: 2, end: 4 }
+        );
         assert_eq!(
             TextRange::try_new(4, 2),
             Err(PlatformInputError::InvalidTextRange)
