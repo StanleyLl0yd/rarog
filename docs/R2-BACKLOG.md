@@ -20,7 +20,7 @@ Tracking issue: #79.
 ## C — Events and scheduling
 
 - [x] Add Event and EventTarget foundations.
-- [ ] Add engine-owned task and microtask scheduling boundaries.
+- [x] Add engine-owned task and microtask scheduling boundaries.
 - [ ] Connect script-driven DOM mutations to existing invalidation and retained rendering.
 
 ## D — Fetch and identity primitives
