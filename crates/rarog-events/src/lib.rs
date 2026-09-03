@@ -161,7 +161,7 @@ impl Event {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct RegistrationId(NonZeroU64);
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Registration {
     id: RegistrationId,
     event_type: EventType,
@@ -271,16 +271,17 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
                 let registration_id = dispatch.snapshot[dispatch.snapshot_index];
                 dispatch.snapshot_index += 1;
                 let group = &dispatch.groups[dispatch.group_index];
-                let Some(registration) = self.resolve_registration(&group.target, registration_id)
+                let Some((listener, options)) =
+                    self.resolve_registration(&group.target, registration_id)
                 else {
                     continue;
                 };
-                dispatch.current_passive = Some(registration.options.passive);
+                dispatch.current_passive = Some(options.passive);
                 return Some(EventListenerInvocation {
                     current_target: group.target.clone(),
-                    listener: registration.listener,
+                    listener,
                     phase: group.phase,
-                    passive: registration.options.passive,
+                    passive: options.passive,
                 });
             }
 
@@ -324,22 +325,23 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
         &mut self,
         target: &T,
         registration_id: RegistrationId,
-    ) -> Option<Registration> {
-        let (registration, remove_target) = {
+    ) -> Option<(EventListenerId, EventListenerOptions)> {
+        let (listener, options, remove_target) = {
             let listeners = self.listeners.get_mut(target)?;
             let position = listeners
                 .iter()
                 .position(|registration| registration.id == registration_id)?;
-            let registration = listeners[position].clone();
-            if registration.options.once {
+            let listener = listeners[position].listener;
+            let options = listeners[position].options;
+            if options.once {
                 listeners.remove(position);
             }
-            (registration, listeners.is_empty())
+            (listener, options, listeners.is_empty())
         };
         if remove_target {
             self.listeners.remove(target);
         }
-        Some(registration)
+        Some((listener, options))
     }
 }
 
