@@ -6,7 +6,7 @@ Tracking issue: #109.
 
 ## A — Flexbox and Grid
 
-- [ ] Introduce Rarog-owned flex formatting metadata and a deterministic single-line row algorithm.
+- [x] Introduce the Rarog-owned bounded single-line flex-row geometry/placement primitive (#110).
 - [ ] Connect `display: flex` computed style and layout-tree dispatch to the measured row algorithm.
 - [ ] Add flex grow/shrink and main-axis free-space distribution.
 - [ ] Add flex alignment, wrapping and reverse directions in measured slices.
