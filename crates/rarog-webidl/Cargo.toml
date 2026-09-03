@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+weedle = { package = "weedle2", version = "=5.0.0" }
+
 [lib]
 path = "src/lib.rs"
 

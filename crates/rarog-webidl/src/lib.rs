@@ -1,3 +1,7 @@
+mod weedle_frontend;
+
+pub use weedle_frontend::StandardsWebIdlFrontend;
+
 use std::fmt::{self, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

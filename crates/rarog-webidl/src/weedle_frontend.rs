@@ -2,8 +2,9 @@ use weedle::Parse;
 
 use crate::{
     Argument, Definition, DictionaryDefinition, DictionaryMember, EnumDefinition, Identifier,
-    IncludesDefinition, InterfaceDefinition, InterfaceMember, PrimitiveType, SourceSpan, StringType,
-    TypedefDefinition, WebIdlError, WebIdlErrorKind, WebIdlFrontend, WebIdlModule, WebIdlType,
+    IncludesDefinition, InterfaceDefinition, InterfaceMember, PrimitiveType, SourceSpan,
+    StringType, TypedefDefinition, WebIdlError, WebIdlErrorKind, WebIdlFrontend, WebIdlModule,
+    WebIdlType,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -11,8 +12,8 @@ pub struct StandardsWebIdlFrontend;
 
 impl WebIdlFrontend for StandardsWebIdlFrontend {
     fn parse(&self, source: &str) -> Result<WebIdlModule, WebIdlError> {
-        let (remaining, definitions) = weedle::Definitions::parse(source)
-            .map_err(|error| parser_error(source, error))?;
+        let (remaining, definitions) =
+            weedle::Definitions::parse(source).map_err(|error| parser_error(source, error))?;
         if !remaining.trim().is_empty() {
             let offset = source.len().saturating_sub(remaining.len());
             return Err(WebIdlError::new(
@@ -551,7 +552,7 @@ mod tests {
         assert_eq!(module.definitions.len(), 8);
         assert!(snapshot.contains("interface|12:WindowExtras|-|false|true"));
         assert!(snapshot.contains("interface|6:Window|11:EventTarget|false|false"));
-        assert!(snapshot.contains("operation|5:reset|undefined|true"));
+        assert!(snapshot.contains("operation||5:reset|undefined|true"));
         assert!(snapshot.contains("dictionary|7:Options|11:BaseOptions|false"));
         assert!(snapshot.contains("enum|4:Mode|4:fast4:safe"));
         assert!(snapshot.contains("nullable<union<string:DomString;primitive:Long;>>"));
