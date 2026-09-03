@@ -1,6 +1,7 @@
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_engine::{
-    EngineEventLoop, EngineEventLoopStep, IncrementalMode, RenderOptions, RenderSession, render_html,
+    EngineEventLoop, EngineEventLoopStep, IncrementalMode, RenderOptions, RenderSession,
+    render_html,
 };
 use rarog_platform::{PlatformCapabilities, PlatformService};
 use rarog_scheduler::{SchedulerLimits, TaskSource, WorkId};
