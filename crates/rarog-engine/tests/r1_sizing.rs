@@ -57,7 +57,7 @@ fn max_width_incremental_update_matches_a_fresh_render() {
 }
 
 #[test]
-fn changing_flow_root_boundary_falls_back_to_a_correct_full_rebuild() {
+fn changing_flow_root_boundary_uses_retained_flow_relayout() {
     let source = "<div><div id=\"box\" style=\"display:block;margin-top:10px\"><div style=\"height:20px;margin-top:30px;background:#112233\"></div></div></div>";
     let expected_source = "<div><div id=\"box\" style=\"display:flow-root;margin-top:10px\"><div style=\"height:20px;margin-top:30px;background:#112233\"></div></div></div>";
     let mut session = RenderSession::new(source, options()).unwrap();
@@ -70,7 +70,8 @@ fn changing_flow_root_boundary_falls_back_to_a_correct_full_rebuild() {
     let report = session.update().unwrap();
     let fresh = render_html(expected_source, options()).unwrap();
 
-    assert_eq!(report.mode, IncrementalMode::FullRebuild);
+    assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+    assert!(report.retained_display_list);
     assert_eq!(
         session.framebuffer().stable_hash64(),
         fresh.framebuffer.stable_hash64()
