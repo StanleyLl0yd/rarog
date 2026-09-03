@@ -1,3 +1,17 @@
+pub mod clipboard;
+pub mod input;
+
+pub use clipboard::{
+    ClipboardError, ClipboardLimits, ClipboardText, DEFAULT_MAX_CLIPBOARD_TEXT_BYTES,
+    PlatformClipboardService,
+};
+pub use input::{
+    KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey, PlatformInputError,
+    PlatformInputEvent, PlatformInputService, PlatformPoint, PlatformRect,
+    PlatformTextInputService, PointerAction, PointerButton, PointerButtons, PointerInputEvent,
+    PointerKind, TextInputEvent, TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
+};
+
 use std::fmt;
 use std::sync::Arc;
 
@@ -5,7 +19,9 @@ use std::sync::Arc;
 pub enum PlatformService {
     WindowEvents,
     FontText,
+    Input,
     InputIme,
+    Clipboard,
     Accessibility,
     SandboxProcess,
     GpuCompositor,
@@ -15,7 +31,9 @@ pub enum PlatformService {
 pub struct PlatformCapabilities {
     pub window_events: bool,
     pub font_text: bool,
+    pub input: bool,
     pub input_ime: bool,
+    pub clipboard: bool,
     pub accessibility: bool,
     pub sandbox_process: bool,
     pub gpu_compositor: bool,
@@ -25,7 +43,9 @@ impl PlatformCapabilities {
     pub const NONE: Self = Self {
         window_events: false,
         font_text: false,
+        input: false,
         input_ime: false,
+        clipboard: false,
         accessibility: false,
         sandbox_process: false,
         gpu_compositor: false,
@@ -35,7 +55,9 @@ impl PlatformCapabilities {
         match service {
             PlatformService::WindowEvents => self.window_events,
             PlatformService::FontText => self.font_text,
+            PlatformService::Input => self.input,
             PlatformService::InputIme => self.input_ime,
+            PlatformService::Clipboard => self.clipboard,
             PlatformService::Accessibility => self.accessibility,
             PlatformService::SandboxProcess => self.sandbox_process,
             PlatformService::GpuCompositor => self.gpu_compositor,
@@ -190,6 +212,18 @@ pub trait PlatformHost: Send + Sync {
     fn font_service(&self) -> Option<&dyn PlatformFontService> {
         None
     }
+
+    fn input_service(&self) -> Option<&dyn PlatformInputService> {
+        None
+    }
+
+    fn text_input_service(&self) -> Option<&dyn PlatformTextInputService> {
+        None
+    }
+
+    fn clipboard_service(&self) -> Option<&dyn PlatformClipboardService> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -215,16 +249,33 @@ mod tests {
         assert_eq!(host.name(), "none");
         assert_eq!(host.capabilities(), PlatformCapabilities::NONE);
         assert!(host.font_service().is_none());
+        assert!(host.input_service().is_none());
+        assert!(host.text_input_service().is_none());
+        assert!(host.clipboard_service().is_none());
         for service in [
             PlatformService::WindowEvents,
             PlatformService::FontText,
+            PlatformService::Input,
             PlatformService::InputIme,
+            PlatformService::Clipboard,
             PlatformService::Accessibility,
             PlatformService::SandboxProcess,
             PlatformService::GpuCompositor,
         ] {
             assert!(!host.capabilities().supports(service));
         }
+    }
+
+    #[test]
+    fn capabilities_distinguish_input_ime_and_clipboard() {
+        let capabilities = PlatformCapabilities {
+            input: true,
+            clipboard: true,
+            ..PlatformCapabilities::NONE
+        };
+        assert!(capabilities.supports(PlatformService::Input));
+        assert!(capabilities.supports(PlatformService::Clipboard));
+        assert!(!capabilities.supports(PlatformService::InputIme));
     }
 
     #[test]
