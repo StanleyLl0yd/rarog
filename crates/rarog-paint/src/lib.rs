@@ -844,6 +844,18 @@ impl Framebuffer {
 
     fn rasterize_internal(&mut self, list: &DisplayList, images: Option<&ImageResourceStore>) {
         let framebuffer_clip = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
+        self.rasterize_clipped_internal(list, images, framebuffer_clip);
+    }
+
+    fn rasterize_clipped_internal(
+        &mut self,
+        list: &DisplayList,
+        images: Option<&ImageResourceStore>,
+        initial_clip: Rect,
+    ) {
+        let framebuffer = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
+        let framebuffer_clip =
+            intersection(framebuffer, initial_clip).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0));
         let mut clips = vec![framebuffer_clip];
         let mut transforms = Vec::new();
         let mut opacities = vec![Opacity::ONE];
@@ -924,47 +936,13 @@ impl Framebuffer {
         background: Color,
         images: Option<&ImageResourceStore>,
     ) {
-        if list
-            .commands
-            .iter()
-            .copied()
-            .any(DisplayCommand::is_structural)
-        {
-            self.clear_rect(
-                Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
-                background,
-            );
-            self.rasterize_internal(list, images);
-            return;
-        }
+        let framebuffer = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
         for damaged in &damage.rects {
-            self.clear_rect(*damaged, background);
-            for command in &list.commands {
-                match *command {
-                    DisplayCommand::FillRect { rect, color }
-                    | DisplayCommand::TextPlaceholder { rect, color } => {
-                        if let Some(clipped) = intersection(rect, *damaged) {
-                            self.fill_rect(clipped, color);
-                        }
-                    }
-                    DisplayCommand::DrawImage { rect, image } => {
-                        let Some(decoded) = images.and_then(|store| store.image(image)) else {
-                            continue;
-                        };
-                        if let Some(clipped) = intersection(rect, *damaged) {
-                            self.draw_image(rect, clipped, decoded, Opacity::ONE);
-                        }
-                    }
-                    DisplayCommand::PushClip { .. }
-                    | DisplayCommand::PopClip
-                    | DisplayCommand::PushStackingContext { .. }
-                    | DisplayCommand::PopStackingContext
-                    | DisplayCommand::PushTransform { .. }
-                    | DisplayCommand::PopTransform
-                    | DisplayCommand::PushOpacity { .. }
-                    | DisplayCommand::PopOpacity => {}
-                }
-            }
+            let Some(damaged) = intersection(*damaged, framebuffer) else {
+                continue;
+            };
+            self.clear_rect(damaged, background);
+            self.rasterize_clipped_internal(list, images, damaged);
         }
     }
 
@@ -1407,6 +1385,102 @@ mod tests {
         assert_eq!(list.commands[2], first_command);
         assert_eq!(list.commands[3], replacement);
         assert!(list.has_balanced_structure());
+    }
+
+    #[test]
+    fn structural_damage_replay_is_clipped_to_damage_rect() {
+        let list = DisplayList {
+            command_ids: vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+                DisplayItemId::test(4),
+                DisplayItemId::test(5),
+                DisplayItemId::test(6),
+                DisplayItemId::test(7),
+            ],
+            commands: vec![
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::translation(2.0, 0.0),
+                },
+                DisplayCommand::PushClip {
+                    rect: Rect::new(0.0, 0.0, 4.0, 4.0),
+                },
+                DisplayCommand::PushOpacity {
+                    opacity: Opacity::ONE,
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 4.0, 4.0),
+                    color: Color::rgb(255, 0, 0),
+                },
+                DisplayCommand::PopOpacity,
+                DisplayCommand::PopClip,
+                DisplayCommand::PopTransform,
+            ],
+        };
+        let mut framebuffer = Framebuffer::new(
+            Size {
+                width: 8.0,
+                height: 4.0,
+            },
+            Color::BLACK,
+        );
+        let damage = DamageRegion {
+            rects: vec![Rect::new(2.0, 0.0, 2.0, 2.0)],
+        };
+
+        framebuffer.rasterize_damage(&list, &damage, Color::WHITE);
+
+        assert_eq!(framebuffer.pixels[0], Color::BLACK);
+        assert_eq!(framebuffer.pixels[2], Color::rgb(255, 0, 0));
+        assert_eq!(framebuffer.pixels[3], Color::rgb(255, 0, 0));
+        assert_eq!(framebuffer.pixels[4], Color::BLACK);
+        assert_eq!(framebuffer.pixels[10], Color::rgb(255, 0, 0));
+        assert_eq!(framebuffer.pixels[18], Color::BLACK);
+        assert_eq!(framebuffer.pixels[20], Color::BLACK);
+    }
+
+    #[test]
+    fn structural_damage_incremental_replay_matches_full_raster() {
+        let make = |translation: f32| DisplayList {
+            command_ids: vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+                DisplayItemId::test(4),
+                DisplayItemId::test(5),
+            ],
+            commands: vec![
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::translation(translation, 0.0),
+                },
+                DisplayCommand::PushOpacity {
+                    opacity: Opacity::new(0.5).unwrap(),
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::PopOpacity,
+                DisplayCommand::PopTransform,
+            ],
+        };
+        let before = make(0.0);
+        let after = make(3.0);
+        let damage = DamageRegion::between(Some(&before), &after);
+        let size = Size {
+            width: 8.0,
+            height: 4.0,
+        };
+
+        let mut incremental = Framebuffer::new(size, Color::WHITE);
+        incremental.rasterize(&before);
+        incremental.rasterize_damage(&after, &damage, Color::WHITE);
+
+        let mut full = Framebuffer::new(size, Color::WHITE);
+        full.rasterize(&after);
+
+        assert_eq!(incremental.pixels, full.pixels);
     }
 
     #[test]
