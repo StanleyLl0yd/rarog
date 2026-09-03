@@ -10,6 +10,7 @@ members = [
   "crates/rarog-text-opentype",
   "crates/rarog-webidl",
   "crates/rarog-script",
+  "crates/rarog-script-spidermonkey",
   "crates/rarog-paint",
   "crates/rarog-platform",
   "crates/rarog-platform-windows",
