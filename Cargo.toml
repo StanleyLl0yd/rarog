@@ -4,6 +4,7 @@ members = [
   "crates/rarog-types",
   "crates/rarog-resources",
   "crates/rarog-dom",
+  "crates/rarog-events",
   "crates/rarog-html",
   "crates/rarog-css",
   "crates/rarog-layout",
