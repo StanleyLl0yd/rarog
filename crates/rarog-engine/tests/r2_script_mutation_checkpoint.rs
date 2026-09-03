@@ -34,7 +34,8 @@ fn task_and_microtask_dom_mutations_batch_until_render_checkpoint() {
     let initial_framebuffer = session.framebuffer().stable_hash64();
     let initial_generation = session.document().generation();
 
-    let mut event_loop = EngineEventLoop::<&'static str, &'static str>::new(scheduler_limits()).unwrap();
+    let mut event_loop =
+        EngineEventLoop::<&'static str, &'static str>::new(scheduler_limits()).unwrap();
     let task_id = event_loop
         .queue_task(TaskSource::DomManipulation, "script task")
         .unwrap();
@@ -51,7 +52,10 @@ fn task_and_microtask_dom_mutations_batch_until_render_checkpoint() {
 
     let microtask = event_loop.next_step(&mut session).unwrap().unwrap();
     assert!(matches!(microtask, EngineEventLoopStep::Microtask(_)));
-    session.document_mut().set_text(text, "one two three").unwrap();
+    session
+        .document_mut()
+        .set_text(text, "one two three")
+        .unwrap();
     assert_eq!(session.framebuffer().stable_hash64(), initial_framebuffer);
     event_loop
         .complete(WorkId::Microtask(microtask_id))
