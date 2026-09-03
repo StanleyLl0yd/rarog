@@ -1,6 +1,4 @@
-use rarog_platform::{
-    ClipboardError, ClipboardLimits, ClipboardText, PlatformClipboardService,
-};
+use rarog_platform::{ClipboardError, ClipboardLimits, ClipboardText, PlatformClipboardService};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowsClipboardService {
