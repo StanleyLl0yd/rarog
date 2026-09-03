@@ -1,5 +1,7 @@
+mod binding;
 mod weedle_frontend;
 
+pub use binding::{BindingMetadata, build_binding_metadata};
 pub use weedle_frontend::StandardsWebIdlFrontend;
 
 use std::fmt::{self, Write};
@@ -60,6 +62,7 @@ pub enum WebIdlErrorKind {
     InvalidIdentifier,
     Frontend,
     UnsupportedDefinition,
+    Validation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
