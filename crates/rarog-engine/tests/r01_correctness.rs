@@ -134,6 +134,36 @@ fn vertical_flow_append_and_reparent_reflow_are_preserved() {
     assert!(reparent_report.retained_display_list);
     assert!(!reparent_report.styles_rebuilt);
     assert_matches_fresh(&reparent, reparent_expected);
+
+    let attach_source = r#"<div id="host"></div>"#;
+    let attach_expected = r#"<div id="host"><span id="created">R</span></div>"#;
+    let mut attach = RenderSession::new(attach_source, options()).expect("session starts");
+    let host = element_with_id(attach.document(), "host");
+    let created = attach
+        .document_mut()
+        .create_node(NodeKind::Element(ElementData::html("span")))
+        .expect("detached element creation succeeds");
+    attach
+        .document_mut()
+        .set_attribute(created, "id", "created")
+        .expect("detached attribute mutation succeeds");
+    let text = attach
+        .document_mut()
+        .create_node(NodeKind::Text("R".into()))
+        .expect("detached text creation succeeds");
+    attach
+        .document_mut()
+        .append_child(created, text)
+        .expect("detached subtree construction succeeds");
+    attach
+        .document_mut()
+        .append_child(host, created)
+        .expect("detached subtree attachment succeeds");
+    let attach_report = attach.update().expect("attach update succeeds");
+    assert_eq!(attach_report.mode, IncrementalMode::FlowRelayout);
+    assert!(attach_report.retained_display_list);
+    assert!(!attach_report.styles_rebuilt);
+    assert_matches_fresh(&attach, attach_expected);
 }
 
 #[test]
