@@ -36,18 +36,13 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          for path in crates/rarog-layout/src/lib.rs crates/rarog-layout/src/flex.rs; do
-            if git diff --quiet -- "$path"; then
-              continue
-            fi
-            blob_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$HEAD_REF" --jq .sha)"
-            content="$(base64 -w0 "$path")"
-            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$path" \
-              -f message='Connect flex row foundation' \
-              -f content="$content" \
-              -f sha="$blob_sha" \
-              -f branch="$HEAD_REF"
-          done
+          if git diff --quiet -- crates/rarog-layout/src/lib.rs crates/rarog-layout/src/flex.rs; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add crates/rarog-layout/src/lib.rs crates/rarog-layout/src/flex.rs
+          git commit -m 'Connect flex row foundation'
+          git push origin "HEAD:$HEAD_REF"
