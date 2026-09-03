@@ -165,7 +165,10 @@ mod tests {
 
     #[test]
     fn tuple_origins_include_effective_port_and_ignore_path() {
-        let first = WebUrl::parse("https://example.com/a").unwrap().origin().unwrap();
+        let first = WebUrl::parse("https://example.com/a")
+            .unwrap()
+            .origin()
+            .unwrap();
         let second = WebUrl::parse("https://example.com:443/b?q=1")
             .unwrap()
             .origin()
