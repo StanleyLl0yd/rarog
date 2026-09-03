@@ -59,10 +59,7 @@ pub struct ScriptRealmLimits {
 }
 
 impl ScriptRealmLimits {
-    pub fn try_new(
-        max_source_bytes: usize,
-        max_rooted_values: usize,
-    ) -> Result<Self, ScriptError> {
+    pub fn try_new(max_source_bytes: usize, max_rooted_values: usize) -> Result<Self, ScriptError> {
         let max_source_bytes = NonZeroUsize::new(max_source_bytes).ok_or_else(|| {
             ScriptError::new(
                 ScriptErrorKind::InvalidInput,
