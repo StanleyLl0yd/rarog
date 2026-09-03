@@ -54,7 +54,8 @@ replacement = '''    #[test]
         assert_eq!(framebuffer.pixels[2], Color::rgb(255, 0, 0));
         assert_eq!(framebuffer.pixels[3], Color::rgb(255, 0, 0));
         assert_eq!(framebuffer.pixels[4], Color::BLACK);
-        assert_eq!(framebuffer.pixels[18], Color::rgb(255, 0, 0));
+        assert_eq!(framebuffer.pixels[10], Color::rgb(255, 0, 0));
+        assert_eq!(framebuffer.pixels[18], Color::BLACK);
         assert_eq!(framebuffer.pixels[20], Color::BLACK);
     }
 
