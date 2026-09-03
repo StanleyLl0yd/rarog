@@ -18,7 +18,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Apply stylesheet source revalidation slice
-        run: python tools/r1_stylesheet_revalidation_patch.py
+        run: |
+          python tools/r1_stylesheet_revalidation_patch.py
+          python tools/r1_stylesheet_revalidation_fix.py
       - name: Format
         run: cargo fmt --all
       - name: Check workspace
