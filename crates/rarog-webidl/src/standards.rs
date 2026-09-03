@@ -21,7 +21,11 @@ impl WebIdlFrontend for StandardsWebIdlFrontend {
 fn parse_definitions(source: &str) -> Result<weedle::Definitions<'_>, WebIdlError> {
     match weedle::Definitions::parse(source) {
         Ok((remaining, definitions)) if remaining.trim().is_empty() => Ok(definitions),
-        Ok((remaining, _)) => Err(frontend_error_at(source, remaining, "unparsed WebIDL input")),
+        Ok((remaining, _)) => Err(frontend_error_at(
+            source,
+            remaining,
+            "unparsed WebIDL input",
+        )),
         Err(weedle::Err::Error(error) | weedle::Err::Failure(error)) => Err(frontend_error_at(
             source,
             error.input,
@@ -240,7 +244,9 @@ fn normalize_mixin_member(
         weedle::mixin::MixinMember::Attribute(value) => {
             reject_extended_attributes(&value.attributes, "mixin attributes")?;
             if value.stringifier.is_some() {
-                return Err(unsupported("stringifier mixin attributes are not normalized yet"));
+                return Err(unsupported(
+                    "stringifier mixin attributes are not normalized yet",
+                ));
             }
             Ok(InterfaceMember::Attribute {
                 name: identifier(value.identifier.0)?,
@@ -252,7 +258,9 @@ fn normalize_mixin_member(
         weedle::mixin::MixinMember::Operation(value) => {
             reject_extended_attributes(&value.attributes, "mixin operations")?;
             if value.stringifier.is_some() {
-                return Err(unsupported("stringifier mixin operations are not normalized yet"));
+                return Err(unsupported(
+                    "stringifier mixin operations are not normalized yet",
+                ));
             }
             Ok(InterfaceMember::Operation {
                 name: value
@@ -265,9 +273,9 @@ fn normalize_mixin_member(
                 static_: false,
             })
         }
-        weedle::mixin::MixinMember::Const(_) | weedle::mixin::MixinMember::Stringifier(_) => Err(
-            unsupported("this mixin member kind is not normalized yet"),
-        ),
+        weedle::mixin::MixinMember::Const(_) | weedle::mixin::MixinMember::Stringifier(_) => {
+            Err(unsupported("this mixin member kind is not normalized yet"))
+        }
     }
 }
 
@@ -326,7 +334,9 @@ fn normalize_argument(argument: &weedle::argument::Argument<'_>) -> Result<Argum
     }
 }
 
-fn normalize_attributed_type(value: &weedle::types::AttributedType<'_>) -> Result<WebIdlType, WebIdlError> {
+fn normalize_attributed_type(
+    value: &weedle::types::AttributedType<'_>,
+) -> Result<WebIdlType, WebIdlError> {
     reject_extended_attributes(&value.attributes, "type uses")?;
     normalize_type(&value.type_)
 }
@@ -341,7 +351,9 @@ fn normalize_type(value: &weedle::types::Type<'_>) -> Result<WebIdlType, WebIdlE
     }
 }
 
-fn normalize_non_any_type(value: &weedle::types::NonAnyType<'_>) -> Result<WebIdlType, WebIdlError> {
+fn normalize_non_any_type(
+    value: &weedle::types::NonAnyType<'_>,
+) -> Result<WebIdlType, WebIdlError> {
     use weedle::types::NonAnyType;
 
     match value {
@@ -381,17 +393,17 @@ fn normalize_non_any_type(value: &weedle::types::NonAnyType<'_>) -> Result<WebId
             value.q_mark.is_some(),
         ),
         NonAnyType::Sequence(value) => with_nullable(
-            WebIdlType::Sequence(Box::new(normalize_type(value.type_.generics.body.as_ref())?)),
+            WebIdlType::Sequence(Box::new(normalize_type(
+                value.type_.generics.body.as_ref(),
+            )?)),
             value.q_mark.is_some(),
         ),
-        NonAnyType::Object(value) => {
-            with_nullable(WebIdlType::Object, value.q_mark.is_some())
-        }
-        NonAnyType::Symbol(value) => {
-            with_nullable(WebIdlType::Symbol, value.q_mark.is_some())
-        }
+        NonAnyType::Object(value) => with_nullable(WebIdlType::Object, value.q_mark.is_some()),
+        NonAnyType::Symbol(value) => with_nullable(WebIdlType::Symbol, value.q_mark.is_some()),
         NonAnyType::FrozenArrayType(value) => with_nullable(
-            WebIdlType::FrozenArray(Box::new(normalize_type(value.type_.generics.body.as_ref())?)),
+            WebIdlType::FrozenArray(Box::new(normalize_type(
+                value.type_.generics.body.as_ref(),
+            )?)),
             value.q_mark.is_some(),
         ),
         NonAnyType::RecordType(value) => normalize_record(value),
@@ -496,7 +508,9 @@ fn normalize_return_type(value: &weedle::types::ReturnType<'_>) -> Result<WebIdl
     }
 }
 
-fn normalize_union(value: &weedle::types::MayBeNull<weedle::types::UnionType<'_>>) -> Result<WebIdlType, WebIdlError> {
+fn normalize_union(
+    value: &weedle::types::MayBeNull<weedle::types::UnionType<'_>>,
+) -> Result<WebIdlType, WebIdlError> {
     let members = value
         .type_
         .body
@@ -507,7 +521,9 @@ fn normalize_union(value: &weedle::types::MayBeNull<weedle::types::UnionType<'_>
     with_nullable(WebIdlType::Union(members), value.q_mark.is_some())
 }
 
-fn normalize_union_member(value: &weedle::types::UnionMemberType<'_>) -> Result<WebIdlType, WebIdlError> {
+fn normalize_union_member(
+    value: &weedle::types::UnionMemberType<'_>,
+) -> Result<WebIdlType, WebIdlError> {
     match value {
         weedle::types::UnionMemberType::Single(value) => {
             reject_extended_attributes(&value.attributes, "union member types")?;
@@ -517,7 +533,9 @@ fn normalize_union_member(value: &weedle::types::UnionMemberType<'_>) -> Result<
     }
 }
 
-fn normalize_record(value: &weedle::types::MayBeNull<weedle::types::RecordType<'_>>) -> Result<WebIdlType, WebIdlError> {
+fn normalize_record(
+    value: &weedle::types::MayBeNull<weedle::types::RecordType<'_>>,
+) -> Result<WebIdlType, WebIdlError> {
     let (key, _, item) = &value.type_.generics.body;
     let key = match key.as_ref() {
         weedle::types::RecordKeyType::Byte(_) => StringType::ByteString,
