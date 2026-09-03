@@ -419,7 +419,8 @@ impl FetchRequest {
                 FetchErrorKind::RequestBodyLimitExceeded,
                 format!(
                     "request body requires {} bytes; limit is {}",
-                    body.len(), self.limits.max_request_body_bytes
+                    body.len(),
+                    self.limits.max_request_body_bytes
                 ),
             ));
         }
