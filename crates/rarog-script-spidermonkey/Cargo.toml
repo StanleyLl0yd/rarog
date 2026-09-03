@@ -1,0 +1,18 @@
+[package]
+name = "rarog-script-spidermonkey"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+spidermonkey = ["dep:mozjs"]
+
+[dependencies]
+rarog-script = { path = "../rarog-script" }
+mozjs = { version = "=0.21.6", optional = true }
+
+[lib]
+path = "src/lib.rs"
