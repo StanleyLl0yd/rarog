@@ -4,13 +4,13 @@ pub use embedder::*;
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
-    Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_for_dom, fragments_for_dom,
-    layout_document_with_styles, refresh_text_node, relayout_fragment_flow,
-    relayout_fragment_subtree, relayout_tree,
+    Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_flow_start_index,
+    fragment_for_dom, fragments_for_dom, layout_document_with_styles, refresh_text_node,
+    relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, build_display_list,
-    replace_display_items_for_fragment,
+    replace_display_items_for_fragment, replace_display_items_for_fragments,
 };
 use rarog_types::{Color, Size};
 use std::collections::{BTreeMap, BTreeSet};
@@ -252,6 +252,7 @@ pub struct IncrementalReport {
     pub through_generation: u64,
     pub dirty_nodes: usize,
     pub patched_nodes: usize,
+    pub retained_display_list: bool,
     pub elapsed: Duration,
 }
 
@@ -469,6 +470,7 @@ impl RenderSession {
                 through_generation,
                 dirty_nodes,
                 patched_nodes: 0,
+                retained_display_list: true,
                 elapsed: update_started.elapsed(),
             });
         }
@@ -581,15 +583,18 @@ impl RenderSession {
 
         let mode;
         let patched_nodes;
+        let retained_display_list;
         if requires_full_rebuild {
             self.full_rebuild(new_styles);
             mode = IncrementalMode::FullRebuild;
             patched_nodes = 0;
+            retained_display_list = false;
         } else if style_updates.is_empty() && text_relayout_nodes.is_empty() {
             self.styles = new_styles;
             self.damage = DamageRegion::default();
             mode = IncrementalMode::Unchanged;
             patched_nodes = 0;
+            retained_display_list = true;
         } else if geometry_changed && subtree_relayout_safe {
             let previous_display_list = self.display_list.clone();
             patched_nodes = style_updates.len();
@@ -631,10 +636,12 @@ impl RenderSession {
                     self.display_list = build_display_list(&self.layout.fragments);
                 }
                 mode = IncrementalMode::SubtreeRelayout;
+                retained_display_list = retained_display;
             } else {
                 self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
                 self.display_list = build_display_list(&self.layout.fragments);
                 mode = IncrementalMode::GeometryRelayout;
+                retained_display_list = false;
             }
             self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
             self.framebuffer.rasterize_damage(
@@ -650,13 +657,30 @@ impl RenderSession {
             }
             self.styles = new_styles;
             let flow_nodes = flow_relayout_nodes.into_iter().collect::<Vec<_>>();
+            let flow_start =
+                fragment_flow_start_index(&self.layout.tree, &self.layout.fragments, &flow_nodes);
+            let previous_flow_fragments =
+                flow_start.map(|start| self.layout.fragments.root.children[start..].to_vec());
             if relayout_fragment_flow(&self.layout.tree, &mut self.layout.fragments, &flow_nodes) {
                 mode = IncrementalMode::FlowRelayout;
+                let retained_display = match (flow_start, previous_flow_fragments.as_deref()) {
+                    (Some(start), Some(previous)) => replace_display_items_for_fragments(
+                        &mut self.display_list,
+                        previous,
+                        &self.layout.fragments.root.children[start..],
+                    ),
+                    _ => false,
+                };
+                if !retained_display {
+                    self.display_list = build_display_list(&self.layout.fragments);
+                }
+                retained_display_list = retained_display;
             } else {
                 self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
+                self.display_list = build_display_list(&self.layout.fragments);
                 mode = IncrementalMode::GeometryRelayout;
+                retained_display_list = false;
             }
-            self.display_list = build_display_list(&self.layout.fragments);
             self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
             self.framebuffer.rasterize_damage(
                 &self.display_list,
@@ -694,6 +718,7 @@ impl RenderSession {
                 self.options.background,
             );
             mode = IncrementalMode::PaintOnlyReuse;
+            retained_display_list = retained_display;
         }
 
         self.dirty.clear();
@@ -705,6 +730,7 @@ impl RenderSession {
             through_generation,
             dirty_nodes,
             patched_nodes,
+            retained_display_list,
             elapsed: update_started.elapsed(),
         })
     }
@@ -1331,6 +1357,7 @@ mod tests {
         let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
         assert_eq!(session.layout().tree.snapshot(), layout_before);
         assert_eq!(
             fragment_for_dom(&session.layout().fragments, before)
@@ -1379,6 +1406,7 @@ mod tests {
         let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
         assert_eq!(report.patched_nodes, 1);
         assert_eq!(session.layout().tree.node_count(), layout_node_count);
         assert_eq!(
@@ -1419,6 +1447,7 @@ mod tests {
         let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
         assert_eq!(report.patched_nodes, 2);
         assert_eq!(
             session.framebuffer().stable_hash64(),

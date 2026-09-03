@@ -47,6 +47,7 @@ Tracking issue: #39.
   - [x] Reflow ordinary `CharacterData` mutations through retained text layout nodes and flow-aware fragment rebuilding.
   - [x] Combine ordinary text reflow with paint-only style mutations while preserving geometry-changing mixed updates as full-rebuild fallbacks.
 - [ ] Extend retained/damage-aware paint across richer formatting and stacking behavior.
+  - [x] Retain and replace the affected display-list suffix across flow-aware fragment relayout.
 
 ## Scope boundary
 
