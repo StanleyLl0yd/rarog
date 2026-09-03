@@ -7,13 +7,13 @@ Tracking issue: #79.
 ## A — WebIDL and binding metadata
 
 - [x] Introduce a Rarog-owned normalized WebIDL IR and parser frontend boundary.
-- [ ] Connect a standards-oriented WebIDL parser behind that boundary without exposing dependency AST types.
-- [ ] Add deterministic validation and linking across related WebIDL definitions.
-- [ ] Add binding metadata suitable for generated DOM/Web API bindings.
+- [x] Connect a standards-oriented WebIDL parser behind that boundary without exposing dependency AST types.
+- [x] Add deterministic validation and linking across related WebIDL definitions.
+- [x] Add binding metadata suitable for generated DOM/Web API bindings.
 
 ## B — Script runtime boundary
 
-- [ ] Introduce a replaceable Rarog Script API with no runtime-specific types in DOM/Web API crates.
+- [x] Introduce a replaceable Rarog Script API with no runtime-specific types in DOM/Web API crates.
 - [ ] Define value, exception, rooting and realm ownership contracts before broad bindings.
 - [ ] Add the first SpiderMonkey adapter behind the Script API.
 
