@@ -1,7 +1,8 @@
 use rarog_platform::{
     KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey, PlatformInputError,
     PlatformInputEvent, PlatformInputService, PlatformPoint, PointerAction, PointerButton,
-    PointerButtons, PointerInputEvent, PointerKind, TextInputEvent, WheelDeltaMode, WheelInputEvent,
+    PointerButtons, PointerInputEvent, PointerKind, TextInputEvent, WheelDeltaMode,
+    WheelInputEvent,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -105,10 +106,7 @@ impl WindowsInputService {
         state.push_wheel(delta_x, delta_y, client_position)
     }
 
-    pub fn set_modifier_state(
-        &self,
-        modifiers: ModifierState,
-    ) -> Result<(), PlatformInputError> {
+    pub fn set_modifier_state(&self, modifiers: ModifierState) -> Result<(), PlatformInputError> {
         let mut state = self
             .state
             .lock()
@@ -151,16 +149,8 @@ impl WindowsInputState {
                 self.push_utf16_unit(wparam as u16);
                 Ok(true)
             }
-            WM_MOUSEMOVE
-            | WM_LBUTTONDOWN
-            | WM_LBUTTONUP
-            | WM_RBUTTONDOWN
-            | WM_RBUTTONUP
-            | WM_MBUTTONDOWN
-            | WM_MBUTTONUP
-            | WM_XBUTTONDOWN
-            | WM_XBUTTONUP
-            | WM_MOUSELEAVE => {
+            WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP
+            | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_XBUTTONDOWN | WM_XBUTTONUP | WM_MOUSELEAVE => {
                 self.push_mouse(message, wparam, lparam)?;
                 Ok(true)
             }
@@ -194,7 +184,9 @@ impl WindowsInputState {
             VK_CONTROL | VK_LCONTROL | VK_RCONTROL => self.modifiers.control = pressed,
             VK_MENU | VK_LMENU | VK_RMENU => self.modifiers.alt = pressed,
             VK_LWIN | VK_RWIN => self.modifiers.meta = pressed,
-            VK_CAPITAL if pressed && !repeat => self.modifiers.caps_lock = !self.modifiers.caps_lock,
+            VK_CAPITAL if pressed && !repeat => {
+                self.modifiers.caps_lock = !self.modifiers.caps_lock
+            }
             VK_NUMLOCK if pressed && !repeat => self.modifiers.num_lock = !self.modifiers.num_lock,
             _ => {}
         }
@@ -479,9 +471,8 @@ mod tests {
     use super::*;
 
     fn key_lparam(scan_code: u8, extended: bool, repeat: bool) -> isize {
-        ((usize::from(scan_code) << 16)
-            | ((extended as usize) << 24)
-            | ((repeat as usize) << 30)) as isize
+        ((usize::from(scan_code) << 16) | ((extended as usize) << 24) | ((repeat as usize) << 30))
+            as isize
     }
 
     fn pop(state: &mut WindowsInputState) -> PlatformInputEvent {
@@ -503,7 +494,11 @@ mod tests {
         }
 
         state
-            .push_window_message(WM_KEYDOWN, usize::from(b'A'), key_lparam(0x1e, false, false))
+            .push_window_message(
+                WM_KEYDOWN,
+                usize::from(b'A'),
+                key_lparam(0x1e, false, false),
+            )
             .unwrap();
         match pop(&mut state) {
             PlatformInputEvent::Keyboard(event) => {
@@ -558,7 +553,9 @@ mod tests {
         state.push_window_message(WM_CHAR, 0xde00, 0).unwrap();
         assert_eq!(
             pop(&mut state),
-            PlatformInputEvent::Text(TextInputEvent::Commit { text: "😀".into() })
+            PlatformInputEvent::Text(TextInputEvent::Commit {
+                text: "😀".into()
+            })
         );
     }
 
@@ -566,12 +563,12 @@ mod tests {
     fn malformed_surrogates_use_unicode_replacement_character() {
         let mut state = WindowsInputState::default();
         state.push_window_message(WM_CHAR, 0xd83d, 0).unwrap();
-        state.push_window_message(WM_CHAR, usize::from(b'A'), 0).unwrap();
+        state
+            .push_window_message(WM_CHAR, usize::from(b'A'), 0)
+            .unwrap();
         assert_eq!(
             pop(&mut state),
-            PlatformInputEvent::Text(TextInputEvent::Commit {
-                text: "�".into()
-            })
+            PlatformInputEvent::Text(TextInputEvent::Commit { text: "�".into() })
         );
         assert_eq!(
             pop(&mut state),
