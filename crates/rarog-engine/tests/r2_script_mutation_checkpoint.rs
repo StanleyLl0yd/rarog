@@ -8,10 +8,10 @@ fn element_with_id(document: &Document, expected_id: &str) -> NodeId {
     let mut stack = vec![document.root()];
     while let Some(node_id) = stack.pop() {
         let node = document.node(node_id).expect("reachable DOM node");
-        if let NodeKind::Element(element) = &node.kind
-            && element.attributes.get("id").map(String::as_str) == Some(expected_id)
-        {
-            return node_id;
+        if let NodeKind::Element(element) = &node.kind {
+            if element.attributes.get("id").map(String::as_str) == Some(expected_id) {
+                return node_id;
+            }
         }
         stack.extend(node.children.iter().rev().copied());
     }
