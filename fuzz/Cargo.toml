@@ -12,7 +12,10 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 rarog-css = { path = "../crates/rarog-css" }
 rarog-engine = { path = "../crates/rarog-engine" }
+rarog-fetch = { path = "../crates/rarog-fetch" }
 rarog-html = { path = "../crates/rarog-html" }
+rarog-url = { path = "../crates/rarog-url" }
+rarog-webidl = { path = "../crates/rarog-webidl" }
 
 [[bin]]
 name = "html_parse"
@@ -31,6 +34,27 @@ bench = false
 [[bin]]
 name = "css_stylesheet"
 path = "fuzz_targets/css_stylesheet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "webidl_parse"
+path = "fuzz_targets/webidl_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "url_parse"
+path = "fuzz_targets/url_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fetch_values"
+path = "fuzz_targets/fetch_values.rs"
 test = false
 doc = false
 bench = false
