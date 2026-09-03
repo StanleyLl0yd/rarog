@@ -1,0 +1,41 @@
+name: Audit shaping request staging
+
+on:
+  push:
+    branches:
+      - audit/shaping-request-stage
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Apply shaping request patch
+        run: python tools/audit_shaping_request_patch.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Strict Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test layout and OpenType integration
+        run: |
+          cargo test -p rarog-layout
+          cargo test -p rarog-text-opentype
+      - name: Commit verified product state
+        shell: bash
+        run: |
+          git add crates/rarog-layout/src/lib.rs
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Audit: bound shaping request grapheme scans"
+          git push
