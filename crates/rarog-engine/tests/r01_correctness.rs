@@ -167,6 +167,29 @@ fn vertical_flow_append_and_reparent_reflow_are_preserved() {
 }
 
 #[test]
+fn stylesheet_source_revalidation_matches_fresh_render() {
+    let source = r#"<style id="sheet">#target { height:20px;background:#112233; }</style><div id="target"></div><div style="height:10px;background:#445566"></div>"#;
+    let expected = r#"<style id="sheet">#target { height:32px;background:#778899; }</style><div id="target"></div><div style="height:10px;background:#445566"></div>"#;
+    let mut session = RenderSession::new(source, options()).expect("session starts");
+    let sheet = element_with_id(session.document(), "sheet");
+    let text = *session
+        .document()
+        .children(sheet)
+        .and_then(|children| children.first())
+        .expect("style element contains text");
+    session
+        .document_mut()
+        .set_text(text, "#target { height:32px;background:#778899; }")
+        .expect("stylesheet mutation succeeds");
+
+    let report = session.update().expect("stylesheet revalidation succeeds");
+    assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+    assert!(report.retained_display_list);
+    assert!(report.styles_rebuilt);
+    assert_matches_fresh(&session, expected);
+}
+
+#[test]
 fn structural_limits_reject_deep_and_wide_documents_before_recursive_rendering() {
     let deep = format!("{}x{}", "<div>".repeat(16), "</div>".repeat(16));
     let depth_limits = RenderLimits {
@@ -252,10 +275,10 @@ fn stylesheet_text_mutation_rebuilds_stylesheet_sources() {
         .set_text(text, "#target { background:#445566; }")
         .expect("stylesheet text mutation succeeds");
 
-    assert_eq!(
-        session.update().expect("stylesheet update succeeds").mode,
-        IncrementalMode::FullRebuild
-    );
+    let report = session.update().expect("stylesheet update succeeds");
+    assert_eq!(report.mode, IncrementalMode::PaintOnlyReuse);
+    assert!(report.retained_display_list);
+    assert!(report.styles_rebuilt);
     assert_matches_fresh(&session, expected);
 }
 

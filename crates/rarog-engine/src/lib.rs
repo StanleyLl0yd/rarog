@@ -506,9 +506,7 @@ impl RenderSession {
                         && (node_is_within_style_element(&self.document, *parent)
                             || subtree_contains_style_element(&self.document, *child));
                     stylesheet_sources_changed |= stylesheet_source_changed;
-                    if stylesheet_source_changed {
-                        requires_full_rebuild = true;
-                    } else if self.document.is_connected(*parent) {
+                    if self.document.is_connected(*parent) {
                         structural_relayout_nodes.insert(*parent);
                     }
                 }
@@ -526,19 +524,14 @@ impl RenderSession {
                                 node_is_within_style_element(&self.document, parent)
                             });
                     stylesheet_sources_changed |= stylesheet_source_changed;
-                    if stylesheet_source_changed {
-                        requires_full_rebuild = true;
-                    } else {
-                        for parent in old_parent.iter().chain(new_parent.iter()) {
-                            if self.document.is_connected(*parent) {
-                                structural_relayout_nodes.insert(*parent);
-                            }
+                    for parent in old_parent.iter().chain(new_parent.iter()) {
+                        if self.document.is_connected(*parent) {
+                            structural_relayout_nodes.insert(*parent);
                         }
                     }
                 }
                 MutationKind::CharacterData { node } => {
                     if node_is_within_style_element(&self.document, *node) {
-                        requires_full_rebuild = true;
                         stylesheet_sources_changed = true;
                     } else {
                         text_relayout_nodes.insert(*node);
@@ -597,6 +590,22 @@ impl RenderSession {
                         .iter()
                         .any(|root| node_is_within_dom_subtree(&self.document, *root, *candidate))
                 });
+            }
+        }
+
+        if !requires_full_rebuild && stylesheet_sources_changed {
+            if stylesheet_visibility_boundary_changed_outside_structural_roots(
+                &self.document,
+                &self.styles,
+                &new_styles,
+                &self.layout.tree.root,
+                &structural_relayout_nodes,
+            ) {
+                requires_full_rebuild = true;
+            } else {
+                style_candidates
+                    .retain(|candidate| !node_is_within_style_element(&self.document, *candidate));
+                collect_layout_dom_nodes(&self.layout.tree.root, &mut style_candidates);
             }
         }
 
@@ -1072,6 +1081,39 @@ fn subtree_contains_style_element(document: &Document, root: NodeId) -> bool {
         if matches!(&current.kind, NodeKind::Element(element) if element.tag_name.as_str() == "style")
         {
             return true;
+        }
+        stack.extend_from_slice(&current.children);
+    }
+    false
+}
+
+fn stylesheet_visibility_boundary_changed_outside_structural_roots(
+    document: &Document,
+    old_styles: &StyleSet,
+    new_styles: &StyleSet,
+    layout_root: &LayoutNode,
+    structural_roots: &BTreeSet<NodeId>,
+) -> bool {
+    let mut laid_out = BTreeSet::new();
+    collect_layout_dom_nodes(layout_root, &mut laid_out);
+    let mut stack = vec![document.root()];
+
+    while let Some(node) = stack.pop() {
+        if structural_roots
+            .iter()
+            .any(|root| node_is_within_dom_subtree(document, *root, node))
+        {
+            continue;
+        }
+        let Some(current) = document.node(node) else {
+            continue;
+        };
+        if matches!(&current.kind, NodeKind::Element(_)) && !laid_out.contains(&node) {
+            let old_style = computed_style(document, node, old_styles);
+            let new_style = computed_style(document, node, new_styles);
+            if old_style.display_none != new_style.display_none {
+                return true;
+            }
         }
         stack.extend_from_slice(&current.children);
     }
@@ -1628,7 +1670,7 @@ mod tests {
     }
 
     #[test]
-    fn style_element_character_data_still_requires_full_rebuild() {
+    fn style_element_character_data_revalidates_retained_layout() {
         let mut session = session(
             "<style>#target { background:#112233; }</style><div id=\"target\" style=\"height:20px\"></div>",
             deterministic_options(),
@@ -1655,7 +1697,8 @@ mod tests {
             .unwrap();
         let report = session.update().expect("stylesheet text update succeeds");
 
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(report.mode, IncrementalMode::PaintOnlyReuse);
+        assert!(report.retained_display_list);
     }
 
     #[test]
@@ -1731,6 +1774,115 @@ mod tests {
     }
 
     #[test]
+    fn stylesheet_text_paint_change_revalidates_retained_layout() {
+        let source = r#"<style id="sheet">#target { width:80px;height:20px;background:#112233; }</style><div id="target">R</div>"#;
+        let expected_source = r#"<style id="sheet">#target { width:80px;height:20px;background:#445566; }</style><div id="target">R</div>"#;
+        let mut session = session(source, deterministic_options());
+        let sheet = element_with_id(session.document(), "sheet");
+        let target = element_with_id(session.document(), "target");
+        let text = *session
+            .document()
+            .children(sheet)
+            .and_then(|children| children.first())
+            .expect("style element contains text");
+        let target_layout = layout_id_for_dom(&session.layout().tree.root, target).unwrap();
+
+        session
+            .document_mut()
+            .set_text(
+                text,
+                "#target { width:80px;height:20px;background:#445566; }",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("stylesheet paint revalidation succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::PaintOnlyReuse);
+        assert!(report.retained_display_list);
+        assert!(report.styles_rebuilt);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, target),
+            Some(target_layout)
+        );
+        assert_eq!(session.styles(), &expected.styles);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
+    fn stylesheet_text_geometry_change_uses_retained_flow_relayout() {
+        let source = r#"<style id="sheet">#target { height:20px;background:#112233; }</style><div id="target"></div><div id="after" style="height:10px;background:#445566"></div>"#;
+        let expected_source = r#"<style id="sheet">#target { height:32px;background:#112233; }</style><div id="target"></div><div id="after" style="height:10px;background:#445566"></div>"#;
+        let mut session = session(source, deterministic_options());
+        let sheet = element_with_id(session.document(), "sheet");
+        let target = element_with_id(session.document(), "target");
+        let text = *session
+            .document()
+            .children(sheet)
+            .and_then(|children| children.first())
+            .expect("style element contains text");
+        let target_layout = layout_id_for_dom(&session.layout().tree.root, target).unwrap();
+
+        session
+            .document_mut()
+            .set_text(text, "#target { height:32px;background:#112233; }")
+            .unwrap();
+        let report = session
+            .update()
+            .expect("stylesheet geometry revalidation succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+        assert!(report.styles_rebuilt);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, target),
+            Some(target_layout)
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
+    fn stylesheet_visibility_boundary_change_remains_full_rebuild() {
+        let source = r#"<style id="sheet">#target { display:block;height:20px;background:#112233; }</style><div id="target"></div>"#;
+        let expected_source = r#"<style id="sheet">#target { display:none;height:20px;background:#112233; }</style><div id="target"></div>"#;
+        let mut session = session(source, deterministic_options());
+        let sheet = element_with_id(session.document(), "sheet");
+        let text = *session
+            .document()
+            .children(sheet)
+            .and_then(|children| children.first())
+            .expect("style element contains text");
+
+        session
+            .document_mut()
+            .set_text(
+                text,
+                "#target { display:none;height:20px;background:#112233; }",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("stylesheet boundary fallback succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert!(!report.retained_display_list);
+        assert!(report.styles_rebuilt);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
     fn inserting_style_subtree_rebuilds_style_sources() {
         let source = "<div id=\"parent\" style=\"height:20px\"></div>";
         let expected_source = "<div id=\"parent\" style=\"height:20px\"><style>#parent { background:#445566; }</style></div>";
@@ -1754,7 +1906,8 @@ mod tests {
         let report = session.update().expect("style insertion succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
         assert!(report.styles_rebuilt);
         assert_eq!(session.styles(), &expected.styles);
         assert_eq!(
