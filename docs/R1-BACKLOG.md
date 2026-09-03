@@ -50,6 +50,7 @@ Tracking issue: #39.
   - [x] Reflow append-only connected child insertions through retained layout subtrees while preserving existing `LayoutNodeId` identity.
   - [x] Reflow ordinary reparent and detach mutations across retained structural roots while preserving moved subtree `LayoutNodeId` identity.
   - [x] Attach detached, newly created subtrees through covered retained structural roots without a full layout rebuild.
+  - [x] Revalidate retained layout globally when connected stylesheet sources change, with formatting and visibility-membership boundary fallbacks.
 - [ ] Extend retained/damage-aware paint across richer formatting and stacking behavior.
   - [x] Retain and replace the affected display-list suffix across flow-aware fragment relayout.
 
