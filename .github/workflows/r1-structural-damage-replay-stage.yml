@@ -18,7 +18,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Apply structural damage replay slice
-        run: python tools/r1_structural_damage_replay_patch.py
+        run: |
+          python tools/r1_structural_damage_replay_patch.py
+          python tools/r1_structural_damage_replay_fix.py
       - name: Format
         run: cargo fmt --all
       - name: Check workspace
