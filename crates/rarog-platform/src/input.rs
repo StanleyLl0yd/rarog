@@ -170,10 +170,10 @@ pub struct PointerInputEvent {
 impl PointerInputEvent {
     pub fn validate(&self) -> Result<(), PlatformInputError> {
         self.position.validate()?;
-        if let Some(pressure) = self.pressure
-            && (!pressure.is_finite() || !(0.0..=1.0).contains(&pressure))
-        {
-            return Err(PlatformInputError::InvalidPressure);
+        if let Some(pressure) = self.pressure {
+            if !pressure.is_finite() || !(0.0..=1.0).contains(&pressure) {
+                return Err(PlatformInputError::InvalidPressure);
+            }
         }
         Ok(())
     }
