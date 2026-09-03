@@ -301,9 +301,7 @@ mod tests {
         let mut runtime = FixtureRuntime::new();
         let runtime: &mut dyn ScriptRuntime = &mut runtime;
         let realm = runtime.create_realm().unwrap();
-        let outcome = runtime
-            .evaluate(realm, ScriptSource::new("1 + 1"))
-            .unwrap();
+        let outcome = runtime.evaluate(realm, ScriptSource::new("1 + 1")).unwrap();
         assert!(outcome.diagnostics.is_empty());
         runtime.destroy_realm(realm).unwrap();
     }
@@ -332,9 +330,7 @@ mod tests {
         let mut runtime = FixtureRuntime::new();
         let realm = runtime.create_realm().unwrap();
         runtime.destroy_realm(realm).unwrap();
-        let error = runtime
-            .evaluate(realm, ScriptSource::new("1"))
-            .unwrap_err();
+        let error = runtime.evaluate(realm, ScriptSource::new("1")).unwrap_err();
         assert_eq!(error.kind, ScriptErrorKind::InvalidRealm);
     }
 
@@ -353,9 +349,7 @@ mod tests {
 
     #[test]
     fn source_limit_is_checked_before_backend_work() {
-        let error = ScriptSource::new("12345")
-            .ensure_byte_limit(4)
-            .unwrap_err();
+        let error = ScriptSource::new("12345").ensure_byte_limit(4).unwrap_err();
         assert_eq!(error.kind, ScriptErrorKind::ResourceLimit);
     }
 
