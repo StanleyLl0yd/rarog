@@ -1,3 +1,9 @@
+mod flex;
+
+pub use flex::{
+    FlexLayoutError, FlexRowItem, FlexRowLayout, FlexRowPlacement, layout_single_line_flex_row,
+};
+
 use rarog_css::{ComputedStyle, StyleSet, VerticalAlign, computed_style_with_parent};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};

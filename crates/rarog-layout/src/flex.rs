@@ -95,9 +95,8 @@ pub fn layout_single_line_flex_row(
         });
 
         cursor_x += item.base_size.width + item.margin.right;
-        max_cross_size = max_cross_size.max(
-            item.margin.top + item.base_size.height + item.margin.bottom,
-        );
+        max_cross_size =
+            max_cross_size.max(item.margin.top + item.base_size.height + item.margin.bottom);
     }
 
     let used_main_size = (cursor_x - origin.x).max(0.0);
@@ -121,10 +120,7 @@ fn validate_origin(origin: Point) -> Result<(), FlexLayoutError> {
 }
 
 fn validate_size(size: Size) -> Result<(), ()> {
-    if size.width.is_finite()
-        && size.height.is_finite()
-        && size.width >= 0.0
-        && size.height >= 0.0
+    if size.width.is_finite() && size.height.is_finite() && size.width >= 0.0 && size.height >= 0.0
     {
         Ok(())
     } else {
@@ -133,7 +129,8 @@ fn validate_size(size: Size) -> Result<(), ()> {
 }
 
 fn validate_item(item: FlexRowItem) -> Result<(), FlexLayoutError> {
-    validate_size(item.base_size).map_err(|_| FlexLayoutError::InvalidItemSize { node: item.node })?;
+    validate_size(item.base_size)
+        .map_err(|_| FlexLayoutError::InvalidItemSize { node: item.node })?;
     let margins = [
         item.margin.top,
         item.margin.right,
@@ -154,11 +151,7 @@ mod tests {
     use super::*;
 
     fn item(index: usize, width: f32, height: f32) -> FlexRowItem {
-        FlexRowItem::new(
-            LayoutNodeId(index),
-            Size { width, height },
-            EdgeSizes::ZERO,
-        )
+        FlexRowItem::new(LayoutNodeId(index), Size { width, height }, EdgeSizes::ZERO)
     }
 
     #[test]
@@ -184,7 +177,10 @@ mod tests {
                 },
             }
         );
-        assert_eq!(layout.items[1].border_box.origin, Point { x: 30.0, y: 20.0 });
+        assert_eq!(
+            layout.items[1].border_box.origin,
+            Point { x: 30.0, y: 20.0 }
+        );
         assert_eq!(
             layout.content_size,
             Size {
