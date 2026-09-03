@@ -27,7 +27,10 @@ pub struct ClipboardText {
 }
 
 impl ClipboardText {
-    pub fn try_new(text: impl Into<String>, limits: ClipboardLimits) -> Result<Self, ClipboardError> {
+    pub fn try_new(
+        text: impl Into<String>,
+        limits: ClipboardLimits,
+    ) -> Result<Self, ClipboardError> {
         if !limits.is_valid() {
             return Err(ClipboardError::InvalidLimits);
         }
@@ -63,10 +66,15 @@ pub enum ClipboardError {
 impl fmt::Display for ClipboardError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedTarget => formatter.write_str("clipboard is unavailable on this target"),
+            Self::UnsupportedTarget => {
+                formatter.write_str("clipboard is unavailable on this target")
+            }
             Self::InvalidLimits => formatter.write_str("clipboard limits must be non-zero"),
             Self::TextLimitExceeded { bytes, limit } => {
-                write!(formatter, "clipboard text requires {bytes} bytes; limit is {limit}")
+                write!(
+                    formatter,
+                    "clipboard text requires {bytes} bytes; limit is {limit}"
+                )
             }
             Self::Busy => formatter.write_str("clipboard is currently unavailable"),
             Self::InvalidData => formatter.write_str("clipboard data is invalid"),
@@ -95,7 +103,10 @@ mod tests {
     #[test]
     fn clipboard_text_is_bounded_by_utf8_bytes() {
         let limits = ClipboardLimits { max_text_bytes: 4 };
-        assert_eq!(ClipboardText::try_new("test", limits).unwrap().as_str(), "test");
+        assert_eq!(
+            ClipboardText::try_new("test", limits).unwrap().as_str(),
+            "test"
+        );
         assert_eq!(
             ClipboardText::try_new("тест", limits),
             Err(ClipboardError::TextLimitExceeded { bytes: 8, limit: 4 })
