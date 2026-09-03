@@ -14,7 +14,7 @@ Tracking issue: #79.
 ## B — Script runtime boundary
 
 - [x] Introduce a replaceable Rarog Script API with no runtime-specific types in DOM/Web API crates.
-- [ ] Define value, exception, rooting and realm ownership contracts before broad bindings.
+- [x] Define value, exception, rooting and realm ownership contracts before broad bindings.
 - [ ] Add the first SpiderMonkey adapter behind the Script API.
 
 ## C — Events and scheduling
