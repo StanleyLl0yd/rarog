@@ -7,7 +7,10 @@ authors.workspace = true
 rust-version.workspace = true
 
 [lib]
-path = "src/lib.rs"
+path = "src/stage_entry.rs"
+
+[dependencies]
+weedle2 = "=5.0.0"
 
 [lints]
 workspace = true
