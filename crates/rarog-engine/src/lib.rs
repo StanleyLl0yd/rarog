@@ -656,8 +656,16 @@ impl RenderSession {
                 }
                 if old_style != new_style {
                     if fragments_for_dom(&self.layout.fragments, node).len() > 1 {
-                        requires_full_rebuild = true;
-                        break;
+                        let Some(root) = retained_structural_parent(
+                            &self.document,
+                            &self.layout.tree.root,
+                            node,
+                        ) else {
+                            requires_full_rebuild = true;
+                            break;
+                        };
+                        formatting_relayout_nodes.insert(root);
+                        continue;
                     }
                     if old_style.color != new_style.color {
                         collect_layout_descendant_dom_nodes(
@@ -672,8 +680,16 @@ impl RenderSession {
                             || old_style.display_inline
                             || new_style.display_inline)
                     {
-                        requires_full_rebuild = true;
-                        break;
+                        let Some(root) = retained_structural_parent(
+                            &self.document,
+                            &self.layout.tree.root,
+                            node,
+                        ) else {
+                            requires_full_rebuild = true;
+                            break;
+                        };
+                        formatting_relayout_nodes.insert(root);
+                        continue;
                     }
                     geometry_changed |= layout_changed;
                     if layout_changed && vertical_footprint_changed(old_style, new_style) {
@@ -1724,7 +1740,7 @@ mod tests {
     }
 
     #[test]
-    fn character_data_and_geometry_style_update_remain_full_rebuild() {
+    fn character_data_and_geometry_style_update_share_retained_flow_relayout() {
         let source = "<div id=\"target\" style=\"width:48px;background:#112233\">one</div>";
         let expected_source =
             "<div id=\"target\" style=\"width:72px;background:#778899\">one two three four</div>";
@@ -1745,10 +1761,13 @@ mod tests {
             .set_attribute(target, "style", "width:72px;background:#778899")
             .unwrap();
 
-        let report = session.update().expect("mixed fallback update succeeds");
+        let report = session
+            .update()
+            .expect("mixed retained-flow update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
         assert_eq!(
             session.framebuffer().stable_hash64(),
             expected.framebuffer.stable_hash64()
