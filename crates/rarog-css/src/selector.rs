@@ -1,7 +1,6 @@
 use crate::{SelectorDependency, SelectorDependencyScope, SelectorInvalidationKey, Specificity};
 use cssparser::{BasicParseErrorKind, ParseError, Parser, ParserInput, Token};
 use rarog_dom::{Document, NodeId, NodeKind};
-use std::collections::BTreeSet;
 
 const MAX_SELECTOR_COMPOUNDS: usize = 64;
 const MAX_SIMPLE_SELECTORS: usize = 64;
@@ -87,16 +86,14 @@ impl CompoundSelector {
             }
         }
         if !self.classes.is_empty() {
-            let element_classes = element
-                .attributes
-                .get("class")
-                .map(|value| value.split_whitespace().collect::<BTreeSet<_>>())
-                .unwrap_or_default();
-            if self
-                .classes
-                .iter()
-                .any(|class| !element_classes.contains(class.as_str()))
-            {
+            let Some(element_classes) = element.attributes.get("class") else {
+                return false;
+            };
+            if self.classes.iter().any(|class| {
+                !element_classes
+                    .split_whitespace()
+                    .any(|candidate| candidate == class)
+            }) {
                 return false;
             }
         }
