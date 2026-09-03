@@ -2143,15 +2143,13 @@ impl FragmentBuilder {
         let mut line = InlineLineState::new(containing_block);
 
         for node in nodes {
-            match &node.kind {
-                LayoutNodeKind::Box if fragmenting_inline_text_stream(node).is_some() => {
+            if matches!(&node.kind, LayoutNodeKind::Box) {
+                if let Some(stream) = fragmenting_inline_text_stream(node) {
                     suppress_leading_margin = false;
                     if !line.active {
                         *cursor_y += pending_margin.resolved();
                         pending_margin = MarginStrut::default();
                     }
-                    let stream = fragmenting_inline_text_stream(node)
-                        .expect("fragmenting inline guard validated the text stream");
                     self.layout_inline_text_stream_flow(
                         stream,
                         InlineTextContainerFlow {
@@ -2161,7 +2159,11 @@ impl FragmentBuilder {
                             fragments: &mut fragments,
                         },
                     );
+                    continue;
                 }
+            }
+
+            match &node.kind {
                 LayoutNodeKind::Box if node.style.display_inline => {
                     suppress_leading_margin = false;
                     if !line.active {

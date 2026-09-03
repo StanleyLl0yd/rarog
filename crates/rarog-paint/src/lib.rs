@@ -406,12 +406,15 @@ fn replace_display_items(
     if list.commands[range.start..range.end] != previous.commands[..] {
         return false;
     }
-    let (Some(before_scopes), Some(after_scopes)) = (
-        scope_stack_at(&list.commands, range.start),
-        scope_stack_at(&list.commands, range.end),
-    ) else {
+    let Some(before_scopes) = scope_stack_at(&list.commands, range.start) else {
         return false;
     };
+    let mut after_scopes = before_scopes.clone();
+    for command in &list.commands[range.start..range.end] {
+        if !apply_scope_command(*command, &mut after_scopes) {
+            return false;
+        }
+    }
     if before_scopes != after_scopes {
         return false;
     }
