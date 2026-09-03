@@ -390,13 +390,10 @@ fn cluster_starts(
     let text_len = u32::try_from(text_len)
         .map_err(|_| OpenTypeShapingError::InvalidClusterBoundary(u32::MAX))?;
     let mut starts = infos.iter().map(|info| info.cluster).collect::<Vec<_>>();
-    if starts.iter().any(|cluster| *cluster >= text_len) && text_len != 0 {
-        return Err(OpenTypeShapingError::InvalidClusterBoundary(
-            starts
-                .into_iter()
-                .find(|cluster| *cluster >= text_len)
-                .unwrap_or(text_len),
-        ));
+    if text_len != 0 {
+        if let Some(cluster) = starts.iter().copied().find(|cluster| *cluster >= text_len) {
+            return Err(OpenTypeShapingError::InvalidClusterBoundary(cluster));
+        }
     }
     starts.sort_unstable();
     starts.dedup();

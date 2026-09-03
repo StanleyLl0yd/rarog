@@ -386,8 +386,10 @@ pub fn font_runs(text: &str, chain: &FontFallbackChain) -> Vec<FontRun> {
         } else {
             chain.select_face_for_characters(&characters, range)
         }
-        .or_else(|| chain.faces.last().map(|face| face.id))
-        .expect("font fallback chain must contain at least one face");
+        .or_else(|| chain.faces.last().map(|face| face.id));
+        let Some(face) = face else {
+            return Vec::new();
+        };
         if let Some(previous) = runs.last_mut() {
             if previous.face == face && previous.range.end == range.start {
                 previous.range.end = range.end;
@@ -3845,5 +3847,17 @@ mod tests {
         assert_eq!(requests[0].script, ShapingScript::Latin);
         assert_eq!(requests[1].script, ShapingScript::Cyrillic);
         assert_eq!(requests[0].run.range.end, requests[1].run.range.start);
+    }
+}
+
+#[cfg(test)]
+mod audit_font_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn empty_font_fallback_chain_is_non_panicking() {
+        let chain = FontFallbackChain { faces: Vec::new() };
+        assert!(font_runs("Rarog", &chain).is_empty());
+        assert!(shaping_runs("Rarog", &chain).is_empty());
     }
 }
