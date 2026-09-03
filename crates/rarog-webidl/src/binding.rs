@@ -64,9 +64,11 @@ pub fn build_binding_metadata(module: &WebIdlModule) -> Result<BindingMetadata, 
     for (name, entry) in named {
         definitions.push(finalize_named(name, entry)?);
     }
-    definitions.extend(includes.into_iter().map(|(target, mixin)| {
-        Definition::Includes(IncludesDefinition { target, mixin })
-    }));
+    definitions.extend(
+        includes
+            .into_iter()
+            .map(|(target, mixin)| Definition::Includes(IncludesDefinition { target, mixin })),
+    );
 
     Ok(BindingMetadata { definitions })
 }
@@ -124,7 +126,11 @@ fn insert_interface(
             NamedEntry::Interface(parts) if parts.mixin == definition.mixin => {
                 add_interface_part(&name, parts, definition)
             }
-            existing => Err(kind_conflict(&name, existing.kind_label(), interface_kind(definition.mixin))),
+            existing => Err(kind_conflict(
+                &name,
+                existing.kind_label(),
+                interface_kind(definition.mixin),
+            )),
         },
     }
 }
@@ -289,7 +295,11 @@ fn finalize_named(name: Identifier, entry: NamedEntry) -> Result<Definition, Web
 }
 
 fn interface_kind(mixin: bool) -> &'static str {
-    if mixin { "interface mixin" } else { "interface" }
+    if mixin {
+        "interface mixin"
+    } else {
+        "interface"
+    }
 }
 
 fn kind_conflict(name: &Identifier, existing: &str, incoming: &str) -> WebIdlError {
@@ -354,10 +364,8 @@ mod tests {
 
     #[test]
     fn metadata_rejects_duplicate_non_partial_definitions() {
-        let error = build_binding_metadata(&parse(
-            "interface Example {}; interface Example {};",
-        ))
-        .unwrap_err();
+        let error = build_binding_metadata(&parse("interface Example {}; interface Example {};"))
+            .unwrap_err();
 
         assert_eq!(error.kind, WebIdlErrorKind::Validation);
         assert!(error.message.contains("duplicate non-partial"));
@@ -365,8 +373,7 @@ mod tests {
 
     #[test]
     fn metadata_rejects_orphan_partials() {
-        let error = build_binding_metadata(&parse("partial interface Example {};"))
-            .unwrap_err();
+        let error = build_binding_metadata(&parse("partial interface Example {};")).unwrap_err();
 
         assert_eq!(error.kind, WebIdlErrorKind::Validation);
         assert!(error.message.contains("has no non-partial definition"));
@@ -385,10 +392,9 @@ mod tests {
 
     #[test]
     fn metadata_rejects_invalid_includes_relations() {
-        let missing_target = build_binding_metadata(&parse(
-            "interface mixin Extra {}; Missing includes Extra;",
-        ))
-        .unwrap_err();
+        let missing_target =
+            build_binding_metadata(&parse("interface mixin Extra {}; Missing includes Extra;"))
+                .unwrap_err();
         assert_eq!(missing_target.kind, WebIdlErrorKind::Validation);
         assert!(missing_target.message.contains("no interface definition"));
 
