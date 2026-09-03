@@ -31,8 +31,14 @@ impl PlatformClipboardService for WindowsClipboardService {
     }
 
     fn write_text(&self, text: &ClipboardText) -> Result<(), ClipboardError> {
-        let validated = ClipboardText::try_new(text.as_str(), self.limits)?;
-        write_system_text(&validated)
+        let bytes = text.as_str().len();
+        if bytes > self.limits.max_text_bytes {
+            return Err(ClipboardError::TextLimitExceeded {
+                bytes,
+                limit: self.limits.max_text_bytes,
+            });
+        }
+        write_system_text(text)
     }
 }
 
