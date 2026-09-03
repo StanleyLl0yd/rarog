@@ -14,8 +14,8 @@ use mozjs::rust::{
 };
 use rarog_script::{
     EvaluationOutcome, RealmId, RealmIdAllocator, RootedValueId, RootedValueIdAllocator,
-    ScriptCompletion, ScriptError, ScriptErrorKind, ScriptException, ScriptRealm, ScriptRealmLimits,
-    ScriptRuntime, ScriptSource,
+    ScriptCompletion, ScriptError, ScriptErrorKind, ScriptException, ScriptRealm,
+    ScriptRealmLimits, ScriptRuntime, ScriptSource,
 };
 
 type PersistentObject = RootedTraceableBox<Heap<*mut JSObject>>;
@@ -76,12 +76,15 @@ impl RealmState {
     }
 
     fn require_root(&self, value: RootedValueId) -> Result<JSVal, ScriptError> {
-        self.roots.get(&value).map(|root| root.get()).ok_or_else(|| {
-            ScriptError::new(
-                ScriptErrorKind::InvalidRoot,
-                "script rooted value is not live",
-            )
-        })
+        self.roots
+            .get(&value)
+            .map(|root| root.get())
+            .ok_or_else(|| {
+                ScriptError::new(
+                    ScriptErrorKind::InvalidRoot,
+                    "script rooted value is not live",
+                )
+            })
     }
 }
 
@@ -279,7 +282,12 @@ mod tests {
             ScriptCompletion::Throw(exception) => exception,
             ScriptCompletion::Normal(_) => panic!("throwing evaluation unexpectedly completed"),
         };
-        assert!(exception.message.as_deref().is_some_and(|message| message.contains("boom")));
+        assert!(
+            exception
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("boom"))
+        );
         runtime.release_root(exception.value).unwrap();
 
         let oversized = "x".repeat(1025);
