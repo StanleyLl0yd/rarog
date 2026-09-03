@@ -1,0 +1,41 @@
+name: R1 structural damage replay staging
+
+on:
+  push:
+    branches:
+      - r1/structural-damage-replay-stage
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Apply structural damage replay slice
+        run: python tools/r1_structural_damage_replay_patch.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Strict Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test paint
+        run: cargo test -p rarog-paint
+      - name: Commit verified product change
+        shell: bash
+        run: |
+          if git diff --quiet -- crates/rarog-paint/src/lib.rs; then
+            echo "Product slice already present"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/rarog-paint/src/lib.rs
+          git commit -m "R1: replay structural damage without full-frame fallback"
+          git push origin HEAD:r1/structural-damage-replay-stage
