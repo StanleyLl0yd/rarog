@@ -11,6 +11,7 @@ members = [
   "crates/rarog-text-opentype",
   "crates/rarog-webidl",
   "crates/rarog-url",
+  "crates/rarog-fetch",
   "crates/rarog-script",
   "crates/rarog-script-spidermonkey",
   "crates/rarog-scheduler",
