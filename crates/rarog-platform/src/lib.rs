@@ -2,14 +2,14 @@ pub mod clipboard;
 pub mod input;
 
 pub use clipboard::{
-    ClipboardError, ClipboardLimits, ClipboardText, PlatformClipboardService,
-    DEFAULT_MAX_CLIPBOARD_TEXT_BYTES,
+    ClipboardError, ClipboardLimits, ClipboardText, DEFAULT_MAX_CLIPBOARD_TEXT_BYTES,
+    PlatformClipboardService,
 };
 pub use input::{
-    KeyboardInputEvent, KeyState, KeyValue, ModifierState, PhysicalKey, PlatformInputError,
-    PlatformInputEvent, PlatformInputService, PlatformPoint, PlatformRect, PlatformTextInputService,
-    PointerAction, PointerButton, PointerButtons, PointerInputEvent, PointerKind, TextInputEvent,
-    TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
+    KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey, PlatformInputError,
+    PlatformInputEvent, PlatformInputService, PlatformPoint, PlatformRect,
+    PlatformTextInputService, PointerAction, PointerButton, PointerButtons, PointerInputEvent,
+    PointerKind, TextInputEvent, TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
 };
 
 use std::fmt;
