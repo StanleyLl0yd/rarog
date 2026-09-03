@@ -1450,6 +1450,13 @@ name = "rarog-events"
 version = "0.1.0"
 
 [[package]]
+name = "rarog-fetch"
+version = "0.1.0"
+dependencies = [
+ "rarog-url",
+]
+
+[[package]]
 name = "rarog-html"
 version = "0.1.0"
 dependencies = [
