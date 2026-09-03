@@ -253,6 +253,7 @@ pub struct IncrementalReport {
     pub dirty_nodes: usize,
     pub patched_nodes: usize,
     pub retained_display_list: bool,
+    pub styles_rebuilt: bool,
     pub elapsed: Duration,
 }
 
@@ -471,6 +472,7 @@ impl RenderSession {
                 dirty_nodes,
                 patched_nodes: 0,
                 retained_display_list: true,
+                styles_rebuilt: false,
                 elapsed: update_started.elapsed(),
             });
         }
@@ -492,11 +494,29 @@ impl RenderSession {
                     style_candidates.insert(*node);
                 }
                 MutationKind::Attribute { .. } => {}
-                MutationKind::NodeCreated { .. }
-                | MutationKind::ChildAdded { .. }
-                | MutationKind::Reparented { .. } => {
+                MutationKind::NodeCreated { .. } => {
                     requires_full_rebuild = true;
-                    stylesheet_sources_changed = true;
+                }
+                MutationKind::ChildAdded { parent, child } => {
+                    requires_full_rebuild = true;
+                    stylesheet_sources_changed |= self.document.is_connected(*parent)
+                        && (node_is_within_style_element(&self.document, *parent)
+                            || subtree_contains_style_element(&self.document, *child));
+                }
+                MutationKind::Reparented {
+                    child,
+                    old_parent,
+                    new_parent,
+                } => {
+                    requires_full_rebuild = true;
+                    stylesheet_sources_changed |=
+                        subtree_contains_style_element(&self.document, *child)
+                            || old_parent.is_some_and(|parent| {
+                                node_is_within_style_element(&self.document, parent)
+                            })
+                            || new_parent.is_some_and(|parent| {
+                                node_is_within_style_element(&self.document, parent)
+                            });
                 }
                 MutationKind::CharacterData { node } => {
                     if node_is_within_style_element(&self.document, *node) {
@@ -731,6 +751,7 @@ impl RenderSession {
             dirty_nodes,
             patched_nodes,
             retained_display_list,
+            styles_rebuilt: stylesheet_sources_changed,
             elapsed: update_started.elapsed(),
         })
     }
@@ -947,6 +968,21 @@ fn node_is_within_style_element(document: &Document, mut node: NodeId) -> bool {
             return false;
         };
         node = parent;
+    }
+    false
+}
+
+fn subtree_contains_style_element(document: &Document, root: NodeId) -> bool {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let Some(current) = document.node(node) else {
+            continue;
+        };
+        if matches!(&current.kind, NodeKind::Element(element) if element.tag_name.as_str() == "style")
+        {
+            return true;
+        }
+        stack.extend_from_slice(&current.children);
     }
     false
 }
@@ -1517,6 +1553,66 @@ mod tests {
         let report = session.update().expect("stylesheet text update succeeds");
 
         assert_eq!(report.mode, IncrementalMode::FullRebuild);
+    }
+
+    #[test]
+    fn ordinary_structural_change_reuses_existing_style_set() {
+        let source =
+            "<style>.card { background:#112233; }</style><div id=\"parent\" class=\"card\"></div>";
+        let expected_source = "<style>.card { background:#112233; }</style><div id=\"parent\" class=\"card\"><span></span></div>";
+        let mut session = session(source, deterministic_options());
+        let parent = element_with_id(session.document(), "parent");
+
+        session
+            .document_mut()
+            .append_new(
+                parent,
+                NodeKind::Element(rarog_dom::ElementData::html("span")),
+            )
+            .unwrap();
+        let report = session.update().expect("structural update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert!(!report.styles_rebuilt);
+        assert_eq!(session.styles(), &expected.styles);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
+    fn inserting_style_subtree_rebuilds_style_sources() {
+        let source = "<div id=\"parent\" style=\"height:20px\"></div>";
+        let expected_source = "<div id=\"parent\" style=\"height:20px\"><style>#parent { background:#445566; }</style></div>";
+        let mut session = session(source, deterministic_options());
+        let parent = element_with_id(session.document(), "parent");
+        let style = session
+            .document_mut()
+            .append_new(
+                parent,
+                NodeKind::Element(rarog_dom::ElementData::html("style")),
+            )
+            .unwrap();
+        session
+            .document_mut()
+            .append_new(
+                style,
+                NodeKind::Text("#parent { background:#445566; }".into()),
+            )
+            .unwrap();
+
+        let report = session.update().expect("style insertion succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert!(report.styles_rebuilt);
+        assert_eq!(session.styles(), &expected.styles);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
     }
 
     #[test]
