@@ -58,7 +58,8 @@ fn pure_inline_subtree_style_change_matches_fresh_render() {
     let report = session.update().unwrap();
     let fresh = render_html(expected, options()).unwrap();
 
-    assert_eq!(report.mode, IncrementalMode::FullRebuild);
+    assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+    assert!(report.retained_display_list);
     assert_eq!(
         session.framebuffer().stable_hash64(),
         fresh.framebuffer.stable_hash64()

@@ -52,6 +52,7 @@ Tracking issue: #39.
   - [x] Attach detached, newly created subtrees through covered retained structural roots without a full layout rebuild.
   - [x] Revalidate retained layout globally when connected stylesheet sources change.
   - [x] Refresh retained parent subtrees for visibility membership, block/inline role and flow-root BFC transitions.
+  - [x] Route mixed text/geometry updates and inline or fragmented-inline style/geometry changes through retained parent flow refresh.
 - [ ] Extend retained/damage-aware paint across richer formatting and stacking behavior.
   - [x] Retain and replace the affected display-list suffix across flow-aware fragment relayout.
   - [x] Replay partial damage through clip, stacking, transform and opacity scopes without a full-frame raster fallback.

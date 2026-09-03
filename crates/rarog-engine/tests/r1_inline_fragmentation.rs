@@ -73,7 +73,7 @@ fn text_growth_reflows_inline_fragments_to_match_fresh_render() {
 }
 
 #[test]
-fn fragmented_inline_style_change_rebuilds_all_fragments() {
+fn fragmented_inline_style_change_uses_retained_flow_relayout() {
     let source =
         "<div><span id=\"chip\" style=\"display:inline;background:#112233\">ab cd ef</span></div>";
     let expected =
@@ -91,7 +91,8 @@ fn fragmented_inline_style_change_rebuilds_all_fragments() {
     let report = session.update().unwrap();
     let fresh = render_html(expected, options()).unwrap();
 
-    assert_eq!(report.mode, IncrementalMode::FullRebuild);
+    assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+    assert!(report.retained_display_list);
     assert_eq!(
         session.framebuffer().stable_hash64(),
         fresh.framebuffer.stable_hash64()
