@@ -1236,6 +1236,79 @@ fn refresh_text_node_recursive(node: &mut LayoutNode, dom_node: NodeId, text: &s
     changed
 }
 
+pub fn refresh_layout_subtree(
+    tree: &mut LayoutTree,
+    document: &Document,
+    styles: &StyleSet,
+    dom_node: NodeId,
+) -> bool {
+    let next_id = max_layout_node_id(&tree.root).saturating_add(1);
+    refresh_layout_subtree_recursive(&mut tree.root, document, styles, dom_node, None, next_id)
+}
+
+fn refresh_layout_subtree_recursive(
+    node: &mut LayoutNode,
+    document: &Document,
+    styles: &StyleSet,
+    dom_node: NodeId,
+    parent_style: Option<ComputedStyle>,
+    next_id: usize,
+) -> bool {
+    if node.dom_node == Some(dom_node) {
+        let mut retained_ids = std::collections::BTreeMap::new();
+        collect_layout_node_ids(node, &mut retained_ids);
+        let mut builder = LayoutTreeBuilder { next_id, styles };
+        let Some(mut replacement) = builder.build_node(document, dom_node, parent_style) else {
+            return false;
+        };
+        reuse_layout_node_ids(&mut replacement, &retained_ids);
+        *node = replacement;
+        return true;
+    }
+
+    let style = node.style;
+    let changed = node.children.iter_mut().any(|child| {
+        refresh_layout_subtree_recursive(child, document, styles, dom_node, Some(style), next_id)
+    });
+    if changed {
+        node.intrinsic = intrinsic_sizes_for_node(&node.kind, node.style, &node.children);
+    }
+    changed
+}
+
+fn max_layout_node_id(node: &LayoutNode) -> usize {
+    node.children
+        .iter()
+        .map(max_layout_node_id)
+        .fold(node.id.index(), usize::max)
+}
+
+fn collect_layout_node_ids(
+    node: &LayoutNode,
+    ids: &mut std::collections::BTreeMap<NodeId, LayoutNodeId>,
+) {
+    if let Some(dom_node) = node.dom_node {
+        ids.insert(dom_node, node.id);
+    }
+    for child in &node.children {
+        collect_layout_node_ids(child, ids);
+    }
+}
+
+fn reuse_layout_node_ids(
+    node: &mut LayoutNode,
+    ids: &std::collections::BTreeMap<NodeId, LayoutNodeId>,
+) {
+    if let Some(dom_node) = node.dom_node {
+        if let Some(id) = ids.get(&dom_node) {
+            node.id = *id;
+        }
+    }
+    for child in &mut node.children {
+        reuse_layout_node_ids(child, ids);
+    }
+}
+
 pub fn fragment_for_dom(tree: &FragmentTree, dom_node: NodeId) -> Option<&Fragment> {
     find_fragment(&tree.root, dom_node)
 }
