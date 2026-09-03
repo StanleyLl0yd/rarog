@@ -61,7 +61,7 @@ All direct workspace and fuzz dependencies were reviewed against their current c
 
 An explicit RustSec pass was run during the audit (`cargo-audit` run 33728150905) and completed successfully. It loaded 1,239 advisories and scanned 102 locked crate dependencies without reporting a vulnerability.
 
-A fresh RustSec scan is also part of the final consolidated verification run 33733178679. **Final RustSec result: pending while this report draft is prepared; this line must be resolved before merge.**
+A fresh RustSec scan in final consolidated verification run 33733178679 also completed successfully. `cargo-audit` 0.22.2 loaded 1,239 advisories and scanned 103 locked crate dependencies without reporting a vulnerability.
 
 ## Legacy
 
@@ -112,7 +112,7 @@ The dedicated final verification run 33733178679 is based on that exact implemen
 - Rust 1.85 workspace and fuzz-target checks;
 - a fresh `cargo audit` advisory scan.
 
-At report-draft time, Windows final verification and MSRV 1.85 final verification are fully successful. Linux has passed formatting, workspace check, strict Clippy, all workspace tests, fuzz compilation, all exit/correctness gates, focused regressions, release build and bootstrap render; only installation/execution of the final `cargo-audit` remains in progress. The final report must not merge until that result is resolved.
+Final verification run 33733178679 completed successfully in all three jobs. Windows and Linux passed their complete verification matrices, including release builds and bootstrap rendering; Linux additionally passed fuzz-target compilation, focused regressions and the fresh RustSec scan. MSRV 1.85 passed workspace/all-targets and fuzz-target checks.
 
 ## Before/after statistics
 
