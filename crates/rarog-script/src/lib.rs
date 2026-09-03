@@ -11,7 +11,8 @@ fn allocate_scope(counter: &AtomicU64, exhausted: &'static str) -> Result<NonZer
             current.checked_add(1)
         })
         .map_err(|_| ScriptError::new(ScriptErrorKind::ResourceLimit, exhausted))?;
-    NonZeroU64::new(value).ok_or_else(|| ScriptError::new(ScriptErrorKind::ResourceLimit, exhausted))
+    NonZeroU64::new(value)
+        .ok_or_else(|| ScriptError::new(ScriptErrorKind::ResourceLimit, exhausted))
 }
 
 fn allocate_serial(next: &mut u64, exhausted: &'static str) -> Result<NonZeroU64, ScriptError> {
