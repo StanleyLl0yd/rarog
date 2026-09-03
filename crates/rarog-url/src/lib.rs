@@ -178,7 +178,10 @@ mod tests {
             "http://example.com/b?q=hello%20world#frag%20ment"
         );
         assert_eq!(url.scheme(), "http");
-        assert_eq!(url.host(), Some(UrlHost::Domain(String::from("example.com"))));
+        assert_eq!(
+            url.host(),
+            Some(UrlHost::Domain(String::from("example.com")))
+        );
         assert_eq!(url.port(), None);
         assert_eq!(url.port_or_known_default(), Some(80));
         assert_eq!(url.path(), "/b");
@@ -190,10 +193,7 @@ mod tests {
     fn relative_references_resolve_against_a_base() {
         let base = WebUrl::parse("https://example.com/a/b/index.html").unwrap();
         let resolved = WebUrl::resolve(&base, "../image.png?x=1#top").unwrap();
-        assert_eq!(
-            resolved.as_str(),
-            "https://example.com/a/image.png?x=1#top"
-        );
+        assert_eq!(resolved.as_str(), "https://example.com/a/image.png?x=1#top");
     }
 
     #[test]
@@ -222,10 +222,7 @@ mod tests {
         assert!(url.cannot_be_a_base());
         assert_eq!(url.host(), None);
         let error = url.join("child").unwrap_err();
-        assert_eq!(
-            error.kind,
-            UrlErrorKind::RelativeWithCannotBeABaseBase
-        );
+        assert_eq!(error.kind, UrlErrorKind::RelativeWithCannotBeABaseBase);
     }
 
     #[test]
