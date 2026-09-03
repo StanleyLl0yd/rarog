@@ -41,6 +41,7 @@ pub enum FlexLayoutError {
     InvalidItemSize { node: LayoutNodeId },
     InvalidMargin { node: LayoutNodeId },
     NegativeMarginUnsupported { node: LayoutNodeId },
+    GeometryOverflow,
 }
 
 impl fmt::Display for FlexLayoutError {
@@ -60,6 +61,9 @@ impl fmt::Display for FlexLayoutError {
                 formatter,
                 "flex item {node:?} uses a negative margin outside the first row slice"
             ),
+            Self::GeometryOverflow => {
+                formatter.write_str("flex layout geometry overflowed the finite coordinate range")
+            }
         }
     }
 }
@@ -81,11 +85,12 @@ pub fn layout_single_line_flex_row(
     for item in items {
         validate_item(*item)?;
 
-        cursor_x += item.margin.left;
+        cursor_x = finite_add(cursor_x, item.margin.left)?;
+        let border_y = finite_add(origin.y, item.margin.top)?;
         let border_box = Rect {
             origin: Point {
                 x: cursor_x,
-                y: origin.y + item.margin.top,
+                y: border_y,
             },
             size: item.base_size,
         };
@@ -94,12 +99,18 @@ pub fn layout_single_line_flex_row(
             border_box,
         });
 
-        cursor_x += item.base_size.width + item.margin.right;
-        max_cross_size =
-            max_cross_size.max(item.margin.top + item.base_size.height + item.margin.bottom);
+        cursor_x = finite_add(cursor_x, item.base_size.width)?;
+        cursor_x = finite_add(cursor_x, item.margin.right)?;
+        let cross_size = finite_add(item.margin.top, item.base_size.height)?;
+        let cross_size = finite_add(cross_size, item.margin.bottom)?;
+        max_cross_size = max_cross_size.max(cross_size);
     }
 
-    let used_main_size = (cursor_x - origin.x).max(0.0);
+    let used_main_size = cursor_x - origin.x;
+    if !used_main_size.is_finite() {
+        return Err(FlexLayoutError::GeometryOverflow);
+    }
+    let used_main_size = used_main_size.max(0.0);
     Ok(FlexRowLayout {
         items: placements,
         content_size: Size {
@@ -109,6 +120,14 @@ pub fn layout_single_line_flex_row(
         overflows_main_axis: used_main_size > available_size.width,
         overflows_cross_axis: max_cross_size > available_size.height,
     })
+}
+
+fn finite_add(left: f32, right: f32) -> Result<f32, FlexLayoutError> {
+    let value = left + right;
+    value
+        .is_finite()
+        .then_some(value)
+        .ok_or(FlexLayoutError::GeometryOverflow)
 }
 
 fn validate_origin(origin: Point) -> Result<(), FlexLayoutError> {
@@ -284,6 +303,40 @@ mod tests {
             Err(FlexLayoutError::NegativeMarginUnsupported {
                 node: LayoutNodeId(9)
             })
+        );
+    }
+
+    #[test]
+    fn finite_inputs_cannot_produce_non_finite_geometry() {
+        assert_eq!(
+            layout_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: f32::MAX,
+                    height: f32::MAX,
+                },
+                &[item(1, f32::MAX, 1.0), item(2, f32::MAX, 1.0)]
+            ),
+            Err(FlexLayoutError::GeometryOverflow)
+        );
+
+        assert_eq!(
+            layout_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: f32::MAX,
+                    height: f32::MAX,
+                },
+                &[FlexRowItem::new(
+                    LayoutNodeId(3),
+                    Size {
+                        width: 1.0,
+                        height: f32::MAX,
+                    },
+                    EdgeSizes::new(f32::MAX, 0.0, 0.0, 0.0),
+                )]
+            ),
+            Err(FlexLayoutError::GeometryOverflow)
         );
     }
 }
