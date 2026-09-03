@@ -564,7 +564,7 @@ pub fn computed_style_with_parent(
         );
     }
 
-    style_from_candidates(&candidates, parent_style)
+    style_from_candidates(candidates, parent_style)
 }
 
 fn inherited_style(parent_style: Option<ComputedStyle>) -> ComputedStyle {
@@ -597,32 +597,31 @@ fn apply_declarations(
 }
 
 fn style_from_candidates(
-    candidates: &BTreeMap<PropertyId, Vec<CascadeCandidate>>,
+    candidates: BTreeMap<PropertyId, Vec<CascadeCandidate>>,
     parent_style: Option<ComputedStyle>,
 ) -> ComputedStyle {
     let mut style = inherited_style(parent_style);
-    for (property, property_candidates) in candidates {
-        let Some(value) = resolve_cascade_value(property_candidates) else {
+    for (property, mut property_candidates) in candidates {
+        let Some(value) = resolve_cascade_value(&mut property_candidates) else {
             continue;
         };
         match value {
             PropertyValue::CssWide(keyword) => {
-                apply_css_wide(&mut style, *property, keyword, parent_style);
+                apply_css_wide(&mut style, property, keyword, parent_style);
             }
-            value => apply_property_value(&mut style, *property, value),
+            value => apply_property_value(&mut style, property, value),
         }
     }
     style
 }
 
-fn resolve_cascade_value(candidates: &[CascadeCandidate]) -> Option<PropertyValue> {
-    let mut ordered = candidates.to_vec();
-    ordered.sort_by_key(|candidate| std::cmp::Reverse(candidate.priority));
+fn resolve_cascade_value(candidates: &mut [CascadeCandidate]) -> Option<PropertyValue> {
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.priority));
 
     let mut reverted_author_origin = false;
     let mut reverted_layers = BTreeSet::new();
 
-    for candidate in ordered {
+    for candidate in candidates.iter().copied() {
         let origin = candidate.priority.origin;
         let author_origin = matches!(origin, StyleOrigin::Author | StyleOrigin::Inline);
         if (author_origin && reverted_author_origin)
@@ -674,68 +673,46 @@ fn copy_property_from_parent(
     property: PropertyId,
     parent_style: Option<ComputedStyle>,
 ) {
-    let parent = parent_style.unwrap_or_default();
-    match property {
-        PropertyId::Width => style.width = parent.width,
-        PropertyId::Height => style.height = parent.height,
-        PropertyId::MinWidth => style.min_width = parent.min_width,
-        PropertyId::MaxWidth => style.max_width = parent.max_width,
-        PropertyId::MinHeight => style.min_height = parent.min_height,
-        PropertyId::MaxHeight => style.max_height = parent.max_height,
-        PropertyId::MarginTop => style.margin.top = parent.margin.top,
-        PropertyId::MarginRight => style.margin.right = parent.margin.right,
-        PropertyId::MarginBottom => style.margin.bottom = parent.margin.bottom,
-        PropertyId::MarginLeft => style.margin.left = parent.margin.left,
-        PropertyId::BorderTopWidth => style.border_width.top = parent.border_width.top,
-        PropertyId::BorderRightWidth => style.border_width.right = parent.border_width.right,
-        PropertyId::BorderBottomWidth => style.border_width.bottom = parent.border_width.bottom,
-        PropertyId::BorderLeftWidth => style.border_width.left = parent.border_width.left,
-        PropertyId::PaddingTop => style.padding.top = parent.padding.top,
-        PropertyId::PaddingRight => style.padding.right = parent.padding.right,
-        PropertyId::PaddingBottom => style.padding.bottom = parent.padding.bottom,
-        PropertyId::PaddingLeft => style.padding.left = parent.padding.left,
-        PropertyId::Color => style.color = parent.color,
-        PropertyId::BackgroundColor => style.background = parent.background,
-        PropertyId::BorderColor => style.border_color = parent.border_color,
-        PropertyId::Display => {
-            style.display_none = parent.display_none;
-            style.display_inline = parent.display_inline;
-            style.establishes_bfc = parent.establishes_bfc;
-        }
-        PropertyId::VerticalAlign => style.vertical_align = parent.vertical_align,
-    }
+    copy_property_from_style(style, property, parent_style.unwrap_or_default());
 }
 
 fn reset_property_to_initial(style: &mut ComputedStyle, property: PropertyId) {
-    let initial = ComputedStyle::default();
+    copy_property_from_style(style, property, ComputedStyle::default());
+}
+
+fn copy_property_from_style(
+    style: &mut ComputedStyle,
+    property: PropertyId,
+    source: ComputedStyle,
+) {
     match property {
-        PropertyId::Width => style.width = initial.width,
-        PropertyId::Height => style.height = initial.height,
-        PropertyId::MinWidth => style.min_width = initial.min_width,
-        PropertyId::MaxWidth => style.max_width = initial.max_width,
-        PropertyId::MinHeight => style.min_height = initial.min_height,
-        PropertyId::MaxHeight => style.max_height = initial.max_height,
-        PropertyId::MarginTop => style.margin.top = initial.margin.top,
-        PropertyId::MarginRight => style.margin.right = initial.margin.right,
-        PropertyId::MarginBottom => style.margin.bottom = initial.margin.bottom,
-        PropertyId::MarginLeft => style.margin.left = initial.margin.left,
-        PropertyId::BorderTopWidth => style.border_width.top = initial.border_width.top,
-        PropertyId::BorderRightWidth => style.border_width.right = initial.border_width.right,
-        PropertyId::BorderBottomWidth => style.border_width.bottom = initial.border_width.bottom,
-        PropertyId::BorderLeftWidth => style.border_width.left = initial.border_width.left,
-        PropertyId::PaddingTop => style.padding.top = initial.padding.top,
-        PropertyId::PaddingRight => style.padding.right = initial.padding.right,
-        PropertyId::PaddingBottom => style.padding.bottom = initial.padding.bottom,
-        PropertyId::PaddingLeft => style.padding.left = initial.padding.left,
-        PropertyId::Color => style.color = initial.color,
-        PropertyId::BackgroundColor => style.background = initial.background,
-        PropertyId::BorderColor => style.border_color = initial.border_color,
+        PropertyId::Width => style.width = source.width,
+        PropertyId::Height => style.height = source.height,
+        PropertyId::MinWidth => style.min_width = source.min_width,
+        PropertyId::MaxWidth => style.max_width = source.max_width,
+        PropertyId::MinHeight => style.min_height = source.min_height,
+        PropertyId::MaxHeight => style.max_height = source.max_height,
+        PropertyId::MarginTop => style.margin.top = source.margin.top,
+        PropertyId::MarginRight => style.margin.right = source.margin.right,
+        PropertyId::MarginBottom => style.margin.bottom = source.margin.bottom,
+        PropertyId::MarginLeft => style.margin.left = source.margin.left,
+        PropertyId::BorderTopWidth => style.border_width.top = source.border_width.top,
+        PropertyId::BorderRightWidth => style.border_width.right = source.border_width.right,
+        PropertyId::BorderBottomWidth => style.border_width.bottom = source.border_width.bottom,
+        PropertyId::BorderLeftWidth => style.border_width.left = source.border_width.left,
+        PropertyId::PaddingTop => style.padding.top = source.padding.top,
+        PropertyId::PaddingRight => style.padding.right = source.padding.right,
+        PropertyId::PaddingBottom => style.padding.bottom = source.padding.bottom,
+        PropertyId::PaddingLeft => style.padding.left = source.padding.left,
+        PropertyId::Color => style.color = source.color,
+        PropertyId::BackgroundColor => style.background = source.background,
+        PropertyId::BorderColor => style.border_color = source.border_color,
         PropertyId::Display => {
-            style.display_none = initial.display_none;
-            style.display_inline = initial.display_inline;
-            style.establishes_bfc = initial.establishes_bfc;
+            style.display_none = source.display_none;
+            style.display_inline = source.display_inline;
+            style.establishes_bfc = source.establishes_bfc;
         }
-        PropertyId::VerticalAlign => style.vertical_align = initial.vertical_align,
+        PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
     }
 }
 
@@ -805,35 +782,46 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
 }
 
 fn collect_style_elements(document: &Document, node: NodeId, output: &mut Vec<String>) {
-    let Some(current) = document.node(node) else {
-        return;
-    };
-    if let NodeKind::Element(element) = &current.kind {
-        if element.tag_name.as_str() == "style" {
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        let Some(current) = document.node(node) else {
+            continue;
+        };
+        if matches!(&current.kind, NodeKind::Element(element) if element.tag_name.as_str() == "style")
+        {
             let mut text = String::new();
             collect_text(document, node, &mut text);
             if !text.trim().is_empty() {
                 output.push(text);
             }
-            return;
+            continue;
         }
-    }
-
-    for child in document.children(node).unwrap_or(&[]) {
-        collect_style_elements(document, *child, output);
+        stack.extend(current.children.iter().rev().copied());
     }
 }
 
 fn collect_text(document: &Document, node: NodeId, output: &mut String) {
-    for child in document.children(node).unwrap_or(&[]) {
-        match document.node(*child).map(|node| &node.kind) {
-            Some(NodeKind::Text(text)) => {
+    let mut stack = document
+        .children(node)
+        .unwrap_or(&[])
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    while let Some(node) = stack.pop() {
+        let Some(current) = document.node(node) else {
+            continue;
+        };
+        match &current.kind {
+            NodeKind::Text(text) => {
                 if !output.is_empty() {
                     output.push(' ');
                 }
                 output.push_str(text);
             }
-            _ => collect_text(document, *child, output),
+            NodeKind::Document | NodeKind::Element(_) => {
+                stack.extend(current.children.iter().rev().copied());
+            }
         }
     }
 }
@@ -1185,9 +1173,9 @@ fn parse_color(value: &str) -> Option<Color> {
                 return None;
             }
             Some(Color::rgb(
-                u8::from_str_radix(&hex[0..2], 16).ok()?,
-                u8::from_str_radix(&hex[2..4], 16).ok()?,
-                u8::from_str_radix(&hex[4..6], 16).ok()?,
+                u8::from_str_radix(hex.get(0..2)?, 16).ok()?,
+                u8::from_str_radix(hex.get(2..4)?, 16).ok()?,
+                u8::from_str_radix(hex.get(4..6)?, 16).ok()?,
             ))
         }
     }
@@ -1474,9 +1462,12 @@ impl InvalidationSet {
 }
 
 fn mark_subtree(document: &Document, node: NodeId, set: &mut InvalidationSet, flags: DirtyFlags) {
-    set.mark(node, flags);
-    for child in document.children(node).unwrap_or(&[]) {
-        mark_subtree(document, *child, set, flags);
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        set.mark(node, flags);
+        if let Some(children) = document.children(node) {
+            stack.extend(children.iter().rev().copied());
+        }
     }
 }
 
@@ -1722,6 +1713,11 @@ mod tests {
                 Some(&DirtyFlags::STYLE_LAYOUT_PAINT)
             );
         }
+    }
+
+    #[test]
+    fn malformed_non_ascii_hex_color_is_rejected_without_panicking() {
+        assert_eq!(parse_color("#aéabc"), None);
     }
 
     #[test]
