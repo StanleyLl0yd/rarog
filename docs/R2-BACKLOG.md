@@ -21,7 +21,7 @@ Tracking issue: #79.
 
 - [x] Add Event and EventTarget foundations.
 - [x] Add engine-owned task and microtask scheduling boundaries.
-- [ ] Connect script-driven DOM mutations to existing invalidation and retained rendering.
+- [x] Connect script-driven DOM mutations to existing invalidation and retained rendering.
 
 ## D — Fetch and identity primitives
 
