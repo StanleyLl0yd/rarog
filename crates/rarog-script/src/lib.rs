@@ -1,5 +1,5 @@
 use std::fmt;
-use std::num::NonZeroU64;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_REALM_SCOPE: AtomicU64 = AtomicU64::new(1);
@@ -47,6 +47,116 @@ impl RealmIdAllocator {
         self.next = self.next.checked_add(1).unwrap_or(0);
         Ok(RealmId {
             scope: self.scope,
+            serial,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScriptRealmLimits {
+    max_source_bytes: NonZeroUsize,
+    max_rooted_values: NonZeroUsize,
+}
+
+impl ScriptRealmLimits {
+    pub fn try_new(
+        max_source_bytes: usize,
+        max_rooted_values: usize,
+    ) -> Result<Self, ScriptError> {
+        let max_source_bytes = NonZeroUsize::new(max_source_bytes).ok_or_else(|| {
+            ScriptError::new(
+                ScriptErrorKind::InvalidInput,
+                "script source byte limit must be non-zero",
+            )
+        })?;
+        let max_rooted_values = NonZeroUsize::new(max_rooted_values).ok_or_else(|| {
+            ScriptError::new(
+                ScriptErrorKind::InvalidInput,
+                "script rooted-value limit must be non-zero",
+            )
+        })?;
+        Ok(Self {
+            max_source_bytes,
+            max_rooted_values,
+        })
+    }
+
+    pub fn max_source_bytes(self) -> usize {
+        self.max_source_bytes.get()
+    }
+
+    pub fn max_rooted_values(self) -> usize {
+        self.max_rooted_values.get()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GlobalObjectId {
+    realm: RealmId,
+}
+
+impl GlobalObjectId {
+    pub fn realm(self) -> RealmId {
+        self.realm
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScriptRealm {
+    id: RealmId,
+    global: GlobalObjectId,
+}
+
+impl ScriptRealm {
+    pub fn new(id: RealmId) -> Self {
+        Self {
+            id,
+            global: GlobalObjectId { realm: id },
+        }
+    }
+
+    pub fn id(self) -> RealmId {
+        self.id
+    }
+
+    pub fn global(self) -> GlobalObjectId {
+        self.global
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RootedValueId {
+    realm: RealmId,
+    serial: NonZeroU64,
+}
+
+impl RootedValueId {
+    pub fn realm(self) -> RealmId {
+        self.realm
+    }
+}
+
+#[derive(Debug)]
+pub struct RootedValueIdAllocator {
+    realm: RealmId,
+    next: u64,
+}
+
+impl RootedValueIdAllocator {
+    pub fn new(realm: RealmId) -> Self {
+        Self { realm, next: 1 }
+    }
+
+    pub fn allocate(&mut self) -> Result<RootedValueId, ScriptError> {
+        let serial = NonZeroU64::new(self.next).ok_or_else(|| {
+            ScriptError::new(
+                ScriptErrorKind::ResourceLimit,
+                "script rooted-value identity space is exhausted",
+            )
+        })?;
+        self.next = self.next.checked_add(1).unwrap_or(0);
+        Ok(RootedValueId {
+            realm: self.realm,
             serial,
         })
     }
@@ -153,6 +263,7 @@ impl ScriptDiagnostic {
 pub enum ScriptErrorKind {
     InvalidInput,
     InvalidRealm,
+    InvalidRoot,
     ResourceLimit,
     Backend,
 }
@@ -187,13 +298,36 @@ impl fmt::Display for ScriptError {
 
 impl std::error::Error for ScriptError {}
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScriptException {
+    pub value: RootedValueId,
+    pub message: Option<String>,
+    pub stack: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScriptCompletion {
+    Normal(RootedValueId),
+    Throw(ScriptException),
+}
+
+impl ScriptCompletion {
+    pub fn rooted_value(&self) -> RootedValueId {
+        match self {
+            Self::Normal(value) => *value,
+            Self::Throw(exception) => exception.value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvaluationOutcome {
+    pub completion: ScriptCompletion,
     pub diagnostics: Vec<ScriptDiagnostic>,
 }
 
 pub trait ScriptRuntime {
-    fn create_realm(&mut self) -> Result<RealmId, ScriptError>;
+    fn create_realm(&mut self, limits: ScriptRealmLimits) -> Result<ScriptRealm, ScriptError>;
 
     fn evaluate(
         &mut self,
@@ -201,45 +335,88 @@ pub trait ScriptRuntime {
         source: ScriptSource<'_>,
     ) -> Result<EvaluationOutcome, ScriptError>;
 
+    fn duplicate_root(&mut self, value: RootedValueId) -> Result<RootedValueId, ScriptError>;
+
+    fn release_root(&mut self, value: RootedValueId) -> Result<(), ScriptError>;
+
     fn destroy_realm(&mut self, realm: RealmId) -> Result<(), ScriptError>;
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
 
+    struct FixtureRealmState {
+        limits: ScriptRealmLimits,
+        root_ids: RootedValueIdAllocator,
+        roots: BTreeSet<RootedValueId>,
+    }
+
     struct FixtureRuntime {
-        ids: RealmIdAllocator,
-        live: BTreeSet<RealmId>,
+        realm_ids: RealmIdAllocator,
+        realms: BTreeMap<RealmId, FixtureRealmState>,
     }
 
     impl FixtureRuntime {
         fn new() -> Self {
             Self {
-                ids: RealmIdAllocator::new().unwrap(),
-                live: BTreeSet::new(),
+                realm_ids: RealmIdAllocator::new().unwrap(),
+                realms: BTreeMap::new(),
             }
         }
 
-        fn require_live(&self, realm: RealmId) -> Result<(), ScriptError> {
-            if self.live.contains(&realm) {
+        fn state(&self, realm: RealmId) -> Result<&FixtureRealmState, ScriptError> {
+            self.realms.get(&realm).ok_or_else(|| {
+                ScriptError::new(ScriptErrorKind::InvalidRealm, "script realm is not live")
+            })
+        }
+
+        fn state_mut(&mut self, realm: RealmId) -> Result<&mut FixtureRealmState, ScriptError> {
+            self.realms.get_mut(&realm).ok_or_else(|| {
+                ScriptError::new(ScriptErrorKind::InvalidRealm, "script realm is not live")
+            })
+        }
+
+        fn allocate_root(&mut self, realm: RealmId) -> Result<RootedValueId, ScriptError> {
+            let state = self.state_mut(realm)?;
+            if state.roots.len() >= state.limits.max_rooted_values() {
+                return Err(ScriptError::new(
+                    ScriptErrorKind::ResourceLimit,
+                    "script rooted-value limit exceeded",
+                ));
+            }
+            let value = state.root_ids.allocate()?;
+            state.roots.insert(value);
+            Ok(value)
+        }
+
+        fn require_root(&self, value: RootedValueId) -> Result<(), ScriptError> {
+            let state = self.state(value.realm())?;
+            if state.roots.contains(&value) {
                 Ok(())
             } else {
                 Err(ScriptError::new(
-                    ScriptErrorKind::InvalidRealm,
-                    "script realm is not live",
+                    ScriptErrorKind::InvalidRoot,
+                    "script rooted value is not live",
                 ))
             }
         }
     }
 
     impl ScriptRuntime for FixtureRuntime {
-        fn create_realm(&mut self) -> Result<RealmId, ScriptError> {
-            let realm = self.ids.allocate()?;
-            self.live.insert(realm);
-            Ok(realm)
+        fn create_realm(&mut self, limits: ScriptRealmLimits) -> Result<ScriptRealm, ScriptError> {
+            let realm = self.realm_ids.allocate()?;
+            self.realms.insert(
+                realm,
+                FixtureRealmState {
+                    limits,
+                    root_ids: RootedValueIdAllocator::new(realm),
+                    roots: BTreeSet::new(),
+                },
+            );
+            Ok(ScriptRealm::new(realm))
         }
 
         fn evaluate(
@@ -247,19 +424,50 @@ mod tests {
             realm: RealmId,
             source: ScriptSource<'_>,
         ) -> Result<EvaluationOutcome, ScriptError> {
-            self.require_live(realm)?;
-            let mut outcome = EvaluationOutcome::default();
+            let limit = self.state(realm)?.limits.max_source_bytes();
+            source.ensure_byte_limit(limit)?;
+            let value = self.allocate_root(realm)?;
+            let completion = if source.text() == "throw fixture" {
+                ScriptCompletion::Throw(ScriptException {
+                    value,
+                    message: Some(String::from("fixture exception")),
+                    stack: Some(String::from("fixture.js:1")),
+                })
+            } else {
+                ScriptCompletion::Normal(value)
+            };
+            let mut diagnostics = Vec::new();
             if let Some(name) = source.name() {
-                outcome.diagnostics.push(
+                diagnostics.push(
                     ScriptDiagnostic::new(ScriptDiagnosticLevel::Warning, "fixture diagnostic")
                         .with_source_name(name),
                 );
             }
-            Ok(outcome)
+            Ok(EvaluationOutcome {
+                completion,
+                diagnostics,
+            })
+        }
+
+        fn duplicate_root(&mut self, value: RootedValueId) -> Result<RootedValueId, ScriptError> {
+            self.require_root(value)?;
+            self.allocate_root(value.realm())
+        }
+
+        fn release_root(&mut self, value: RootedValueId) -> Result<(), ScriptError> {
+            let state = self.state_mut(value.realm())?;
+            if state.roots.remove(&value) {
+                Ok(())
+            } else {
+                Err(ScriptError::new(
+                    ScriptErrorKind::InvalidRoot,
+                    "script rooted value is not live",
+                ))
+            }
         }
 
         fn destroy_realm(&mut self, realm: RealmId) -> Result<(), ScriptError> {
-            if self.live.remove(&realm) {
+            if self.realms.remove(&realm).is_some() {
                 Ok(())
             } else {
                 Err(ScriptError::new(
@@ -268,6 +476,10 @@ mod tests {
                 ))
             }
         }
+    }
+
+    fn limits() -> ScriptRealmLimits {
+        ScriptRealmLimits::try_new(1024, 8).unwrap()
     }
 
     #[test]
@@ -297,13 +509,33 @@ mod tests {
     }
 
     #[test]
+    fn realm_limits_reject_zero_values() {
+        let source_error = ScriptRealmLimits::try_new(0, 1).unwrap_err();
+        assert_eq!(source_error.kind, ScriptErrorKind::InvalidInput);
+        let roots_error = ScriptRealmLimits::try_new(1, 0).unwrap_err();
+        assert_eq!(roots_error.kind, ScriptErrorKind::InvalidInput);
+    }
+
+    #[test]
     fn runtime_contract_is_object_safe() {
         let mut runtime = FixtureRuntime::new();
         let runtime: &mut dyn ScriptRuntime = &mut runtime;
-        let realm = runtime.create_realm().unwrap();
-        let outcome = runtime.evaluate(realm, ScriptSource::new("1 + 1")).unwrap();
-        assert!(outcome.diagnostics.is_empty());
-        runtime.destroy_realm(realm).unwrap();
+        let realm = runtime.create_realm(limits()).unwrap();
+        let outcome = runtime
+            .evaluate(realm.id(), ScriptSource::new("1 + 1"))
+            .unwrap();
+        assert!(matches!(outcome.completion, ScriptCompletion::Normal(_)));
+        runtime
+            .release_root(outcome.completion.rooted_value())
+            .unwrap();
+        runtime.destroy_realm(realm.id()).unwrap();
+    }
+
+    #[test]
+    fn realm_global_identity_is_bound_to_its_realm() {
+        let mut runtime = FixtureRuntime::new();
+        let realm = runtime.create_realm(limits()).unwrap();
+        assert_eq!(realm.global().realm(), realm.id());
     }
 
     #[test]
@@ -312,9 +544,9 @@ mod tests {
             let name = String::from("fixture.js");
             let source_text = String::from("let value = 1;");
             let mut runtime = FixtureRuntime::new();
-            let realm = runtime.create_realm().unwrap();
+            let realm = runtime.create_realm(limits()).unwrap();
             runtime
-                .evaluate(realm, ScriptSource::named(&source_text, &name))
+                .evaluate(realm.id(), ScriptSource::named(&source_text, &name))
                 .unwrap()
                 .diagnostics
                 .pop()
@@ -326,31 +558,134 @@ mod tests {
     }
 
     #[test]
-    fn destroyed_realms_reject_evaluation() {
+    fn normal_completion_returns_a_rooted_value() {
         let mut runtime = FixtureRuntime::new();
-        let realm = runtime.create_realm().unwrap();
-        runtime.destroy_realm(realm).unwrap();
-        let error = runtime.evaluate(realm, ScriptSource::new("1")).unwrap_err();
-        assert_eq!(error.kind, ScriptErrorKind::InvalidRealm);
+        let realm = runtime.create_realm(limits()).unwrap();
+        let outcome = runtime
+            .evaluate(realm.id(), ScriptSource::new("1"))
+            .unwrap();
+        let value = outcome.completion.rooted_value();
+        assert_eq!(value.realm(), realm.id());
+        runtime.require_root(value).unwrap();
     }
 
     #[test]
-    fn foreign_realm_ids_are_rejected_even_when_serials_match() {
-        let mut first = FixtureRuntime::new();
-        let foreign = first.create_realm().unwrap();
-        let mut second = FixtureRuntime::new();
-        let local = second.create_realm().unwrap();
-        assert_ne!(foreign, local);
-        let error = second
-            .evaluate(foreign, ScriptSource::new("1"))
+    fn script_throw_is_a_completion_not_a_backend_error() {
+        let mut runtime = FixtureRuntime::new();
+        let realm = runtime.create_realm(limits()).unwrap();
+        let outcome = runtime
+            .evaluate(realm.id(), ScriptSource::new("throw fixture"))
+            .unwrap();
+        let ScriptCompletion::Throw(exception) = outcome.completion else {
+            panic!("expected fixture throw completion");
+        };
+        assert_eq!(exception.value.realm(), realm.id());
+        assert_eq!(exception.message.as_deref(), Some("fixture exception"));
+        assert_eq!(exception.stack.as_deref(), Some("fixture.js:1"));
+        runtime.require_root(exception.value).unwrap();
+    }
+
+    #[test]
+    fn duplicate_root_has_independent_liveness() {
+        let mut runtime = FixtureRuntime::new();
+        let realm = runtime.create_realm(limits()).unwrap();
+        let original = runtime
+            .evaluate(realm.id(), ScriptSource::new("1"))
+            .unwrap()
+            .completion
+            .rooted_value();
+        let duplicate = runtime.duplicate_root(original).unwrap();
+        runtime.release_root(original).unwrap();
+        runtime.require_root(duplicate).unwrap();
+        let error = runtime.require_root(original).unwrap_err();
+        assert_eq!(error.kind, ScriptErrorKind::InvalidRoot);
+    }
+
+    #[test]
+    fn release_root_rejects_stale_handles() {
+        let mut runtime = FixtureRuntime::new();
+        let realm = runtime.create_realm(limits()).unwrap();
+        let value = runtime
+            .evaluate(realm.id(), ScriptSource::new("1"))
+            .unwrap()
+            .completion
+            .rooted_value();
+        runtime.release_root(value).unwrap();
+        let error = runtime.release_root(value).unwrap_err();
+        assert_eq!(error.kind, ScriptErrorKind::InvalidRoot);
+    }
+
+    #[test]
+    fn rooted_value_limit_is_enforced() {
+        let mut runtime = FixtureRuntime::new();
+        let realm = runtime
+            .create_realm(ScriptRealmLimits::try_new(1024, 1).unwrap())
+            .unwrap();
+        let first = runtime
+            .evaluate(realm.id(), ScriptSource::new("1"))
+            .unwrap()
+            .completion
+            .rooted_value();
+        let error = runtime
+            .evaluate(realm.id(), ScriptSource::new("2"))
             .unwrap_err();
-        assert_eq!(error.kind, ScriptErrorKind::InvalidRealm);
+        assert_eq!(error.kind, ScriptErrorKind::ResourceLimit);
+        runtime.release_root(first).unwrap();
+        runtime
+            .evaluate(realm.id(), ScriptSource::new("3"))
+            .unwrap();
     }
 
     #[test]
-    fn source_limit_is_checked_before_backend_work() {
-        let error = ScriptSource::new("12345").ensure_byte_limit(4).unwrap_err();
+    fn runtime_enforces_source_limit() {
+        let mut runtime = FixtureRuntime::new();
+        let realm = runtime
+            .create_realm(ScriptRealmLimits::try_new(4, 8).unwrap())
+            .unwrap();
+        let error = runtime
+            .evaluate(realm.id(), ScriptSource::new("12345"))
+            .unwrap_err();
         assert_eq!(error.kind, ScriptErrorKind::ResourceLimit);
+    }
+
+    #[test]
+    fn destroyed_realms_reject_evaluation_and_roots() {
+        let mut runtime = FixtureRuntime::new();
+        let realm = runtime.create_realm(limits()).unwrap();
+        let value = runtime
+            .evaluate(realm.id(), ScriptSource::new("1"))
+            .unwrap()
+            .completion
+            .rooted_value();
+        runtime.destroy_realm(realm.id()).unwrap();
+        let evaluation_error = runtime
+            .evaluate(realm.id(), ScriptSource::new("1"))
+            .unwrap_err();
+        assert_eq!(evaluation_error.kind, ScriptErrorKind::InvalidRealm);
+        let root_error = runtime.release_root(value).unwrap_err();
+        assert_eq!(root_error.kind, ScriptErrorKind::InvalidRealm);
+    }
+
+    #[test]
+    fn foreign_rooted_values_are_rejected() {
+        let mut first = FixtureRuntime::new();
+        let first_realm = first.create_realm(limits()).unwrap();
+        let foreign = first
+            .evaluate(first_realm.id(), ScriptSource::new("1"))
+            .unwrap()
+            .completion
+            .rooted_value();
+
+        let mut second = FixtureRuntime::new();
+        let second_realm = second.create_realm(limits()).unwrap();
+        let local = second
+            .evaluate(second_realm.id(), ScriptSource::new("1"))
+            .unwrap()
+            .completion
+            .rooted_value();
+        assert_ne!(foreign, local);
+        let error = second.duplicate_root(foreign).unwrap_err();
+        assert_eq!(error.kind, ScriptErrorKind::InvalidRealm);
     }
 
     #[test]
