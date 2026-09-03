@@ -207,12 +207,15 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
             .map(RegistrationId)
             .ok_or(EventError::RegistrationIdentityExhausted)?;
         self.next_registration = self.next_registration.checked_add(1).unwrap_or(0);
-        self.listeners.entry(target).or_default().push(Registration {
-            id,
-            event_type,
-            listener,
-            options,
-        });
+        self.listeners
+            .entry(target)
+            .or_default()
+            .push(Registration {
+                id,
+                event_type,
+                listener,
+                options,
+            });
         Ok(true)
     }
 
@@ -289,7 +292,10 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
             }
 
             if dispatch.event.propagation_stopped
-                && !same_at_target(&dispatch.groups[current_index], &dispatch.groups[next_index])
+                && !same_at_target(
+                    &dispatch.groups[current_index],
+                    &dispatch.groups[next_index],
+                )
             {
                 dispatch.finished = true;
                 return None;
@@ -449,21 +455,13 @@ mod tests {
 
     fn listener_ids(count: usize) -> Vec<EventListenerId> {
         let mut allocator = EventListenerIdAllocator::new().unwrap();
-        (0..count)
-            .map(|_| allocator.allocate().unwrap())
-            .collect()
+        (0..count).map(|_| allocator.allocate().unwrap()).collect()
     }
 
     #[test]
     fn listener_ids_from_different_allocators_do_not_alias() {
-        let first = EventListenerIdAllocator::new()
-            .unwrap()
-            .allocate()
-            .unwrap();
-        let second = EventListenerIdAllocator::new()
-            .unwrap()
-            .allocate()
-            .unwrap();
+        let first = EventListenerIdAllocator::new().unwrap().allocate().unwrap();
+        let second = EventListenerIdAllocator::new().unwrap().allocate().unwrap();
         assert_ne!(first, second);
     }
 
@@ -624,9 +622,15 @@ mod tests {
             )
             .unwrap();
         let mut dispatch = EventDispatch::new(1_u8, &[0], Event::new("click", true, false));
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[0]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[0]
+        );
         dispatch.stop_propagation();
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[1]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[1]
+        );
         assert!(registry.next_listener(&mut dispatch).is_none());
     }
 
@@ -646,9 +650,15 @@ mod tests {
             .add_listener(1_u8, "click", ids[1], EventListenerOptions::default())
             .unwrap();
         let mut dispatch = EventDispatch::new(1_u8, &[], Event::new("click", true, false));
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[0]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[0]
+        );
         dispatch.stop_propagation();
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[1]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[1]
+        );
         assert!(registry.next_listener(&mut dispatch).is_none());
     }
 
@@ -662,7 +672,10 @@ mod tests {
                 .unwrap();
         }
         let mut dispatch = EventDispatch::new(1_u8, &[], Event::new("click", true, false));
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[0]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[0]
+        );
         dispatch.stop_immediate_propagation();
         assert!(registry.next_listener(&mut dispatch).is_none());
     }
@@ -680,7 +693,10 @@ mod tests {
             )
             .unwrap();
         let mut dispatch = EventDispatch::new(1_u8, &[], Event::new("click", true, false));
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, listener);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            listener
+        );
         assert_eq!(registry.listener_count(&1), 0);
         assert!(registry.next_listener(&mut dispatch).is_none());
     }
@@ -692,11 +708,19 @@ mod tests {
         let mut registry = EventTargetRegistry::default();
         for listener in &ids {
             registry
-                .add_listener(1_u8, event_type.clone(), *listener, EventListenerOptions::default())
+                .add_listener(
+                    1_u8,
+                    event_type.clone(),
+                    *listener,
+                    EventListenerOptions::default(),
+                )
                 .unwrap();
         }
         let mut dispatch = EventDispatch::new(1_u8, &[], Event::new("click", true, false));
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[0]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[0]
+        );
         assert!(registry.remove_listener(&1, &event_type, ids[1], false));
         assert!(registry.next_listener(&mut dispatch).is_none());
     }
@@ -716,8 +740,14 @@ mod tests {
         assert!(registry.next_listener(&mut first).is_none());
 
         let mut second = EventDispatch::new(1_u8, &[], Event::new("click", true, false));
-        assert_eq!(registry.next_listener(&mut second).unwrap().listener, ids[0]);
-        assert_eq!(registry.next_listener(&mut second).unwrap().listener, ids[1]);
+        assert_eq!(
+            registry.next_listener(&mut second).unwrap().listener,
+            ids[0]
+        );
+        assert_eq!(
+            registry.next_listener(&mut second).unwrap().listener,
+            ids[1]
+        );
     }
 
     #[test]
@@ -736,10 +766,16 @@ mod tests {
             .add_listener(1_u8, "submit", ids[1], EventListenerOptions::default())
             .unwrap();
         let mut dispatch = EventDispatch::new(1_u8, &[], Event::new("submit", true, true));
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[0]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[0]
+        );
         assert!(!dispatch.prevent_default());
         assert!(!dispatch.event().default_prevented());
-        assert_eq!(registry.next_listener(&mut dispatch).unwrap().listener, ids[1]);
+        assert_eq!(
+            registry.next_listener(&mut dispatch).unwrap().listener,
+            ids[1]
+        );
         assert!(dispatch.prevent_default());
         assert!(dispatch.event().default_prevented());
     }
