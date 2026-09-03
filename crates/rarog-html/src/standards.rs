@@ -276,7 +276,10 @@ impl TreeSink for StandardsTreeSink {
     }
 
     fn reparent_children(&self, node: &Self::Handle, new_parent: &Self::Handle) {
-        let children = node.children.borrow_mut().drain(..).collect::<Vec<_>>();
+        let children = {
+            let mut children = node.children.borrow_mut();
+            std::mem::take(&mut *children)
+        };
         for child in children {
             *child.parent.borrow_mut() = None;
             Self::append_handle(new_parent, child);
