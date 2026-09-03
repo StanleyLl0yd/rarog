@@ -3,6 +3,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_REALM_SCOPE: AtomicU64 = AtomicU64::new(1);
+static NEXT_ROOT_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RealmId {
@@ -124,6 +125,7 @@ impl ScriptRealm {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RootedValueId {
     realm: RealmId,
+    scope: NonZeroU64,
     serial: NonZeroU64,
 }
 
@@ -136,12 +138,33 @@ impl RootedValueId {
 #[derive(Debug)]
 pub struct RootedValueIdAllocator {
     realm: RealmId,
+    scope: NonZeroU64,
     next: u64,
 }
 
 impl RootedValueIdAllocator {
-    pub fn new(realm: RealmId) -> Self {
-        Self { realm, next: 1 }
+    pub fn new(realm: RealmId) -> Result<Self, ScriptError> {
+        let scope = NEXT_ROOT_SCOPE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| {
+                ScriptError::new(
+                    ScriptErrorKind::ResourceLimit,
+                    "script rooted-value allocator identity space is exhausted",
+                )
+            })?;
+        let scope = NonZeroU64::new(scope).ok_or_else(|| {
+            ScriptError::new(
+                ScriptErrorKind::ResourceLimit,
+                "script rooted-value allocator identity space is exhausted",
+            )
+        })?;
+        Ok(Self {
+            realm,
+            scope,
+            next: 1,
+        })
     }
 
     pub fn allocate(&mut self) -> Result<RootedValueId, ScriptError> {
@@ -154,6 +177,7 @@ impl RootedValueIdAllocator {
         self.next = self.next.checked_add(1).unwrap_or(0);
         Ok(RootedValueId {
             realm: self.realm,
+            scope: self.scope,
             serial,
         })
     }
@@ -405,11 +429,12 @@ mod tests {
     impl ScriptRuntime for FixtureRuntime {
         fn create_realm(&mut self, limits: ScriptRealmLimits) -> Result<ScriptRealm, ScriptError> {
             let realm = self.realm_ids.allocate()?;
+            let root_ids = RootedValueIdAllocator::new(realm)?;
             self.realms.insert(
                 realm,
                 FixtureRealmState {
                     limits,
-                    root_ids: RootedValueIdAllocator::new(realm),
+                    root_ids,
                     roots: BTreeSet::new(),
                 },
             );
@@ -499,6 +524,33 @@ mod tests {
     #[test]
     fn realm_id_allocator_fails_after_exhaustion() {
         let mut ids = RealmIdAllocator::new().unwrap();
+        ids.next = u64::MAX;
+        assert_eq!(ids.allocate().unwrap().serial.get(), u64::MAX);
+        let error = ids.allocate().unwrap_err();
+        assert_eq!(error.kind, ScriptErrorKind::ResourceLimit);
+    }
+
+    #[test]
+    fn rooted_value_ids_from_independent_allocators_do_not_alias() {
+        let realm = RealmIdAllocator::new().unwrap().allocate().unwrap();
+        let first = RootedValueIdAllocator::new(realm)
+            .unwrap()
+            .allocate()
+            .unwrap();
+        let second = RootedValueIdAllocator::new(realm)
+            .unwrap()
+            .allocate()
+            .unwrap();
+        assert_eq!(first.realm(), realm);
+        assert_eq!(second.realm(), realm);
+        assert_ne!(first.scope, second.scope);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn rooted_value_id_allocator_fails_after_exhaustion() {
+        let realm = RealmIdAllocator::new().unwrap().allocate().unwrap();
+        let mut ids = RootedValueIdAllocator::new(realm).unwrap();
         ids.next = u64::MAX;
         assert_eq!(ids.allocate().unwrap().serial.get(), u64::MAX);
         let error = ids.allocate().unwrap_err();
