@@ -1,21 +1,42 @@
 use std::fmt;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_REALM_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RealmId(NonZeroU64);
+pub struct RealmId {
+    scope: NonZeroU64,
+    serial: NonZeroU64,
+}
 
 #[derive(Debug)]
 pub struct RealmIdAllocator {
+    scope: NonZeroU64,
     next: u64,
 }
 
-impl Default for RealmIdAllocator {
-    fn default() -> Self {
-        Self { next: 1 }
-    }
-}
-
 impl RealmIdAllocator {
+    pub fn new() -> Result<Self, ScriptError> {
+        let scope = NEXT_REALM_SCOPE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| {
+                ScriptError::new(
+                    ScriptErrorKind::ResourceLimit,
+                    "script runtime identity space is exhausted",
+                )
+            })?;
+        let scope = NonZeroU64::new(scope).ok_or_else(|| {
+            ScriptError::new(
+                ScriptErrorKind::ResourceLimit,
+                "script runtime identity space is exhausted",
+            )
+        })?;
+        Ok(Self { scope, next: 1 })
+    }
+
     pub fn allocate(&mut self) -> Result<RealmId, ScriptError> {
         let serial = NonZeroU64::new(self.next).ok_or_else(|| {
             ScriptError::new(
@@ -24,7 +45,10 @@ impl RealmIdAllocator {
             )
         })?;
         self.next = self.next.checked_add(1).unwrap_or(0);
-        Ok(RealmId(serial))
+        Ok(RealmId {
+            scope: self.scope,
+            serial,
+        })
     }
 }
 
@@ -186,13 +210,19 @@ mod tests {
 
     use super::*;
 
-    #[derive(Default)]
     struct FixtureRuntime {
         ids: RealmIdAllocator,
         live: BTreeSet<RealmId>,
     }
 
     impl FixtureRuntime {
+        fn new() -> Self {
+            Self {
+                ids: RealmIdAllocator::new().unwrap(),
+                live: BTreeSet::new(),
+            }
+        }
+
         fn require_live(&self, realm: RealmId) -> Result<(), ScriptError> {
             if self.live.contains(&realm) {
                 Ok(())
@@ -241,25 +271,34 @@ mod tests {
     }
 
     #[test]
-    fn realm_ids_are_nonzero_and_monotonic() {
-        let mut ids = RealmIdAllocator::default();
+    fn realm_ids_are_nonzero_and_monotonic_within_one_runtime() {
+        let mut ids = RealmIdAllocator::new().unwrap();
         let first = ids.allocate().unwrap();
         let second = ids.allocate().unwrap();
-        assert_eq!(first.0.get(), 1);
-        assert_eq!(second.0.get(), 2);
+        assert_eq!(first.scope, second.scope);
+        assert_eq!(first.serial.get(), 1);
+        assert_eq!(second.serial.get(), 2);
+    }
+
+    #[test]
+    fn realm_ids_from_different_runtimes_do_not_alias() {
+        let first = RealmIdAllocator::new().unwrap().allocate().unwrap();
+        let second = RealmIdAllocator::new().unwrap().allocate().unwrap();
+        assert_ne!(first, second);
     }
 
     #[test]
     fn realm_id_allocator_fails_after_exhaustion() {
-        let mut ids = RealmIdAllocator { next: u64::MAX };
-        assert_eq!(ids.allocate().unwrap().0.get(), u64::MAX);
+        let mut ids = RealmIdAllocator::new().unwrap();
+        ids.next = u64::MAX;
+        assert_eq!(ids.allocate().unwrap().serial.get(), u64::MAX);
         let error = ids.allocate().unwrap_err();
         assert_eq!(error.kind, ScriptErrorKind::ResourceLimit);
     }
 
     #[test]
     fn runtime_contract_is_object_safe() {
-        let mut runtime = FixtureRuntime::default();
+        let mut runtime = FixtureRuntime::new();
         let runtime: &mut dyn ScriptRuntime = &mut runtime;
         let realm = runtime.create_realm().unwrap();
         let outcome = runtime
@@ -274,7 +313,7 @@ mod tests {
         let diagnostic = {
             let name = String::from("fixture.js");
             let source_text = String::from("let value = 1;");
-            let mut runtime = FixtureRuntime::default();
+            let mut runtime = FixtureRuntime::new();
             let realm = runtime.create_realm().unwrap();
             runtime
                 .evaluate(realm, ScriptSource::named(&source_text, &name))
@@ -290,11 +329,24 @@ mod tests {
 
     #[test]
     fn destroyed_realms_reject_evaluation() {
-        let mut runtime = FixtureRuntime::default();
+        let mut runtime = FixtureRuntime::new();
         let realm = runtime.create_realm().unwrap();
         runtime.destroy_realm(realm).unwrap();
         let error = runtime
             .evaluate(realm, ScriptSource::new("1"))
+            .unwrap_err();
+        assert_eq!(error.kind, ScriptErrorKind::InvalidRealm);
+    }
+
+    #[test]
+    fn foreign_realm_ids_are_rejected_even_when_serials_match() {
+        let mut first = FixtureRuntime::new();
+        let foreign = first.create_realm().unwrap();
+        let mut second = FixtureRuntime::new();
+        let local = second.create_realm().unwrap();
+        assert_ne!(foreign, local);
+        let error = second
+            .evaluate(foreign, ScriptSource::new("1"))
             .unwrap_err();
         assert_eq!(error.kind, ScriptErrorKind::InvalidRealm);
     }
