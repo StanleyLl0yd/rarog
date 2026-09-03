@@ -485,6 +485,7 @@ impl RenderSession {
             .collect::<BTreeSet<_>>();
         let mut text_relayout_nodes = BTreeSet::new();
         let mut structural_relayout_nodes = BTreeSet::new();
+        let mut formatting_relayout_nodes = BTreeSet::new();
         let mut connected_created_nodes = BTreeSet::new();
         let mut requires_full_rebuild = mutation_history_lost;
         let mut stylesheet_sources_changed = mutation_history_lost;
@@ -594,12 +595,13 @@ impl RenderSession {
         }
 
         if !requires_full_rebuild && stylesheet_sources_changed {
-            if stylesheet_visibility_boundary_changed_outside_structural_roots(
+            if !collect_stylesheet_formatting_boundary_roots(
                 &self.document,
                 &self.styles,
                 &new_styles,
                 &self.layout.tree.root,
                 &structural_relayout_nodes,
+                &mut formatting_relayout_nodes,
             ) {
                 requires_full_rebuild = true;
             } else {
@@ -615,17 +617,42 @@ impl RenderSession {
                 if !processed_style_nodes.insert(node) {
                     continue;
                 }
+                let new_style = computed_style(&self.document, node, &new_styles);
                 let Some(old_style) = layout_style_for_dom(&self.layout.tree.root, node) else {
+                    let Some(current) = self.document.node(node) else {
+                        requires_full_rebuild = true;
+                        break;
+                    };
+                    if node_is_within_style_element(&self.document, node) {
+                        continue;
+                    }
+                    if matches!(current.kind, NodeKind::Element(_)) && current.parent.is_some() {
+                        if new_style.display_none {
+                            continue;
+                        }
+                        let Some(root) = retained_structural_parent(
+                            &self.document,
+                            &self.layout.tree.root,
+                            node,
+                        ) else {
+                            requires_full_rebuild = true;
+                            break;
+                        };
+                        formatting_relayout_nodes.insert(root);
+                        continue;
+                    }
                     requires_full_rebuild = true;
                     break;
                 };
-                let new_style = computed_style(&self.document, node, &new_styles);
-                if old_style.display_none != new_style.display_none
-                    || old_style.display_inline != new_style.display_inline
-                    || old_style.establishes_bfc != new_style.establishes_bfc
-                {
-                    requires_full_rebuild = true;
-                    break;
+                if formatting_boundary_changed(old_style, new_style) {
+                    let Some(root) =
+                        retained_structural_parent(&self.document, &self.layout.tree.root, node)
+                    else {
+                        requires_full_rebuild = true;
+                        break;
+                    };
+                    formatting_relayout_nodes.insert(root);
+                    continue;
                 }
                 if old_style != new_style {
                     if fragments_for_dom(&self.layout.fragments, node).len() > 1 {
@@ -655,6 +682,38 @@ impl RenderSession {
                     }
                     style_updates.push((node, new_style));
                 }
+            }
+        }
+
+        if !requires_full_rebuild && !formatting_relayout_nodes.is_empty() {
+            formatting_relayout_nodes =
+                minimal_structural_roots(&self.document, &formatting_relayout_nodes);
+            let formatting_roots = formatting_relayout_nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            if !refresh_layout_subtrees(
+                &mut self.layout.tree,
+                &self.document,
+                &new_styles,
+                &formatting_roots,
+            ) {
+                requires_full_rebuild = true;
+            } else {
+                geometry_changed = true;
+                subtree_relayout_safe = false;
+                flow_relayout_nodes.extend(formatting_roots.iter().copied());
+                structural_relayout_nodes.extend(formatting_roots.iter().copied());
+                style_updates.retain(|(candidate, _)| {
+                    !formatting_relayout_nodes
+                        .iter()
+                        .any(|root| node_is_within_dom_subtree(&self.document, *root, *candidate))
+                });
+                text_relayout_nodes.retain(|candidate| {
+                    !formatting_relayout_nodes
+                        .iter()
+                        .any(|root| node_is_within_dom_subtree(&self.document, *root, *candidate))
+                });
             }
         }
 
@@ -1087,15 +1146,37 @@ fn subtree_contains_style_element(document: &Document, root: NodeId) -> bool {
     false
 }
 
-fn stylesheet_visibility_boundary_changed_outside_structural_roots(
+fn formatting_boundary_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
+    before.display_none != after.display_none
+        || before.display_inline != after.display_inline
+        || before.establishes_bfc != after.establishes_bfc
+}
+
+fn retained_structural_parent(
+    document: &Document,
+    layout_root: &LayoutNode,
+    node: NodeId,
+) -> Option<NodeId> {
+    let mut current = document.node(node)?.parent?;
+    let mut remaining = document.node_count().saturating_add(1);
+    while remaining > 0 {
+        if layout_style_for_dom(layout_root, current).is_some() {
+            return Some(current);
+        }
+        current = document.node(current)?.parent?;
+        remaining -= 1;
+    }
+    None
+}
+
+fn collect_stylesheet_formatting_boundary_roots(
     document: &Document,
     old_styles: &StyleSet,
     new_styles: &StyleSet,
     layout_root: &LayoutNode,
     structural_roots: &BTreeSet<NodeId>,
+    output: &mut BTreeSet<NodeId>,
 ) -> bool {
-    let mut laid_out = BTreeSet::new();
-    collect_layout_dom_nodes(layout_root, &mut laid_out);
     let mut stack = vec![document.root()];
 
     while let Some(node) = stack.pop() {
@@ -1108,16 +1189,21 @@ fn stylesheet_visibility_boundary_changed_outside_structural_roots(
         let Some(current) = document.node(node) else {
             continue;
         };
-        if matches!(&current.kind, NodeKind::Element(_)) && !laid_out.contains(&node) {
+        if matches!(&current.kind, NodeKind::Element(_))
+            && !node_is_within_style_element(document, node)
+        {
             let old_style = computed_style(document, node, old_styles);
             let new_style = computed_style(document, node, new_styles);
-            if old_style.display_none != new_style.display_none {
-                return true;
+            if formatting_boundary_changed(old_style, new_style) {
+                let Some(root) = retained_structural_parent(document, layout_root, node) else {
+                    return false;
+                };
+                output.insert(root);
             }
         }
         stack.extend_from_slice(&current.children);
     }
-    false
+    true
 }
 
 fn layout_style_for_dom(node: &LayoutNode, dom_node: NodeId) -> Option<ComputedStyle> {
@@ -1850,11 +1936,14 @@ mod tests {
     }
 
     #[test]
-    fn stylesheet_visibility_boundary_change_remains_full_rebuild() {
-        let source = r#"<style id="sheet">#target { display:block;height:20px;background:#112233; }</style><div id="target"></div>"#;
-        let expected_source = r#"<style id="sheet">#target { display:none;height:20px;background:#112233; }</style><div id="target"></div>"#;
+    fn stylesheet_visibility_boundary_change_refreshes_retained_parent() {
+        let source = r#"<style id="sheet">#target { display:block;height:20px;background:#112233; }</style><div id="before" style="height:5px"></div><div id="parent"><div id="target"></div></div>"#;
+        let expected_source = r#"<style id="sheet">#target { display:none;height:20px;background:#112233; }</style><div id="before" style="height:5px"></div><div id="parent"><div id="target"></div></div>"#;
         let mut session = session(source, deterministic_options());
         let sheet = element_with_id(session.document(), "sheet");
+        let parent = element_with_id(session.document(), "parent");
+        let target = element_with_id(session.document(), "target");
+        let parent_layout = layout_id_for_dom(&session.layout().tree.root, parent).unwrap();
         let text = *session
             .document()
             .children(sheet)
@@ -1870,15 +1959,129 @@ mod tests {
             .unwrap();
         let report = session
             .update()
-            .expect("stylesheet boundary fallback succeeds");
+            .expect("stylesheet boundary refresh succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
-        assert!(!report.retained_display_list);
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
         assert!(report.styles_rebuilt);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout)
+        );
+        assert!(layout_id_for_dom(&session.layout().tree.root, target).is_none());
         assert_eq!(
             session.framebuffer().stable_hash64(),
             expected.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
+    fn direct_visibility_boundary_changes_refresh_retained_parent() {
+        let source = r#"<div id="before" style="height:5px;background:#eeeeee"></div><div id="parent"><div id="target" style="height:12px;background:#112233"></div></div><div id="after" style="height:10px;background:#445566"></div>"#;
+        let hidden_source = r#"<div id="before" style="height:5px;background:#eeeeee"></div><div id="parent"><div id="target" style="display:none;height:12px;background:#112233"></div></div><div id="after" style="height:10px;background:#445566"></div>"#;
+        let mut session = session(source, deterministic_options());
+        let before = element_with_id(session.document(), "before");
+        let parent = element_with_id(session.document(), "parent");
+        let target = element_with_id(session.document(), "target");
+        let parent_layout = layout_id_for_dom(&session.layout().tree.root, parent).unwrap();
+        let before_fragment = fragment_for_dom(&session.layout().fragments, before)
+            .expect("prefix fragment exists")
+            .id;
+
+        session
+            .document_mut()
+            .set_attribute(
+                target,
+                "style",
+                "display:none;height:12px;background:#112233",
+            )
+            .unwrap();
+        let hide_report = session.update().expect("hide refresh succeeds");
+        let hidden = render_ok(hidden_source, deterministic_options());
+
+        assert_eq!(hide_report.mode, IncrementalMode::FlowRelayout);
+        assert!(hide_report.retained_display_list);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout)
+        );
+        assert!(layout_id_for_dom(&session.layout().tree.root, target).is_none());
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, before)
+                .expect("prefix fragment remains")
+                .id,
+            before_fragment
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            hidden.framebuffer.stable_hash64()
+        );
+
+        session
+            .document_mut()
+            .set_attribute(target, "style", "height:12px;background:#112233")
+            .unwrap();
+        let show_report = session.update().expect("show refresh succeeds");
+        let visible = render_ok(source, deterministic_options());
+
+        assert_eq!(show_report.mode, IncrementalMode::FlowRelayout);
+        assert!(show_report.retained_display_list);
+        assert!(layout_id_for_dom(&session.layout().tree.root, target).is_some());
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout)
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            visible.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
+    fn display_role_and_bfc_changes_refresh_retained_parent() {
+        let source = r#"<div id="parent"><div id="target" style="display:block;background:#112233">R</div><span id="sibling">S</span></div>"#;
+        let inline_source = r#"<div id="parent"><div id="target" style="display:inline;background:#112233">R</div><span id="sibling">S</span></div>"#;
+        let flow_root_source = r#"<div id="parent"><div id="target" style="display:flow-root;background:#112233">R</div><span id="sibling">S</span></div>"#;
+        let mut session = session(source, deterministic_options());
+        let parent = element_with_id(session.document(), "parent");
+        let target = element_with_id(session.document(), "target");
+        let parent_layout = layout_id_for_dom(&session.layout().tree.root, parent).unwrap();
+
+        session
+            .document_mut()
+            .set_attribute(target, "style", "display:inline;background:#112233")
+            .unwrap();
+        let inline_report = session.update().expect("inline-role refresh succeeds");
+        let inline = render_ok(inline_source, deterministic_options());
+
+        assert_eq!(inline_report.mode, IncrementalMode::FlowRelayout);
+        assert!(inline_report.retained_display_list);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout)
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            inline.framebuffer.stable_hash64()
+        );
+
+        session
+            .document_mut()
+            .set_attribute(target, "style", "display:flow-root;background:#112233")
+            .unwrap();
+        let bfc_report = session.update().expect("BFC refresh succeeds");
+        let flow_root = render_ok(flow_root_source, deterministic_options());
+
+        assert_eq!(bfc_report.mode, IncrementalMode::FlowRelayout);
+        assert!(bfc_report.retained_display_list);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout)
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            flow_root.framebuffer.stable_hash64()
         );
     }
 
