@@ -251,18 +251,24 @@ mod tests {
 
     #[test]
     fn real_spidermonkey_runtime_obeys_the_script_contract() {
+        eprintln!("checkpoint: initialize engine");
         let engine = SpiderMonkeyEngine::initialize().unwrap();
+        eprintln!("checkpoint: create runtime");
         let mut runtime = engine.create_runtime().unwrap();
+        eprintln!("checkpoint: create realm");
         let realm = runtime.create_realm(limits()).unwrap();
 
+        eprintln!("checkpoint: evaluate normal");
         let normal = runtime
             .evaluate(realm.id(), ScriptSource::named("40 + 2", "normal.js"))
             .unwrap();
+        eprintln!("checkpoint: normal evaluated");
         let normal_value = match normal.completion {
             ScriptCompletion::Normal(value) => value,
             ScriptCompletion::Throw(_) => panic!("normal evaluation unexpectedly threw"),
         };
 
+        eprintln!("checkpoint: duplicate root");
         let duplicate = runtime.duplicate_root(normal_value).unwrap();
         assert_ne!(normal_value, duplicate);
         runtime.release_root(normal_value).unwrap();
@@ -272,12 +278,14 @@ mod tests {
         );
         runtime.release_root(duplicate).unwrap();
 
+        eprintln!("checkpoint: evaluate throw");
         let thrown = runtime
             .evaluate(
                 realm.id(),
                 ScriptSource::named("throw new Error('boom')", "throw.js"),
             )
             .unwrap();
+        eprintln!("checkpoint: throw evaluated");
         let exception = match thrown.completion {
             ScriptCompletion::Throw(exception) => exception,
             ScriptCompletion::Normal(_) => panic!("throwing evaluation unexpectedly completed"),
@@ -290,6 +298,7 @@ mod tests {
         );
         runtime.release_root(exception.value).unwrap();
 
+        eprintln!("checkpoint: source limit");
         let oversized = "x".repeat(1025);
         assert_eq!(
             runtime
@@ -299,6 +308,7 @@ mod tests {
             ScriptErrorKind::ResourceLimit
         );
 
+        eprintln!("checkpoint: destroy realm");
         let stale_realm = realm.id();
         runtime.destroy_realm(stale_realm).unwrap();
         assert_eq!(
@@ -308,5 +318,6 @@ mod tests {
                 .kind,
             ScriptErrorKind::InvalidRealm
         );
+        eprintln!("checkpoint: test complete");
     }
 }
