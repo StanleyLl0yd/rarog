@@ -135,20 +135,6 @@ impl DisplayCommand {
             | Self::PopOpacity => None,
         }
     }
-
-    fn is_structural(self) -> bool {
-        matches!(
-            self,
-            Self::PushClip { .. }
-                | Self::PopClip
-                | Self::PushStackingContext { .. }
-                | Self::PopStackingContext
-                | Self::PushTransform { .. }
-                | Self::PopTransform
-                | Self::PushOpacity { .. }
-                | Self::PopOpacity
-        )
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -595,39 +581,122 @@ pub struct DamageRegion {
     pub rects: Vec<Rect>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum EffectivePaintVisual {
+    Solid(Color),
+    Image {
+        destination: Rect,
+        image: ImageResourceRef,
+        opacity: Opacity,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct EffectivePaintItem {
+    ordinal: usize,
+    bounds: Option<Rect>,
+    visual: EffectivePaintVisual,
+}
+
+fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, EffectivePaintItem> {
+    let mut output = BTreeMap::new();
+    let mut transforms = Vec::new();
+    let mut clips: Vec<Option<Rect>> = vec![None];
+    let mut opacities = vec![Opacity::ONE];
+    let mut ordinal = 0usize;
+
+    for (id, command) in list
+        .command_ids
+        .iter()
+        .copied()
+        .zip(list.commands.iter().copied())
+    {
+        match command {
+            DisplayCommand::FillRect { rect, color }
+            | DisplayCommand::TextPlaceholder { rect, color } => {
+                let destination = transform_rect(rect, &transforms);
+                let bounds = match *clips.last().expect("clip state") {
+                    Some(clip) => intersection(destination, clip),
+                    None => Some(destination),
+                };
+                let color = apply_opacity(color, *opacities.last().expect("opacity state"));
+                output.insert(
+                    id,
+                    EffectivePaintItem {
+                        ordinal,
+                        bounds,
+                        visual: EffectivePaintVisual::Solid(color),
+                    },
+                );
+                ordinal = ordinal.saturating_add(1);
+            }
+            DisplayCommand::DrawImage { rect, image } => {
+                let destination = transform_rect(rect, &transforms);
+                let bounds = match *clips.last().expect("clip state") {
+                    Some(clip) => intersection(destination, clip),
+                    None => Some(destination),
+                };
+                output.insert(
+                    id,
+                    EffectivePaintItem {
+                        ordinal,
+                        bounds,
+                        visual: EffectivePaintVisual::Image {
+                            destination,
+                            image,
+                            opacity: *opacities.last().expect("opacity state"),
+                        },
+                    },
+                );
+                ordinal = ordinal.saturating_add(1);
+            }
+            DisplayCommand::PushClip { rect } => {
+                let rect = transform_rect(rect, &transforms);
+                let clip = match *clips.last().expect("clip state") {
+                    Some(current) => {
+                        Some(intersection(current, rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)))
+                    }
+                    None => Some(rect),
+                };
+                clips.push(clip);
+            }
+            DisplayCommand::PopClip => {
+                if clips.len() > 1 {
+                    clips.pop();
+                }
+            }
+            DisplayCommand::PushStackingContext { .. } | DisplayCommand::PopStackingContext => {}
+            DisplayCommand::PushTransform { transform } => transforms.push(transform),
+            DisplayCommand::PopTransform => {
+                transforms.pop();
+            }
+            DisplayCommand::PushOpacity { opacity } => {
+                let current = *opacities.last().expect("opacity state");
+                opacities.push(current.multiply(opacity));
+            }
+            DisplayCommand::PopOpacity => {
+                if opacities.len() > 1 {
+                    opacities.pop();
+                }
+            }
+        }
+    }
+
+    output
+}
+
 impl DamageRegion {
     pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
+        let current_items = effective_indexed_paint(current);
         let Some(previous) = previous else {
             let mut damage = Self::default();
-            for bounds in effective_paint_bounds(current) {
+            for bounds in current_items.values().filter_map(|item| item.bounds) {
                 damage.push(bounds);
             }
             return damage;
         };
 
-        if previous
-            .commands
-            .iter()
-            .copied()
-            .any(DisplayCommand::is_structural)
-            || current
-                .commands
-                .iter()
-                .copied()
-                .any(DisplayCommand::is_structural)
-        {
-            let mut damage = Self::default();
-            for bounds in effective_paint_bounds(previous)
-                .into_iter()
-                .chain(effective_paint_bounds(current))
-            {
-                damage.push(bounds);
-            }
-            return damage;
-        }
-
-        let previous_items = indexed_commands(previous);
-        let current_items = indexed_commands(current);
+        let previous_items = effective_indexed_paint(previous);
         let ids = previous_items
             .keys()
             .chain(current_items.keys())
@@ -641,15 +710,11 @@ impl DamageRegion {
             if before == after {
                 continue;
             }
-            if let Some(command) = before {
-                if let Some(bounds) = command.bounds() {
-                    damage.push(bounds);
-                }
+            if let Some(bounds) = before.and_then(|item| item.bounds) {
+                damage.push(bounds);
             }
-            if let Some(command) = after {
-                if let Some(bounds) = command.bounds() {
-                    damage.push(bounds);
-                }
+            if let Some(bounds) = after.and_then(|item| item.bounds) {
+                damage.push(bounds);
             }
         }
 
@@ -664,14 +729,6 @@ impl DamageRegion {
             self.rects.push(rect);
         }
     }
-}
-
-fn indexed_commands(list: &DisplayList) -> BTreeMap<DisplayItemId, DisplayCommand> {
-    list.command_ids
-        .iter()
-        .copied()
-        .zip(list.commands.iter().copied())
-        .collect()
 }
 
 fn transform_rect(rect: Rect, transforms: &[Transform2D]) -> Rect {
@@ -718,50 +775,6 @@ fn transform_rect(rect: Rect, transforms: &[Transform2D]) -> Rect {
         (max_x - min_x).max(0.0),
         (max_y - min_y).max(0.0),
     )
-}
-
-fn effective_paint_bounds(list: &DisplayList) -> Vec<Rect> {
-    let mut output = Vec::new();
-    let mut transforms = Vec::new();
-    let mut clips: Vec<Option<Rect>> = vec![None];
-    for command in &list.commands {
-        match *command {
-            DisplayCommand::FillRect { rect, .. }
-            | DisplayCommand::TextPlaceholder { rect, .. }
-            | DisplayCommand::DrawImage { rect, .. } => {
-                let rect = transform_rect(rect, &transforms);
-                let bounds = match *clips.last().expect("clip state") {
-                    Some(clip) => intersection(rect, clip),
-                    None => Some(rect),
-                };
-                if let Some(bounds) = bounds {
-                    output.push(bounds);
-                }
-            }
-            DisplayCommand::PushClip { rect } => {
-                let rect = transform_rect(rect, &transforms);
-                let clip = match *clips.last().expect("clip state") {
-                    Some(current) => {
-                        intersection(current, rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0))
-                    }
-                    None => rect,
-                };
-                clips.push(Some(clip));
-            }
-            DisplayCommand::PopClip => {
-                clips.pop();
-            }
-            DisplayCommand::PushTransform { transform } => transforms.push(transform),
-            DisplayCommand::PopTransform => {
-                transforms.pop();
-            }
-            DisplayCommand::PushStackingContext { .. }
-            | DisplayCommand::PopStackingContext
-            | DisplayCommand::PushOpacity { .. }
-            | DisplayCommand::PopOpacity => {}
-        }
-    }
-    output
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1277,6 +1290,88 @@ mod tests {
             ],
         };
         assert!(!list.has_balanced_structure());
+    }
+
+    #[test]
+    fn structural_damage_ignores_unchanged_paint_outside_changed_transform_scope() {
+        let make = |translation: f32| DisplayList {
+            command_ids: vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+                DisplayItemId::test(4),
+            ],
+            commands: vec![
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::translation(translation, 0.0),
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(10.0, 0.0, 2.0, 2.0),
+                    color: Color::rgb(255, 0, 0),
+                },
+                DisplayCommand::PopTransform,
+            ],
+        };
+        let before = make(0.0);
+        let after = make(4.0);
+        let damage = DamageRegion::between(Some(&before), &after);
+
+        assert!(!damage.rects.contains(&Rect::new(0.0, 0.0, 2.0, 2.0)));
+        assert!(damage.rects.contains(&Rect::new(10.0, 0.0, 2.0, 2.0)));
+        assert!(damage.rects.contains(&Rect::new(14.0, 0.0, 2.0, 2.0)));
+        assert_eq!(damage.rects.len(), 2);
+    }
+
+    #[test]
+    fn structural_damage_tracks_effective_opacity_changes() {
+        let make = |opacity: f32| DisplayList {
+            command_ids: vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+            ],
+            commands: vec![
+                DisplayCommand::PushOpacity {
+                    opacity: Opacity::new(opacity).unwrap(),
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(3.0, 2.0, 4.0, 5.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::PopOpacity,
+            ],
+        };
+        let damage = DamageRegion::between(Some(&make(0.25)), &make(0.75));
+
+        assert_eq!(damage.rects, vec![Rect::new(3.0, 2.0, 4.0, 5.0)]);
+    }
+
+    #[test]
+    fn structural_damage_tracks_paint_order_changes() {
+        let a = DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 4.0, 4.0),
+            color: Color::BLACK,
+        };
+        let b = DisplayCommand::FillRect {
+            rect: Rect::new(2.0, 0.0, 4.0, 4.0),
+            color: Color::rgb(255, 0, 0),
+        };
+        let before = DisplayList {
+            command_ids: vec![DisplayItemId::test(1), DisplayItemId::test(2)],
+            commands: vec![a, b],
+        };
+        let after = DisplayList {
+            command_ids: vec![DisplayItemId::test(2), DisplayItemId::test(1)],
+            commands: vec![b, a],
+        };
+        let damage = DamageRegion::between(Some(&before), &after);
+
+        assert!(damage.rects.contains(&Rect::new(0.0, 0.0, 4.0, 4.0)));
+        assert!(damage.rects.contains(&Rect::new(2.0, 0.0, 4.0, 4.0)));
     }
 
     #[test]
