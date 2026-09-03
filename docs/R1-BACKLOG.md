@@ -53,6 +53,7 @@ Tracking issue: #39.
   - [x] Revalidate retained layout globally when connected stylesheet sources change, with formatting and visibility-membership boundary fallbacks.
 - [ ] Extend retained/damage-aware paint across richer formatting and stacking behavior.
   - [x] Retain and replace the affected display-list suffix across flow-aware fragment relayout.
+  - [x] Replay partial damage through clip, stacking, transform and opacity scopes without a full-frame raster fallback.
 
 ## Scope boundary
 
