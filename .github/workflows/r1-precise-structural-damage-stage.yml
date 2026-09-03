@@ -18,7 +18,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Apply precise structural damage slice
-        run: python tools/r1_precise_structural_damage_patch.py
+        run: |
+          python tools/r1_precise_structural_damage_patch.py
+          python tools/r1_precise_structural_damage_fix.py
       - name: Format
         run: cargo fmt --all
       - name: Check workspace
