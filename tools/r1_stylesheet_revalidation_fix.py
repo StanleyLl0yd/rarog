@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Keep the legacy regression aligned with the retained stylesheet-source path.
 path = Path("crates/rarog-engine/src/lib.rs")
 s = path.read_text()
 start = s.find("    #[test]\n    fn style_element_character_data_still_requires_full_rebuild() {")
