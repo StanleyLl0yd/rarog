@@ -16,3 +16,11 @@ if dependency not in text:
         raise SystemExit("rarog-webidl manifest lib marker missing")
     text = text.replace(marker, f"\n[dependencies]\n{dependency}\n{marker}", 1)
 manifest.write_text(text)
+
+adapter = Path("crates/rarog-webidl/src/weedle_frontend.rs")
+text = adapter.read_text()
+text = text.replace(
+    'snapshot.contains("operation|5:reset|undefined|true")',
+    'snapshot.contains("operation||5:reset|undefined|true")',
+)
+adapter.write_text(text)
