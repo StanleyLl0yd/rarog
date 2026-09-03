@@ -65,7 +65,7 @@ R0 currently enforces decoded source-byte and framebuffer-pixel budgets at the e
 - `GeometryRelayout` — the Layout Tree is retained but Fragment geometry is rebuilt when a narrower incremental mapping cannot be proven safe;
 - `FullRebuild` — structure, text, display membership or another unprovable case uses the deterministic full-rebuild fallback.
 
-Paint retains unaffected display-list ranges when a replacement is structurally valid. The persistent software framebuffer is then updated inside damage rectangles for non-structural display lists. Structural clip/stacking/transform/opacity scopes currently force conservative full-frame raster refreshes where damage-scoped replay is not yet proven safe.
+Paint retains unaffected display-list ranges when a replacement is structurally valid. The persistent software framebuffer is updated only inside the resulting damage rectangles. Damage replay reconstructs clip, stacking, transform and opacity scopes while clipping raster work to each damaged rectangle, and structural damage is derived from effective per-item transform, clip, opacity and paint-order state rather than invalidating every paint bound.
 
 Track:
 
@@ -77,7 +77,7 @@ Track:
 - layout nodes/fragments rebuilt per frame;
 - display items retained, replaced and regenerated per frame;
 - damaged pixel area versus viewport area;
-- full-frame raster fallbacks caused by structural display scopes;
+- partial-damage replay involving structural display scopes;
 - unnecessary full-document/full-viewport rebuild count;
 - time spent in dirty capture, style comparison, relayout, display-list generation/patching and raster separately.
 

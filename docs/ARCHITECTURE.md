@@ -87,9 +87,11 @@ computed style + invalidation keys
   ↓
 persistent engine dirty state
   ├─ paint-only computed-style change → reuse geometry + retained paint update
-  ├─ footprint-safe geometry change → subtree Fragment relayout
-  ├─ vertical-footprint geometry change → retain Layout Tree + flow-aware suffix relayout
-  └─ structure/text/display-membership change → deterministic full rebuild
+  ├─ supported geometry change → retained subtree or root-flow relayout
+  ├─ ordinary CharacterData change → retained text-node refresh + flow-aware fragment rebuild
+  ├─ covered insertion/reparent/detach → retained structural-root refresh with stable existing LayoutNodeId identity
+  ├─ connected stylesheet-source change → rebuild StyleSet + global retained-style revalidation
+  └─ unprovable formatting/membership/history case → deterministic full rebuild
   ↓
 derived Layout Tree
   ↓
@@ -140,11 +142,11 @@ R0 stores an explicit `Namespace` on every `ElementData` and represents the loca
 
 ## HTML parsing boundary
 
-`rarog-html` exposes a decoded streaming-input contract independently of the bootstrap parser implementation. `StreamingInput` accepts UTF-8 chunks and closes explicitly; source spans in parser diagnostics are UTF-8 byte offsets in that decoded stream. Transport bytes and encoding detection/decoding stay outside this R0 interface.
+`rarog-html` exposes a decoded streaming-input contract independently of the parser backend. `StreamingInput` accepts UTF-8 chunks and closes explicitly; source spans in parser diagnostics are UTF-8 byte offsets in that decoded stream. Transport bytes and encoding detection/decoding stay outside this interface.
 
-Recoverable syntax problems produce deterministic `ParseDiagnostic` records with a code, severity, source span and message. Contract failures that prevent parsing from starting or completing use `Result::Err`. The legacy `parse(&str) -> Document` entry point remains a convenience wrapper, while `parse_with_diagnostics` and `parse_stream` expose the reporting boundary.
+Recoverable syntax problems produce deterministic `ParseDiagnostic` records with a code, severity, source span and message. Contract failures that prevent parsing from starting or completing use `Result::Err`. The canonical entry points are `parse`, `parse_with_diagnostics` and `parse_stream`; `parse_standards*` names remain compatibility aliases rather than a separate parser path.
 
-The R0 implementation buffers chunks until end of input and then runs the bootstrap parser. This proves ownership and reporting contracts only; it does **not** claim incremental tokenization or WHATWG HTML conformance. R1 replaces the bootstrap algorithm behind the adapter with a standards-oriented tokenizer/tree builder without leaking implementation-specific token or node types into DOM/layout callers. See ADR-0025.
+R1 routes parsing through the standards-oriented adapter backed by `html5ever`, then normalizes its result into Rarog-owned DOM identities and invariants. Streaming input is still buffered until close rather than incrementally tokenized across calls, but backend token/node types do not leak into DOM, layout or engine callers. The adapter boundary therefore preserves replaceability while the parser behavior follows the standards-oriented path. See ADR-0014 and ADR-0025.
 
 ## Style source, selector and cascade boundary
 
@@ -201,26 +203,23 @@ Stateful updates expose elapsed wall-clock time alongside the existing `Incremen
 
 `cargo run -p rarog-engine --example r0_bench --release -- <iterations>` runs fixed full-render, paint-only, subtree-relayout and flow-relayout scenarios. Setup for each incremental sample is excluded from the reported update duration through the engine's own timing boundary. The harness is intended to detect gross regressions during development and to provide a stable place for later benchmark methodology, not to publish competitive numbers. See ADR-0028.
 
-## First incremental reuse experiment
+## Incremental reuse
 
-R0 now has a stateful `RenderSession` that owns the current document, styles, Layout Tree, Fragment Tree, display list, framebuffer and persistent dirty state.
+`RenderSession` owns the current document, styles, Layout Tree, Fragment Tree, display list, framebuffer and persistent dirty state. The implementation remains conservative, but R1 now retains substantially more derived state than the original R0 experiment:
 
-The current reuse path is intentionally conservative:
+1. ordinary paint-only style changes patch retained layout/fragment styles and affected display items;
+2. footprint-safe geometry changes may relayout an affected Fragment subtree;
+3. vertical-flow changes and ordinary CharacterData mutations retain the Layout Tree and rebuild the affected root-flow suffix;
+4. covered child insertion, reparent, detach and detached-subtree attachment refresh retained structural roots while preserving existing `LayoutNodeId` identity where the DOM node survives;
+5. connected stylesheet-source changes rebuild the `StyleSet`, globally revalidate retained computed styles, and retain layout for supported paint/geometry changes while formatting or visibility-membership boundaries remain conservative fallbacks;
+6. complex inline/formatting-boundary cases can refresh a retained parent structural root instead of forcing an unconditional document rebuild;
+7. missing mutation history, unsupported membership transitions or any state whose correctness cannot be proven still use the deterministic full-rebuild fallback.
 
-1. collect DOM mutations since the last consumed generation and accumulate dirty entries;
-2. recompute affected element styles for `id`, `class` and inline `style` mutations;
-3. patch paint-only changes onto retained Layout/Fragment state;
-4. for geometry changes that preserve vertical flow footprint, rebuild only the affected Fragment subtree from its parent's content-box containing block;
-5. if height or vertical margin/padding/border can move following siblings, retain the Layout Tree, find the earliest root block-flow child containing a dirty node, preserve the preceding Fragment prefix, and rebuild that child plus all following siblings;
-6. if the dirty nodes cannot be mapped safely to the current root flow, fall back to whole-Fragment-Tree geometry relayout; structural mutations, text changes, display-membership changes or other unprovable cases use the deterministic full-rebuild fallback.
+Retained paint can replace structurally valid display-list ranges and preserve unaffected ranges across flow relayout. Damage comparison uses stable display-item identity plus effective transform, clip, opacity, image and paint-order state. Damage rasterization replays the display list through clip/stacking/transform/opacity scopes while clipping writes to each damaged rectangle, so the presence of structural display commands alone no longer forces a full-frame raster pass.
 
-The geometry-affecting comparison includes width, height, margin, border width, padding and `display`. Background and border color remain paint-only values. The current subtree-safety rule deliberately treats only vertical footprint as the hard flow boundary because the bootstrap text path does not wrap yet. This rule must become formatting-context-aware before it can represent general CSS incremental reflow.
+These mechanisms establish correctness-preserving retained boundaries; they do **not** by themselves establish an end-to-end performance claim. Measurements remain governed by `docs/METRICS.md` and the benchmark harness.
 
-Paint now retains unaffected display-list ranges when an affected fragment subtree already has a stable command range. If that range cannot be patched safely, the engine regenerates the display list. Damage is still derived by stable display-item identity. The persistent software framebuffer is then cleared and rerasterized only inside the resulting damage rectangles, with commands clipped to each damaged rectangle.
-
-This proves narrower retained work boundaries and pixel-equivalent damage rasterization, **not a measured end-to-end performance win**. Nested formatting-context-local reflow, fragmentation-aware retained painting, stacking/clip/transform-aware damage and compositor integration remain later work.
-
-See ADR-0009 and ADR-0010.
+See ADR-0009, ADR-0010 and ADR-0035 through ADR-0046.
 
 ## Layout and Fragment Tree
 

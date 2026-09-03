@@ -4,7 +4,8 @@ The fuzz package is intentionally excluded from the main Cargo workspace so prod
 
 Targets:
 
-- `html_parse` feeds arbitrary UTF-8 HTML into the bootstrap parser and asserts that the resulting DOM preserves native invariants.
+- `html_parse` feeds arbitrary UTF-8 HTML into the standards-oriented parser adapter and asserts that the resulting DOM preserves native invariants.
+- `css_stylesheet` feeds arbitrary UTF-8 CSS into stylesheet parsing so malformed selector/declaration input must remain controlled and non-panicking.
 - `render_html` feeds arbitrary UTF-8 HTML through the full render boundary with a small viewport. Any controlled `RenderError` is acceptable; a panic, abort, invariant failure, or memory-safety failure is not.
 
 Typical local commands:
@@ -12,6 +13,7 @@ Typical local commands:
 ```text
 cargo install cargo-fuzz --locked
 cargo fuzz run html_parse -- -max_len=1048576
+cargo fuzz run css_stylesheet -- -max_len=1048576
 cargo fuzz run render_html -- -max_len=1048576
 ```
 
