@@ -17,7 +17,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Apply audit patch
-        run: python tools/audit_engine_incremental_patch.py
+        run: |
+          python tools/audit_engine_incremental_patch.py
+          python tools/audit_engine_incremental_clippy.py
       - name: Format
         run: cargo fmt --all
       - name: Check workspace
