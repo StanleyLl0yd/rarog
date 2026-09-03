@@ -485,6 +485,7 @@ impl RenderSession {
             .collect::<BTreeSet<_>>();
         let mut text_relayout_nodes = BTreeSet::new();
         let mut structural_relayout_nodes = BTreeSet::new();
+        let mut connected_created_nodes = BTreeSet::new();
         let mut requires_full_rebuild = mutation_history_lost;
         let mut stylesheet_sources_changed = mutation_history_lost;
         for mutation in &mutations {
@@ -497,7 +498,7 @@ impl RenderSession {
                 MutationKind::Attribute { .. } => {}
                 MutationKind::NodeCreated { node } => {
                     if self.document.is_connected(*node) {
-                        requires_full_rebuild = true;
+                        connected_created_nodes.insert(*node);
                     }
                 }
                 MutationKind::ChildAdded { parent, child } => {
@@ -546,6 +547,17 @@ impl RenderSession {
             }
         }
 
+        if !requires_full_rebuild && !connected_created_nodes.is_empty() {
+            let created_nodes_are_covered = connected_created_nodes.iter().all(|created| {
+                structural_relayout_nodes
+                    .iter()
+                    .any(|root| node_is_within_dom_subtree(&self.document, *root, *created))
+            });
+            if !created_nodes_are_covered {
+                requires_full_rebuild = true;
+            }
+        }
+
         let new_styles = if stylesheet_sources_changed {
             StyleSet::for_document(&self.document)
         } else {
@@ -576,6 +588,11 @@ impl RenderSession {
                 subtree_relayout_safe = false;
                 flow_relayout_nodes.extend(structural_roots);
                 style_candidates.retain(|candidate| {
+                    !structural_relayout_nodes
+                        .iter()
+                        .any(|root| node_is_within_dom_subtree(&self.document, *root, *candidate))
+                });
+                text_relayout_nodes.retain(|candidate| {
                     !structural_relayout_nodes
                         .iter()
                         .any(|root| node_is_within_dom_subtree(&self.document, *root, *candidate))
@@ -1821,29 +1838,71 @@ mod tests {
     }
 
     #[test]
-    fn newly_created_then_attached_node_remains_full_rebuild() {
-        let source = r#"<div id="parent"></div>"#;
-        let expected_source = r#"<div id="parent"><span>R</span></div>"#;
+    fn detached_created_subtree_attaches_through_retained_parent() {
+        let source = r#"<div id="before" style="height:5px;background:#eeeeee"></div><div id="parent"></div><div id="after" style="height:10px;background:#445566"></div>"#;
+        let expected_source = r#"<div id="before" style="height:5px;background:#eeeeee"></div><div id="parent"><section id="card" style="height:12px;background:#112233"><span id="label">R</span></section></div><div id="after" style="height:10px;background:#445566"></div>"#;
         let mut session = session(source, deterministic_options());
+        let before = element_with_id(session.document(), "before");
         let parent = element_with_id(session.document(), "parent");
-        let child = session
+        let parent_layout = layout_id_for_dom(&session.layout().tree.root, parent).unwrap();
+        let before_fragment = fragment_for_dom(&session.layout().fragments, before)
+            .expect("retained prefix fragment exists")
+            .id;
+
+        let card = session
+            .document_mut()
+            .create_node(NodeKind::Element(rarog_dom::ElementData::html("section")))
+            .unwrap();
+        session
+            .document_mut()
+            .set_attribute(card, "id", "card")
+            .unwrap();
+        session
+            .document_mut()
+            .set_attribute(card, "style", "height:12px;background:#112233")
+            .unwrap();
+        let label = session
             .document_mut()
             .create_node(NodeKind::Element(rarog_dom::ElementData::html("span")))
             .unwrap();
         session
             .document_mut()
-            .append_new(child, NodeKind::Text("R".into()))
+            .set_attribute(label, "id", "label")
             .unwrap();
-        session.document_mut().append_child(parent, child).unwrap();
+        let text = session
+            .document_mut()
+            .create_node(NodeKind::Text("R".into()))
+            .unwrap();
+        session.document_mut().append_child(label, text).unwrap();
+        session.document_mut().append_child(card, label).unwrap();
+        session.document_mut().append_child(parent, card).unwrap();
 
-        let report = session.update().expect("created-node fallback succeeds");
+        let report = session.update().expect("detached subtree attach succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert_eq!(report.patched_nodes, 1);
+        assert!(report.retained_display_list);
+        assert!(!report.styles_rebuilt);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout)
+        );
+        assert!(layout_id_for_dom(&session.layout().tree.root, card).is_some());
+        assert!(layout_id_for_dom(&session.layout().tree.root, label).is_some());
+        assert!(layout_id_for_dom(&session.layout().tree.root, text).is_some());
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, before)
+                .expect("retained prefix fragment remains")
+                .id,
+            before_fragment
+        );
+        assert_eq!(session.styles(), &expected.styles);
         assert_eq!(
             session.framebuffer().stable_hash64(),
             expected.framebuffer.stable_hash64()
         );
+        assert!(!session.damage().rects.is_empty());
     }
 
     #[test]
