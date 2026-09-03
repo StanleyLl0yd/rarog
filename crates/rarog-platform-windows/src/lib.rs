@@ -1,16 +1,20 @@
+mod clipboard;
 mod input;
 
+pub use clipboard::WindowsClipboardService;
 pub use input::WindowsInputService;
 
 use rarog_platform::{
-    PlatformCapabilities, PlatformFontError, PlatformFontRequest, PlatformFontService,
-    PlatformHost, PlatformInputService, PlatformTextInputService, ResolvedPlatformFont,
+    ClipboardError, PlatformCapabilities, PlatformClipboardService, PlatformFontError,
+    PlatformFontRequest, PlatformFontService, PlatformHost, PlatformInputService,
+    PlatformTextInputService, ResolvedPlatformFont,
 };
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowsPlatformError {
     UnsupportedTarget,
+    Clipboard(ClipboardError),
 }
 
 impl fmt::Display for WindowsPlatformError {
@@ -19,11 +23,21 @@ impl fmt::Display for WindowsPlatformError {
             Self::UnsupportedTarget => {
                 formatter.write_str("Windows platform host is unavailable on this target")
             }
+            Self::Clipboard(error) => write!(
+                formatter,
+                "Windows clipboard initialization failed: {error}"
+            ),
         }
     }
 }
 
 impl std::error::Error for WindowsPlatformError {}
+
+impl From<ClipboardError> for WindowsPlatformError {
+    fn from(error: ClipboardError) -> Self {
+        Self::Clipboard(error)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WindowsFontService;
@@ -48,6 +62,7 @@ impl PlatformFontService for WindowsFontService {
 pub struct WindowsPlatformHost {
     fonts: WindowsFontService,
     input: WindowsInputService,
+    clipboard: WindowsClipboardService,
 }
 
 impl WindowsPlatformHost {
@@ -56,6 +71,7 @@ impl WindowsPlatformHost {
             Ok(Self {
                 fonts: WindowsFontService::new(),
                 input: WindowsInputService::try_new()?,
+                clipboard: WindowsClipboardService::with_default_limits()?,
             })
         } else {
             Err(WindowsPlatformError::UnsupportedTarget)
@@ -73,6 +89,10 @@ impl WindowsPlatformHost {
     pub const fn input(&self) -> &WindowsInputService {
         &self.input
     }
+
+    pub const fn clipboard(&self) -> &WindowsClipboardService {
+        &self.clipboard
+    }
 }
 
 impl PlatformHost for WindowsPlatformHost {
@@ -85,6 +105,7 @@ impl PlatformHost for WindowsPlatformHost {
             font_text: true,
             input: true,
             input_ime: true,
+            clipboard: true,
             ..PlatformCapabilities::NONE
         }
     }
@@ -99,6 +120,10 @@ impl PlatformHost for WindowsPlatformHost {
 
     fn text_input_service(&self) -> Option<&dyn PlatformTextInputService> {
         Some(&self.input)
+    }
+
+    fn clipboard_service(&self) -> Option<&dyn PlatformClipboardService> {
+        Some(&self.clipboard)
     }
 }
 
@@ -241,11 +266,11 @@ mod tests {
             assert!(host.capabilities().supports(PlatformService::FontText));
             assert!(host.capabilities().supports(PlatformService::Input));
             assert!(host.capabilities().supports(PlatformService::InputIme));
-            assert!(!host.capabilities().supports(PlatformService::Clipboard));
+            assert!(host.capabilities().supports(PlatformService::Clipboard));
             assert!(host.font_service().is_some());
             assert!(host.input_service().is_some());
             assert!(host.text_input_service().is_some());
-            assert!(host.clipboard_service().is_none());
+            assert!(host.clipboard_service().is_some());
         } else {
             assert!(matches!(
                 result,
