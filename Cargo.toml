@@ -8,6 +8,7 @@ members = [
   "crates/rarog-css",
   "crates/rarog-layout",
   "crates/rarog-text-opentype",
+  "crates/rarog-webidl",
   "crates/rarog-paint",
   "crates/rarog-platform",
   "crates/rarog-platform-windows",
