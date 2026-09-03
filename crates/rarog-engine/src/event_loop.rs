@@ -65,11 +65,7 @@ impl<T, M> EngineEventLoop<T, M> {
         })
     }
 
-    pub fn queue_task(
-        &mut self,
-        source: TaskSource,
-        payload: T,
-    ) -> Result<TaskId, SchedulerError> {
+    pub fn queue_task(&mut self, source: TaskSource, payload: T) -> Result<TaskId, SchedulerError> {
         self.scheduler.queue_task(source, payload)
     }
 
