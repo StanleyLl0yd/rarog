@@ -96,9 +96,9 @@ fn incremental_paths_match_fresh_render() {
 }
 
 #[test]
-fn vertical_flow_and_structural_fallback_are_preserved() {
-    let source = "<div id=\"target\" style=\"height:20px;background:#112233\"></div><div style=\"height:10px;background:#445566\"></div>";
-    let expected = "<div id=\"target\" style=\"height:32px;background:#112233\"></div><div style=\"height:10px;background:#445566\"></div>";
+fn vertical_flow_append_reflow_and_reparent_fallback_are_preserved() {
+    let source = r#"<div id="target" style="height:20px;background:#112233"></div><div style="height:10px;background:#445566"></div>"#;
+    let expected = r#"<div id="target" style="height:32px;background:#112233"></div><div style="height:10px;background:#445566"></div>"#;
     let (flow, flow_mode) = update_style(source, "height:32px;background:#112233");
     assert_eq!(flow_mode, IncrementalMode::FlowRelayout);
     assert_matches_fresh(&flow, expected);
@@ -108,14 +108,32 @@ fn vertical_flow_and_structural_fallback_are_preserved() {
     structural
         .document_mut()
         .append_new(target, NodeKind::Text("!".into()))
-        .expect("structural mutation succeeds");
+        .expect("append mutation succeeds");
+    let append_report = structural.update().expect("append update succeeds");
+    assert_eq!(append_report.mode, IncrementalMode::FlowRelayout);
+    assert!(append_report.retained_display_list);
+    assert!(!append_report.styles_rebuilt);
+    assert_matches_fresh(
+        &structural,
+        r#"<div id="target" style="height:20px;background:#112233">!</div><div style="height:10px;background:#445566"></div>"#,
+    );
+
+    let reparent_source =
+        r#"<div id="from"><span id="child">Rarog</span></div><div id="to"></div>"#;
+    let reparent_expected =
+        r#"<div id="from"></div><div id="to"><span id="child">Rarog</span></div>"#;
+    let mut reparent = RenderSession::new(reparent_source, options()).expect("session starts");
+    let child = element_with_id(reparent.document(), "child");
+    let destination = element_with_id(reparent.document(), "to");
+    reparent
+        .document_mut()
+        .append_child(destination, child)
+        .expect("reparent mutation succeeds");
     assert_eq!(
-        structural
-            .update()
-            .expect("incremental update succeeds")
-            .mode,
+        reparent.update().expect("reparent update succeeds").mode,
         IncrementalMode::FullRebuild
     );
+    assert_matches_fresh(&reparent, reparent_expected);
 }
 
 #[test]

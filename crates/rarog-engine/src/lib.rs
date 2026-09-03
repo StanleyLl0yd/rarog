@@ -5,8 +5,8 @@ use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_s
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
     Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_flow_start_index,
-    fragment_for_dom, fragments_for_dom, layout_document_with_styles, refresh_text_node,
-    relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
+    fragment_for_dom, fragments_for_dom, layout_document_with_styles, refresh_layout_subtree,
+    refresh_text_node, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, build_display_list,
@@ -484,6 +484,7 @@ impl RenderSession {
             .filter_map(|(node, flags)| flags.style.then_some(*node))
             .collect::<BTreeSet<_>>();
         let mut text_relayout_nodes = BTreeSet::new();
+        let mut structural_relayout_nodes = BTreeSet::new();
         let mut requires_full_rebuild = mutation_history_lost;
         let mut stylesheet_sources_changed = mutation_history_lost;
         for mutation in &mutations {
@@ -494,14 +495,21 @@ impl RenderSession {
                     style_candidates.insert(*node);
                 }
                 MutationKind::Attribute { .. } => {}
-                MutationKind::NodeCreated { .. } => {
-                    requires_full_rebuild = true;
+                MutationKind::NodeCreated { node } => {
+                    if self.document.is_connected(*node) {
+                        requires_full_rebuild = true;
+                    }
                 }
                 MutationKind::ChildAdded { parent, child } => {
-                    requires_full_rebuild = true;
-                    stylesheet_sources_changed |= self.document.is_connected(*parent)
+                    let stylesheet_source_changed = self.document.is_connected(*parent)
                         && (node_is_within_style_element(&self.document, *parent)
                             || subtree_contains_style_element(&self.document, *child));
+                    stylesheet_sources_changed |= stylesheet_source_changed;
+                    if stylesheet_source_changed {
+                        requires_full_rebuild = true;
+                    } else if self.document.is_connected(*parent) {
+                        structural_relayout_nodes.insert(*parent);
+                    }
                 }
                 MutationKind::Reparented {
                     child,
@@ -539,6 +547,26 @@ impl RenderSession {
         let mut geometry_changed = false;
         let mut subtree_relayout_safe = true;
         let mut flow_relayout_nodes = BTreeSet::new();
+
+        if !requires_full_rebuild && !structural_relayout_nodes.is_empty() {
+            for node in structural_relayout_nodes.iter().copied() {
+                if !refresh_layout_subtree(&mut self.layout.tree, &self.document, &new_styles, node)
+                {
+                    requires_full_rebuild = true;
+                    break;
+                }
+                geometry_changed = true;
+                subtree_relayout_safe = false;
+                flow_relayout_nodes.insert(node);
+            }
+            if !requires_full_rebuild {
+                style_candidates.retain(|candidate| {
+                    !structural_relayout_nodes
+                        .iter()
+                        .any(|root| node_is_within_dom_subtree(&self.document, *root, *candidate))
+                });
+            }
+        }
 
         if !requires_full_rebuild {
             let mut processed_style_nodes = BTreeSet::new();
@@ -609,7 +637,10 @@ impl RenderSession {
             mode = IncrementalMode::FullRebuild;
             patched_nodes = 0;
             retained_display_list = false;
-        } else if style_updates.is_empty() && text_relayout_nodes.is_empty() {
+        } else if style_updates.is_empty()
+            && text_relayout_nodes.is_empty()
+            && structural_relayout_nodes.is_empty()
+        {
             self.styles = new_styles;
             self.damage = DamageRegion::default();
             mode = IncrementalMode::Unchanged;
@@ -671,7 +702,8 @@ impl RenderSession {
             );
         } else if geometry_changed {
             let previous_display_list = self.display_list.clone();
-            patched_nodes = style_updates.len() + text_relayout_nodes.len();
+            patched_nodes =
+                style_updates.len() + text_relayout_nodes.len() + structural_relayout_nodes.len();
             for &(node, style) in &style_updates {
                 patch_layout_style(&mut self.layout.tree.root, node, style);
             }
@@ -972,6 +1004,21 @@ fn node_is_within_style_element(document: &Document, mut node: NodeId) -> bool {
     false
 }
 
+fn node_is_within_dom_subtree(document: &Document, root: NodeId, mut node: NodeId) -> bool {
+    let mut remaining = document.node_count().saturating_add(1);
+    while remaining > 0 {
+        if node == root {
+            return true;
+        }
+        let Some(parent) = document.node(node).and_then(|node| node.parent) else {
+            return false;
+        };
+        node = parent;
+        remaining -= 1;
+    }
+    false
+}
+
 fn subtree_contains_style_element(document: &Document, root: NodeId) -> bool {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -1145,6 +1192,18 @@ mod tests {
         }
 
         find(document, document.root(), id).expect("fixture contains requested id")
+    }
+
+    fn layout_id_for_dom(
+        node: &LayoutNode,
+        dom_node: NodeId,
+    ) -> Option<rarog_layout::LayoutNodeId> {
+        if node.dom_node == Some(dom_node) {
+            return Some(node.id);
+        }
+        node.children
+            .iter()
+            .find_map(|child| layout_id_for_dom(child, dom_node))
     }
 
     #[test]
@@ -1556,6 +1615,50 @@ mod tests {
     }
 
     #[test]
+    fn child_added_reflows_retained_layout_subtree() {
+        let source = "<style>#parent > div:last-child { height:12px; background:#112233; }</style><div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"parent\"><div id=\"first\"></div></div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+        let expected_source = "<style>#parent > div:last-child { height:12px; background:#112233; }</style><div id=\"before\" style=\"height:5px;background:#eeeeee\"></div><div id=\"parent\"><div id=\"first\"></div><div></div></div><div id=\"after\" style=\"height:10px;background:#445566\"></div>";
+        let mut session = session(source, deterministic_options());
+        let parent = element_with_id(session.document(), "parent");
+        let first = element_with_id(session.document(), "first");
+        let parent_layout_id = layout_id_for_dom(&session.layout().tree.root, parent).unwrap();
+        let first_layout_id = layout_id_for_dom(&session.layout().tree.root, first).unwrap();
+
+        let added = session
+            .document_mut()
+            .append_new(
+                parent,
+                NodeKind::Element(rarog_dom::ElementData::html("div")),
+            )
+            .unwrap();
+
+        let report = session
+            .update()
+            .expect("append-only structural reflow succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert_eq!(report.patched_nodes, 1);
+        assert!(report.retained_display_list);
+        assert!(!report.styles_rebuilt);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout_id)
+        );
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, first),
+            Some(first_layout_id)
+        );
+        assert!(layout_id_for_dom(&session.layout().tree.root, added).is_some());
+        assert_eq!(session.styles(), &expected.styles);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert!(!session.damage().rects.is_empty());
+    }
+
+    #[test]
     fn ordinary_structural_change_reuses_existing_style_set() {
         let source =
             "<style>.card { background:#112233; }</style><div id=\"parent\" class=\"card\"></div>";
@@ -1573,7 +1676,8 @@ mod tests {
         let report = session.update().expect("structural update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
         assert!(!report.styles_rebuilt);
         assert_eq!(session.styles(), &expected.styles);
         assert_eq!(
@@ -1616,19 +1720,27 @@ mod tests {
     }
 
     #[test]
-    fn structural_change_still_falls_back_to_full_rebuild() {
-        let mut session = session(
-            "<div style=\"width:80px;height:20px\">Rarog</div>",
-            deterministic_options(),
-        );
-        let parent = first_element(session.document());
+    fn reparent_still_falls_back_to_full_rebuild() {
+        let source = r#"<div id="from"><span id="child">Rarog</span></div><div id="to"></div>"#;
+        let expected_source =
+            r#"<div id="from"></div><div id="to"><span id="child">Rarog</span></div>"#;
+        let mut session = session(source, deterministic_options());
+        let child = element_with_id(session.document(), "child");
+        let destination = element_with_id(session.document(), "to");
+
         session
             .document_mut()
-            .append_new(parent, NodeKind::Text("!".into()))
+            .append_child(destination, child)
             .unwrap();
 
-        let report = session.update().expect("incremental update succeeds");
+        let report = session.update().expect("reparent fallback succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
         assert_eq!(report.mode, IncrementalMode::FullRebuild);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
     }
 
     #[test]
