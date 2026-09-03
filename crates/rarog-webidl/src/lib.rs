@@ -487,6 +487,10 @@ mod tests {
             diagnostics: Vec::new(),
         };
 
-        assert!(module.snapshot().contains("nullable<promise<sequence<named:4:Node>>>") );
+        assert!(
+            module
+                .snapshot()
+                .contains("nullable<promise<sequence<named:4:Node>>>")
+        );
     }
 }
