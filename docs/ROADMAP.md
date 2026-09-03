@@ -45,7 +45,7 @@ See `R0-BACKLOG.md` and `R0-EXIT.md` for the completed scope and explicit deferr
 
 See `R1-BACKLOG.md` and `R1-EXIT.md` for the completed scope, retained-rendering boundaries and explicit deferrals.
 
-## R2 — Flight — in progress
+## R2 — Flight — complete
 
 - WebIDL pipeline;
 - replaceable script runtime abstraction;
@@ -55,6 +55,8 @@ See `R1-BACKLOG.md` and `R1-EXIT.md` for the completed scope, retained-rendering
 - Fetch foundation;
 - URL/origin/security primitives;
 - Windows input/IME and clipboard host adapters.
+
+See `R2-BACKLOG.md` and `R2-EXIT.md` for the completed script-facing, scheduling, security-identity and Windows host scope plus explicit deferrals.
 
 ## R3 — Wings
 
