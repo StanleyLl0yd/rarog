@@ -3,8 +3,8 @@ mod input;
 pub use input::WindowsInputService;
 
 use rarog_platform::{
-    PlatformCapabilities, PlatformFontError, PlatformFontRequest, PlatformFontService, PlatformHost,
-    PlatformInputService, ResolvedPlatformFont,
+    PlatformCapabilities, PlatformFontError, PlatformFontRequest, PlatformFontService,
+    PlatformHost, PlatformInputService, ResolvedPlatformFont,
 };
 use std::fmt;
 
