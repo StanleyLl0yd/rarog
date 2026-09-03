@@ -143,12 +143,13 @@ impl ScriptRuntime for SpiderMonkeyRuntime<'_> {
             ));
         }
         let global = RootedTraceableBox::from_box(Heap::boxed(global_ptr));
+        let root_ids = RootedValueIdAllocator::new(realm)?;
         self.realms.insert(
             realm,
             RealmState {
                 limits,
                 global,
-                root_ids: RootedValueIdAllocator::new(realm),
+                root_ids,
                 roots: BTreeMap::new(),
             },
         );
