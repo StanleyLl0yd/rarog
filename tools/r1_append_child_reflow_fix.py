@@ -15,37 +15,29 @@ if old_unchanged in s:
 elif "&& structural_relayout_nodes.is_empty()" not in s:
     raise SystemExit("unchanged classification marker missing")
 
-old_ordinary = '''        assert_eq!(report.mode, IncrementalMode::FullRebuild);
-        assert!(!report.styles_rebuilt);
-        assert_eq!(session.styles(), &expected.styles);
-'''
-new_ordinary = '''        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
-        assert!(report.retained_display_list);
-        assert!(!report.styles_rebuilt);
-        assert_eq!(session.styles(), &expected.styles);
-'''
-if old_ordinary in s:
-    s = s.replace(old_ordinary, new_ordinary, 1)
-elif "ordinary_structural_change_reuses_existing_style_set" in s and "assert!(report.retained_display_list);" not in s:
-    raise SystemExit("ordinary structural expectation marker missing")
+ordinary_start = s.find("    fn ordinary_structural_change_reuses_existing_style_set() {")
+if ordinary_start < 0:
+    raise SystemExit("ordinary structural test missing")
+ordinary_end = s.find("    #[test]", ordinary_start)
+if ordinary_end < 0:
+    raise SystemExit("ordinary structural test end missing")
+ordinary = s[ordinary_start:ordinary_end]
+ordinary = ordinary.replace(
+    "assert_eq!(report.mode, IncrementalMode::FullRebuild);",
+    "assert_eq!(report.mode, IncrementalMode::FlowRelayout);\n        assert!(report.retained_display_list);",
+    1,
+)
+s = s[:ordinary_start] + ordinary + s[ordinary_end:]
 
-old_fallback = '''    #[test]
-    fn structural_change_still_falls_back_to_full_rebuild() {
-        let mut session = session(
-            "<div style=\"width:80px;height:20px\">Rarog</div>",
-            deterministic_options(),
-        );
-        let parent = first_element(session.document());
-        session
-            .document_mut()
-            .append_new(parent, NodeKind::Text("!".into()))
-            .unwrap();
-
-        let report = session.update().expect("incremental update succeeds");
-        assert_eq!(report.mode, IncrementalMode::FullRebuild);
-    }
-'''
-new_fallback = '''    #[test]
+fallback_start = s.find("    #[test]\n    fn structural_change_still_falls_back_to_full_rebuild() {")
+if fallback_start < 0:
+    if "fn reparent_still_falls_back_to_full_rebuild()" not in s:
+        raise SystemExit("structural fallback start missing")
+else:
+    fallback_end = s.find("    #[test]\n    fn unrelated_attribute_change_does_not_rebuild_render_state() {", fallback_start)
+    if fallback_end < 0:
+        raise SystemExit("structural fallback end missing")
+    replacement = '''    #[test]
     fn reparent_still_falls_back_to_full_rebuild() {
         let source = "<div id=\"from\"><span id=\"child\">Rarog</span></div><div id=\"to\"></div>";
         let expected_source = "<div id=\"from\"></div><div id=\"to\"><span id=\"child\">Rarog</span></div>";
@@ -67,10 +59,8 @@ new_fallback = '''    #[test]
             expected.framebuffer.stable_hash64()
         );
     }
+
 '''
-if old_fallback in s:
-    s = s.replace(old_fallback, new_fallback, 1)
-elif "fn reparent_still_falls_back_to_full_rebuild()" not in s:
-    raise SystemExit("structural fallback marker missing")
+    s = s[:fallback_start] + replacement + s[fallback_end:]
 
 path.write_text(s)
