@@ -93,7 +93,7 @@ jobs:
       - name: Test adapter
         run: cargo test -p rarog-script-spidermonkey --features spidermonkey -- --nocapture
       - name: Emit generated lockfile
-        run: cat Cargo.lock
+        run: python3 -c "import base64; data=open('Cargo.lock','rb').read(); print('LOCKFILE_B64_BEGIN'); print(base64.b64encode(data).decode()); print('LOCKFILE_B64_END')"
       - name: Lockfile is current
         run: git diff --exit-code -- Cargo.lock
 
