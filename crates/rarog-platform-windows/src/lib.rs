@@ -4,7 +4,7 @@ pub use input::WindowsInputService;
 
 use rarog_platform::{
     PlatformCapabilities, PlatformFontError, PlatformFontRequest, PlatformFontService,
-    PlatformHost, PlatformInputService, ResolvedPlatformFont,
+    PlatformHost, PlatformInputService, PlatformTextInputService, ResolvedPlatformFont,
 };
 use std::fmt;
 
@@ -84,6 +84,7 @@ impl PlatformHost for WindowsPlatformHost {
         PlatformCapabilities {
             font_text: true,
             input: true,
+            input_ime: true,
             ..PlatformCapabilities::NONE
         }
     }
@@ -93,6 +94,10 @@ impl PlatformHost for WindowsPlatformHost {
     }
 
     fn input_service(&self) -> Option<&dyn PlatformInputService> {
+        Some(&self.input)
+    }
+
+    fn text_input_service(&self) -> Option<&dyn PlatformTextInputService> {
         Some(&self.input)
     }
 }
@@ -235,11 +240,11 @@ mod tests {
             assert_eq!(host.name(), "windows");
             assert!(host.capabilities().supports(PlatformService::FontText));
             assert!(host.capabilities().supports(PlatformService::Input));
-            assert!(!host.capabilities().supports(PlatformService::InputIme));
+            assert!(host.capabilities().supports(PlatformService::InputIme));
             assert!(!host.capabilities().supports(PlatformService::Clipboard));
             assert!(host.font_service().is_some());
             assert!(host.input_service().is_some());
-            assert!(host.text_input_service().is_none());
+            assert!(host.text_input_service().is_some());
             assert!(host.clipboard_service().is_none());
         } else {
             assert!(matches!(
