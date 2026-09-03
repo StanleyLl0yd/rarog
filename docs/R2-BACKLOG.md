@@ -1,6 +1,6 @@
 # R2 — Flight backlog
 
-Status: **in progress**.
+Status: **complete**.
 
 Tracking issue: #79.
 
