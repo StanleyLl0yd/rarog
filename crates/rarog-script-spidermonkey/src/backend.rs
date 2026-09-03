@@ -184,7 +184,8 @@ impl ScriptRuntime for SpiderMonkeyRuntime<'_> {
             Ok(()) => ScriptCompletion::Normal(state.store_root(result.get())?),
             Err(()) => {
                 let error = {
-                    let mut entered = AutoRealm::new_from_handle(runtime.cx(), state.global.handle());
+                    let mut entered =
+                        AutoRealm::new_from_handle(runtime.cx(), state.global.handle());
                     error_info_from_exception_stack_safe(&mut entered, result.handle_mut())
                 };
                 let Some(error) = error else {
