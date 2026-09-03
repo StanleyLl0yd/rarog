@@ -1,0 +1,16 @@
+[package]
+name = "rarog-url"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+url = "=2.5.7"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"

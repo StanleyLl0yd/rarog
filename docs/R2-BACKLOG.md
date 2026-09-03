@@ -25,7 +25,7 @@ Tracking issue: #79.
 
 ## D — Fetch and identity primitives
 
-- [ ] Add URL parsing and serialization primitives.
+- [x] Add URL parsing and serialization primitives.
 - [ ] Add origin and site identity primitives.
 - [ ] Add Fetch request/response foundations behind embedder network-capability boundaries.
 
