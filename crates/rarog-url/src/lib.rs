@@ -1,3 +1,6 @@
+mod identity;
+pub use identity::*;
+
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
@@ -14,6 +17,7 @@ pub enum UrlErrorKind {
     RelativeWithCannotBeABaseBase,
     CannotSetHostOnCannotBeABaseUrl,
     Overflow,
+    IdentitySpaceExhausted,
     Other,
 }
 
@@ -24,6 +28,13 @@ pub struct UrlError {
 }
 
 impl UrlError {
+    pub fn new(kind: UrlErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
     fn from_parse_error(error: url::ParseError) -> Self {
         let kind = match error {
             url::ParseError::EmptyHost => UrlErrorKind::EmptyHost,
@@ -42,10 +53,7 @@ impl UrlError {
             url::ParseError::Overflow => UrlErrorKind::Overflow,
             _ => UrlErrorKind::Other,
         };
-        Self {
-            kind,
-            message: error.to_string(),
-        }
+        Self::new(kind, error.to_string())
     }
 }
 
