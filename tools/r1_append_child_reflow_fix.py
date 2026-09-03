@@ -39,8 +39,8 @@ else:
         raise SystemExit("structural fallback end missing")
     replacement = '''    #[test]
     fn reparent_still_falls_back_to_full_rebuild() {
-        let source = "<div id=\"from\"><span id=\"child\">Rarog</span></div><div id=\"to\"></div>";
-        let expected_source = "<div id=\"from\"></div><div id=\"to\"><span id=\"child\">Rarog</span></div>";
+        let source = r#"<div id="from"><span id="child">Rarog</span></div><div id="to"></div>"#;
+        let expected_source = r#"<div id="from"></div><div id="to"><span id="child">Rarog</span></div>"#;
         let mut session = session(source, deterministic_options());
         let child = element_with_id(session.document(), "child");
         let destination = element_with_id(session.document(), "to");
