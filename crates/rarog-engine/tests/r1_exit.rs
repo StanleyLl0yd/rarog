@@ -44,9 +44,9 @@ fn r1_exit_manifest_has_no_open_items() {
 
 #[test]
 fn r1_exit_retained_mixed_update_matches_fresh_render() {
-    let source =
-        "<div id=\"target\" style=\"width:48px;background:#112233\">one</div>";
-    let expected_source = "<div id=\"target\" style=\"width:72px;background:#778899\">one two three four</div>";
+    let source = "<div id=\"target\" style=\"width:48px;background:#112233\">one</div>";
+    let expected_source =
+        "<div id=\"target\" style=\"width:72px;background:#778899\">one two three four</div>";
     let mut session = RenderSession::new(source, options()).expect("R1 fixture must render");
     let target = node_with_id(session.document(), "target");
     let text = session.document().children(target).unwrap()[0];
