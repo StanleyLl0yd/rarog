@@ -1,5 +1,7 @@
 mod embedder;
+mod event_loop;
 pub use embedder::*;
+pub use event_loop::*;
 
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
