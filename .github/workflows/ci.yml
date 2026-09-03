@@ -91,7 +91,7 @@ jobs:
       - name: Clippy adapter
         run: cargo clippy -p rarog-script-spidermonkey --all-targets --features spidermonkey -- -D warnings
       - name: Test adapter
-        run: cargo test -p rarog-script-spidermonkey --features spidermonkey
+        run: cargo test -p rarog-script-spidermonkey --features spidermonkey -- --nocapture
       - name: Lockfile is current
         run: git diff --exit-code -- Cargo.lock
 
@@ -107,4 +107,4 @@ jobs:
       - name: Check adapter
         run: cargo check -p rarog-script-spidermonkey --all-targets --features spidermonkey
       - name: Test adapter
-        run: cargo test -p rarog-script-spidermonkey --features spidermonkey
+        run: cargo test -p rarog-script-spidermonkey --features spidermonkey -- --nocapture
