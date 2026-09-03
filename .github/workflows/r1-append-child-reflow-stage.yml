@@ -32,12 +32,12 @@ jobs:
       - name: Commit verified product change
         shell: bash
         run: |
-          if git diff --quiet -- crates/rarog-layout/src/lib.rs crates/rarog-engine/src/lib.rs; then
+          if git diff --quiet -- crates/rarog-layout/src/lib.rs crates/rarog-engine/src/lib.rs crates/rarog-engine/tests/r01_correctness.rs; then
             echo "Product slice already present"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add crates/rarog-layout/src/lib.rs crates/rarog-engine/src/lib.rs
+          git add crates/rarog-layout/src/lib.rs crates/rarog-engine/src/lib.rs crates/rarog-engine/tests/r01_correctness.rs
           git commit -m "R1: reflow append-only structural mutations"
           git push origin HEAD:r1/append-child-reflow-stage
