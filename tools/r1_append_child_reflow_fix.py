@@ -75,8 +75,8 @@ if start < 0 or end < 0:
 else:
     replacement = '''#[test]
 fn vertical_flow_append_reflow_and_reparent_fallback_are_preserved() {
-    let source = "<div id=\"target\" style=\"height:20px;background:#112233\"></div><div style=\"height:10px;background:#445566\"></div>";
-    let expected = "<div id=\"target\" style=\"height:32px;background:#112233\"></div><div style=\"height:10px;background:#445566\"></div>";
+    let source = r#"<div id="target" style="height:20px;background:#112233"></div><div style="height:10px;background:#445566"></div>"#;
+    let expected = r#"<div id="target" style="height:32px;background:#112233"></div><div style="height:10px;background:#445566"></div>"#;
     let (flow, flow_mode) = update_style(source, "height:32px;background:#112233");
     assert_eq!(flow_mode, IncrementalMode::FlowRelayout);
     assert_matches_fresh(&flow, expected);
@@ -93,7 +93,7 @@ fn vertical_flow_append_reflow_and_reparent_fallback_are_preserved() {
     assert!(!append_report.styles_rebuilt);
     assert_matches_fresh(
         &structural,
-        "<div id=\"target\" style=\"height:20px;background:#112233\">!</div><div style=\"height:10px;background:#445566\"></div>",
+        r#"<div id="target" style="height:20px;background:#112233">!</div><div style="height:10px;background:#445566"></div>"#,
     );
 
     let reparent_source = r#"<div id="from"><span id="child">Rarog</span></div><div id="to"></div>"#;
