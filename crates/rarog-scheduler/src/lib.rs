@@ -126,25 +126,12 @@ impl<T, M> SchedulerStep<T, M> {
 }
 
 #[derive(Debug)]
-struct QueuedTask<T> {
-    id: TaskId,
-    source: TaskSource,
-    payload: T,
-}
-
-#[derive(Debug)]
-struct QueuedMicrotask<M> {
-    id: MicrotaskId,
-    payload: M,
-}
-
-#[derive(Debug)]
 pub struct EventLoopScheduler<T, M> {
     limits: SchedulerLimits,
     scope: NonZeroU64,
     next_serial: u64,
-    tasks: VecDeque<QueuedTask<T>>,
-    microtasks: VecDeque<QueuedMicrotask<M>>,
+    tasks: VecDeque<ScheduledTask<T>>,
+    microtasks: VecDeque<ScheduledMicrotask<M>>,
     active: Option<WorkId>,
     checkpoint_due: bool,
 }
@@ -177,7 +164,7 @@ impl<T, M> EventLoopScheduler<T, M> {
             scope: self.scope,
             serial,
         };
-        self.tasks.push_back(QueuedTask {
+        self.tasks.push_back(ScheduledTask {
             id,
             source,
             payload,
@@ -194,7 +181,8 @@ impl<T, M> EventLoopScheduler<T, M> {
             scope: self.scope,
             serial,
         };
-        self.microtasks.push_back(QueuedMicrotask { id, payload });
+        self.microtasks
+            .push_back(ScheduledMicrotask { id, payload });
         Ok(id)
     }
 
@@ -209,12 +197,8 @@ impl<T, M> EventLoopScheduler<T, M> {
 
         if self.checkpoint_due {
             if let Some(microtask) = self.microtasks.pop_front() {
-                let id = WorkId::Microtask(microtask.id);
-                self.active = Some(id);
-                return Ok(Some(SchedulerStep::Microtask(ScheduledMicrotask {
-                    id: microtask.id,
-                    payload: microtask.payload,
-                })));
+                self.active = Some(WorkId::Microtask(microtask.id));
+                return Ok(Some(SchedulerStep::Microtask(microtask)));
             }
             self.checkpoint_due = false;
             return Ok(Some(SchedulerStep::MicrotaskCheckpointComplete));
@@ -223,13 +207,8 @@ impl<T, M> EventLoopScheduler<T, M> {
         let Some(task) = self.tasks.pop_front() else {
             return Ok(None);
         };
-        let id = WorkId::Task(task.id);
-        self.active = Some(id);
-        Ok(Some(SchedulerStep::Task(ScheduledTask {
-            id: task.id,
-            source: task.source,
-            payload: task.payload,
-        })))
+        self.active = Some(WorkId::Task(task.id));
+        Ok(Some(SchedulerStep::Task(task)))
     }
 
     pub fn complete(&mut self, work: WorkId) -> Result<(), SchedulerError> {
