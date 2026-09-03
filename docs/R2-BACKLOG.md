@@ -27,7 +27,7 @@ Tracking issue: #79.
 
 - [x] Add URL parsing and serialization primitives.
 - [x] Add origin and site identity primitives.
-- [ ] Add Fetch request/response foundations behind embedder network-capability boundaries.
+- [x] Add Fetch request/response foundations behind embedder network-capability boundaries.
 
 ## E — Windows host adapters
 
