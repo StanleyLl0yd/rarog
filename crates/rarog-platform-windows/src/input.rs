@@ -386,7 +386,7 @@ fn utf16_offset_to_char_index(text: &[u16], offset: usize) -> Result<usize, Plat
     {
         return Err(PlatformInputError::InvalidTextRange);
     }
-    Ok(String::from_utf16_lossy(&text[..offset]).chars().count())
+    Ok(char::decode_utf16(text[..offset].iter().copied()).count())
 }
 
 fn is_high_surrogate(unit: u16) -> bool {
@@ -763,6 +763,15 @@ mod tests {
             service.push_ime_composition_update_utf16(&text, Some((2, 3))),
             Err(PlatformInputError::InvalidTextRange)
         );
+    }
+
+    #[test]
+    fn utf16_offset_count_matches_lossy_scalar_semantics() {
+        let text = [u16::from(b'A'), 0xd800, u16::from(b'B'), 0xdc00];
+        assert_eq!(utf16_offset_to_char_index(&text, 0).unwrap(), 0);
+        assert_eq!(utf16_offset_to_char_index(&text, 1).unwrap(), 1);
+        assert_eq!(utf16_offset_to_char_index(&text, 2).unwrap(), 2);
+        assert_eq!(utf16_offset_to_char_index(&text, 4).unwrap(), 4);
     }
 
     #[test]
