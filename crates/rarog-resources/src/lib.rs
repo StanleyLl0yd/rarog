@@ -282,9 +282,11 @@ impl ImageResourceStore {
         id: ImageResourceId,
         image: DecodedImage,
     ) -> Result<ImageResourceRef, ImageResourceError> {
+        let limits = self.limits;
+        let total_pixels = self.total_pixels;
         let entry = self
             .entries
-            .get(&id)
+            .get_mut(&id)
             .ok_or(ImageResourceError::UnknownResource(id))?;
         if !matches!(entry.state, StoredImageState::Pending) {
             return Err(ImageResourceError::InvalidState(id));
@@ -293,12 +295,7 @@ impl ImageResourceStore {
             .revision
             .checked_add(1)
             .ok_or(ImageResourceError::RevisionExhausted(id))?;
-        let pixels = image.pixel_count();
-        let total = self.validate_pixels(pixels, 0)?;
-        let entry = self
-            .entries
-            .get_mut(&id)
-            .expect("validated image resource exists");
+        let total = validate_pixels(limits, total_pixels, image.pixel_count(), 0)?;
         entry.revision = revision;
         entry.state = StoredImageState::Ready(image);
         self.total_pixels = total;
@@ -310,9 +307,11 @@ impl ImageResourceStore {
         id: ImageResourceId,
         image: DecodedImage,
     ) -> Result<ImageResourceRef, ImageResourceError> {
+        let limits = self.limits;
+        let total_pixels = self.total_pixels;
         let entry = self
             .entries
-            .get(&id)
+            .get_mut(&id)
             .ok_or(ImageResourceError::UnknownResource(id))?;
         let old_pixels = match &entry.state {
             StoredImageState::Ready(image) => image.pixel_count(),
@@ -324,11 +323,7 @@ impl ImageResourceStore {
             .revision
             .checked_add(1)
             .ok_or(ImageResourceError::RevisionExhausted(id))?;
-        let total = self.validate_pixels(image.pixel_count(), old_pixels)?;
-        let entry = self
-            .entries
-            .get_mut(&id)
-            .expect("validated image resource exists");
+        let total = validate_pixels(limits, total_pixels, image.pixel_count(), old_pixels)?;
         entry.revision = revision;
         entry.state = StoredImageState::Ready(image);
         self.total_pixels = total;
@@ -379,30 +374,31 @@ impl ImageResourceStore {
         }
         true
     }
+}
 
-    fn validate_pixels(
-        &self,
-        new_pixels: u64,
-        replacing_pixels: u64,
-    ) -> Result<u64, ImageResourceError> {
-        if new_pixels > self.limits.max_pixels_per_resource {
-            return Err(ImageResourceError::ImagePixelLimitExceeded {
-                pixels: new_pixels,
-                limit: self.limits.max_pixels_per_resource,
-            });
-        }
-        let retained = self.total_pixels.saturating_sub(replacing_pixels);
-        let total = retained
-            .checked_add(new_pixels)
-            .ok_or(ImageResourceError::PixelCountOverflow)?;
-        if total > self.limits.max_total_pixels {
-            return Err(ImageResourceError::TotalPixelLimitExceeded {
-                pixels: total,
-                limit: self.limits.max_total_pixels,
-            });
-        }
-        Ok(total)
+fn validate_pixels(
+    limits: ImageResourceLimits,
+    total_pixels: u64,
+    new_pixels: u64,
+    replacing_pixels: u64,
+) -> Result<u64, ImageResourceError> {
+    if new_pixels > limits.max_pixels_per_resource {
+        return Err(ImageResourceError::ImagePixelLimitExceeded {
+            pixels: new_pixels,
+            limit: limits.max_pixels_per_resource,
+        });
     }
+    let retained = total_pixels.saturating_sub(replacing_pixels);
+    let total = retained
+        .checked_add(new_pixels)
+        .ok_or(ImageResourceError::PixelCountOverflow)?;
+    if total > limits.max_total_pixels {
+        return Err(ImageResourceError::TotalPixelLimitExceeded {
+            pixels: total,
+            limit: limits.max_total_pixels,
+        });
+    }
+    Ok(total)
 }
 
 #[cfg(test)]
