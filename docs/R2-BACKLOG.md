@@ -32,7 +32,7 @@ Tracking issue: #79.
 ## E — Windows host adapters
 
 - [x] Add platform-neutral input, text-input and clipboard contracts.
-- [ ] Add Windows keyboard and mouse input adapter.
+- [x] Add Windows keyboard and mouse input adapter.
 - [ ] Add Windows IME and text-input adapter.
 - [ ] Add Windows clipboard adapter.
 

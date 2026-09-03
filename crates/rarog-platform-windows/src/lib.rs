@@ -1,6 +1,10 @@
+mod input;
+
+pub use input::WindowsInputService;
+
 use rarog_platform::{
     PlatformCapabilities, PlatformFontError, PlatformFontRequest, PlatformFontService,
-    PlatformHost, ResolvedPlatformFont,
+    PlatformHost, PlatformInputService, ResolvedPlatformFont,
 };
 use std::fmt;
 
@@ -40,9 +44,10 @@ impl PlatformFontService for WindowsFontService {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct WindowsPlatformHost {
     fonts: WindowsFontService,
+    input: WindowsInputService,
 }
 
 impl WindowsPlatformHost {
@@ -50,6 +55,7 @@ impl WindowsPlatformHost {
         if cfg!(target_os = "windows") {
             Ok(Self {
                 fonts: WindowsFontService::new(),
+                input: WindowsInputService::try_new()?,
             })
         } else {
             Err(WindowsPlatformError::UnsupportedTarget)
@@ -63,6 +69,10 @@ impl WindowsPlatformHost {
     pub const fn fonts(&self) -> &WindowsFontService {
         &self.fonts
     }
+
+    pub const fn input(&self) -> &WindowsInputService {
+        &self.input
+    }
 }
 
 impl PlatformHost for WindowsPlatformHost {
@@ -73,12 +83,17 @@ impl PlatformHost for WindowsPlatformHost {
     fn capabilities(&self) -> PlatformCapabilities {
         PlatformCapabilities {
             font_text: true,
+            input: true,
             ..PlatformCapabilities::NONE
         }
     }
 
     fn font_service(&self) -> Option<&dyn PlatformFontService> {
         Some(&self.fonts)
+    }
+
+    fn input_service(&self) -> Option<&dyn PlatformInputService> {
+        Some(&self.input)
     }
 }
 
@@ -219,9 +234,18 @@ mod tests {
             let host = result.expect("Windows CI target should expose the Windows host boundary");
             assert_eq!(host.name(), "windows");
             assert!(host.capabilities().supports(PlatformService::FontText));
+            assert!(host.capabilities().supports(PlatformService::Input));
+            assert!(!host.capabilities().supports(PlatformService::InputIme));
+            assert!(!host.capabilities().supports(PlatformService::Clipboard));
             assert!(host.font_service().is_some());
+            assert!(host.input_service().is_some());
+            assert!(host.text_input_service().is_none());
+            assert!(host.clipboard_service().is_none());
         } else {
-            assert_eq!(result, Err(WindowsPlatformError::UnsupportedTarget));
+            assert!(matches!(
+                result,
+                Err(WindowsPlatformError::UnsupportedTarget)
+            ));
         }
     }
 
