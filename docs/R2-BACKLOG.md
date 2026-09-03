@@ -15,11 +15,11 @@ Tracking issue: #79.
 
 - [x] Introduce a replaceable Rarog Script API with no runtime-specific types in DOM/Web API crates.
 - [x] Define value, exception, rooting and realm ownership contracts before broad bindings.
-- [ ] Add the first SpiderMonkey adapter behind the Script API.
+- [x] Add the first SpiderMonkey adapter behind the Script API.
 
 ## C — Events and scheduling
 
-- [ ] Add Event and EventTarget foundations.
+- [x] Add Event and EventTarget foundations.
 - [ ] Add engine-owned task and microtask scheduling boundaries.
 - [ ] Connect script-driven DOM mutations to existing invalidation and retained rendering.
 
