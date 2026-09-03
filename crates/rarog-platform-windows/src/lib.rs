@@ -23,7 +23,10 @@ impl fmt::Display for WindowsPlatformError {
             Self::UnsupportedTarget => {
                 formatter.write_str("Windows platform host is unavailable on this target")
             }
-            Self::Clipboard(error) => write!(formatter, "Windows clipboard initialization failed: {error}"),
+            Self::Clipboard(error) => write!(
+                formatter,
+                "Windows clipboard initialization failed: {error}"
+            ),
         }
     }
 }
