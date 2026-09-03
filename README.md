@@ -11,7 +11,7 @@ Rarog is an experimental, independent, Rust-first Web engine designed around fou
 
 The **primary target platform is Windows**. Rarog is being designed so the engine core can remain portable, but the first production-quality host integration, GPU/compositor path, sandboxing, input integration, accessibility work and reference browser will target **Windows 10/11** first.
 
-The workspace version is **0.1.0**. **R0 — Ember is complete**: it established deterministic rendering, invalidation, paint, embedder and platform ownership boundaries. **R1 — Flame is complete**: it replaced the bootstrap HTML/CSS paths with standards-oriented adapters, established scoped block/inline formatting foundations, connected production OpenType shaping and Windows font discovery, and broadened retained incremental rendering and damage-aware paint. **R2 — Flight** is the next development milestone and introduces WebIDL, the replaceable script-runtime boundary, events/event-loop work, Fetch/URL/origin foundations and Windows input/IME/clipboard adapters.
+The workspace version is **0.1.0**. **R0 — Ember is complete**: it established deterministic rendering, invalidation, paint, embedder and platform ownership boundaries. **R1 — Flame is complete**: it replaced the bootstrap HTML/CSS paths with standards-oriented adapters, established scoped block/inline formatting foundations, connected production OpenType shaping and Windows font discovery, and broadened retained incremental rendering and damage-aware paint. **R2 — Flight is in progress**: the Rarog-owned normalized WebIDL IR and parser frontend boundary are established; the standards-oriented WebIDL parser adapter, replaceable script-runtime boundary, events/event-loop work, Fetch/URL/origin foundations and Windows input/IME/clipboard adapters remain active R2 work.
 
 > R1 is a standards-oriented foundation, not a claim of general-Web compatibility or standards completeness. Script execution, networking, GPU/compositor, broader layout and process isolation remain later roadmap milestones.
 
@@ -89,6 +89,7 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-css` — standards-oriented CSS parsing, selectors, cascade, computed style and invalidation primitives
 - `rarog-layout` — derived Layout Tree, Fragment Tree, block/inline formatting and text-layout foundations
 - `rarog-text-opentype` — production OpenType shaping adapter behind Rarog-owned contracts
+- `rarog-webidl` — Rarog-owned normalized WebIDL IR and parser frontend boundary
 - `rarog-paint` — retained structural display list, stable IDs, damage tracking and software rasterizer
 - `rarog-platform` — platform-neutral host and font capability contracts
 - `rarog-platform-windows` — Windows-specific platform adapter including system-font discovery
@@ -122,6 +123,6 @@ Rarog is dual-licensed under **Apache-2.0 OR MIT**, at your option. See `LICENSE
 
 ## Project status
 
-**R0 — Ember and R1 — Flame are complete. R2 — Flight is next.** Rarog remains experimental; no compatibility, performance, security-hardening or production-readiness claims are made yet.
+**R0 — Ember and R1 — Flame are complete. R2 — Flight is in progress.** Rarog remains experimental; no compatibility, performance, security-hardening or production-readiness claims are made yet.
 
 Created by **Stanley Lloyd**. Contributions are welcome; see `CONTRIBUTING.md`.
