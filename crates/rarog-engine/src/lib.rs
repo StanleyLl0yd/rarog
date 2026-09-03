@@ -552,12 +552,10 @@ impl RenderSession {
             }
         }
 
-        let new_styles = if stylesheet_sources_changed {
-            StyleSet::for_document(&self.document)
-        } else {
-            self.styles.clone()
-        };
-        validate_style_limits(&new_styles, self.limits)?;
+        let mut rebuilt_styles =
+            stylesheet_sources_changed.then(|| StyleSet::for_document(&self.document));
+        let new_styles = rebuilt_styles.as_ref().unwrap_or(&self.styles);
+        validate_style_limits(new_styles, self.limits)?;
         let mut style_updates = Vec::new();
         let mut geometry_changed = false;
         let mut subtree_relayout_safe = true;
@@ -573,7 +571,7 @@ impl RenderSession {
             if !refresh_layout_subtrees(
                 &mut self.layout.tree,
                 &self.document,
-                &new_styles,
+                new_styles,
                 &structural_roots,
             ) {
                 requires_full_rebuild = true;
@@ -598,7 +596,7 @@ impl RenderSession {
             if !collect_stylesheet_formatting_boundary_roots(
                 &self.document,
                 &self.styles,
-                &new_styles,
+                new_styles,
                 &self.layout.tree.root,
                 &structural_relayout_nodes,
                 &mut formatting_relayout_nodes,
@@ -617,7 +615,7 @@ impl RenderSession {
                 if !processed_style_nodes.insert(node) {
                     continue;
                 }
-                let new_style = computed_style(&self.document, node, &new_styles);
+                let new_style = computed_style(&self.document, node, new_styles);
                 let Some(old_style) = layout_style_for_dom(&self.layout.tree.root, node) else {
                     let Some(current) = self.document.node(node) else {
                         requires_full_rebuild = true;
@@ -711,7 +709,7 @@ impl RenderSession {
             if !refresh_layout_subtrees(
                 &mut self.layout.tree,
                 &self.document,
-                &new_styles,
+                new_styles,
                 &formatting_roots,
             ) {
                 requires_full_rebuild = true;
@@ -749,7 +747,8 @@ impl RenderSession {
         let patched_nodes;
         let retained_display_list;
         if requires_full_rebuild {
-            self.full_rebuild(new_styles);
+            let styles = rebuilt_styles.take().unwrap_or_else(|| self.styles.clone());
+            self.full_rebuild(styles);
             mode = IncrementalMode::FullRebuild;
             patched_nodes = 0;
             retained_display_list = false;
@@ -757,7 +756,9 @@ impl RenderSession {
             && text_relayout_nodes.is_empty()
             && structural_relayout_nodes.is_empty()
         {
-            self.styles = new_styles;
+            if let Some(styles) = rebuilt_styles.take() {
+                self.styles = styles;
+            }
             self.damage = DamageRegion::default();
             mode = IncrementalMode::Unchanged;
             patched_nodes = 0;
@@ -768,7 +769,9 @@ impl RenderSession {
             for &(node, style) in &style_updates {
                 patch_layout_style(&mut self.layout.tree.root, node, style);
             }
-            self.styles = new_styles;
+            if let Some(styles) = rebuilt_styles.take() {
+                self.styles = styles;
+            }
 
             let mut subtree_applied = true;
             let mut retained_display = true;
@@ -823,7 +826,9 @@ impl RenderSession {
             for &(node, style) in &style_updates {
                 patch_layout_style(&mut self.layout.tree.root, node, style);
             }
-            self.styles = new_styles;
+            if let Some(styles) = rebuilt_styles.take() {
+                self.styles = styles;
+            }
             let flow_nodes = flow_relayout_nodes.into_iter().collect::<Vec<_>>();
             let flow_start =
                 fragment_flow_start_index(&self.layout.tree, &self.layout.fragments, &flow_nodes);
@@ -875,7 +880,9 @@ impl RenderSession {
                     _ => retained_display = false,
                 }
             }
-            self.styles = new_styles;
+            if let Some(styles) = rebuilt_styles.take() {
+                self.styles = styles;
+            }
             if !retained_display {
                 self.display_list = build_display_list(&self.layout.fragments);
             }
@@ -963,7 +970,7 @@ pub fn render_html_against_with_limits(
     let total_started = Instant::now();
 
     let stage_started = Instant::now();
-    let document = rarog_html::parse_standards(source);
+    let document = rarog_html::parse(source);
     let parse = stage_started.elapsed();
     validate_document_limits(&document, limits)?;
 
