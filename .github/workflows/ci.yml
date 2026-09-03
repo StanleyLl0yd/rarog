@@ -1,44 +1,108 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  bootstrap-origin-site:
-    name: Bootstrap origin and site identity
-    runs-on: ubuntu-latest
+  windows:
+    name: Windows primary
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           components: rustfmt, clippy
       - name: Format
-        run: cargo fmt --all
-      - name: Check workspace and update lockfile
+        run: cargo fmt --all -- --check
+      - name: Check
         run: cargo check --workspace --all-targets
-      - name: Clippy URL identity
-        run: cargo clippy -p rarog-url --all-targets -- -D warnings
-      - name: Test URL identity
-        run: cargo test -p rarog-url
-      - name: Persist generated files
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          for path in Cargo.lock crates/rarog-url/src/lib.rs crates/rarog-url/src/identity.rs; do
-            if git diff --quiet -- "$path"; then
-              continue
-            fi
-            blob_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$HEAD_REF" --jq .sha)"
-            content="$(base64 -w0 "$path")"
-            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$path" \
-              -f message='Finalize origin and site identity' \
-              -f content="$content" \
-              -f sha="$blob_sha" \
-              -f branch="$HEAD_REF"
-          done
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: R0 exit gate
+        run: cargo test -p rarog-engine --test r0_exit
+      - name: P1 embedder exit gate
+        run: cargo test -p rarog-engine --test p1_exit
+      - name: R0.1 render correctness gate
+        run: cargo test -p rarog-engine --test r01_correctness
+      - name: R1 exit gate
+        run: cargo test -p rarog-engine --test r1_exit
+      - name: Bootstrap render
+        run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
+
+  msrv:
+    name: MSRV 1.85
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.85.0
+      - name: Check MSRV
+        run: cargo check --workspace --all-targets
+
+  linux-portability:
+    name: Linux portability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Check fuzz targets
+        run: cargo check --manifest-path fuzz/Cargo.toml --bins
+      - name: Test
+        run: cargo test --workspace
+      - name: R0 exit gate
+        run: cargo test -p rarog-engine --test r0_exit
+      - name: P1 embedder exit gate
+        run: cargo test -p rarog-engine --test p1_exit
+      - name: R0.1 render correctness gate
+        run: cargo test -p rarog-engine --test r01_correctness
+      - name: R1 exit gate
+        run: cargo test -p rarog-engine --test r1_exit
+      - name: Bootstrap render
+        run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
+
+  spidermonkey-linux:
+    name: SpiderMonkey Linux
+    runs-on: ubuntu-latest
+    env:
+      MOZJS_ARCHIVE: https://github.com/servo/mozjs/releases
+      MOZJS_ATTESTATION: strict
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: clippy
+      - name: Check adapter
+        run: cargo check --locked -p rarog-script-spidermonkey --all-targets --features spidermonkey
+      - name: Clippy adapter
+        run: cargo clippy --locked -p rarog-script-spidermonkey --all-targets --features spidermonkey -- -D warnings
+      - name: Test adapter
+        run: cargo test --locked -p rarog-script-spidermonkey --features spidermonkey
+
+  spidermonkey-windows:
+    name: SpiderMonkey Windows
+    runs-on: windows-latest
+    env:
+      MOZJS_ARCHIVE: https://github.com/servo/mozjs/releases
+      MOZJS_ATTESTATION: strict
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - name: Check adapter
+        run: cargo check --locked -p rarog-script-spidermonkey --all-targets --features spidermonkey
+      - name: Test adapter
+        run: cargo test --locked -p rarog-script-spidermonkey --features spidermonkey
