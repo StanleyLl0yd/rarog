@@ -32,7 +32,7 @@ new_structural = '''                MutationKind::NodeCreated { .. } => {
                 }
                 MutationKind::ChildAdded { parent, child } => {
                     requires_full_rebuild = true;
-                    stylesheet_sources_changed |= document.is_connected(*parent)
+                    stylesheet_sources_changed |= self.document.is_connected(*parent)
                         && (node_is_within_style_element(&self.document, *parent)
                             || subtree_contains_style_element(&self.document, *child));
                 }
