@@ -740,10 +740,12 @@ mod tests {
         );
         assert_eq!(
             service.poll_event().unwrap(),
-            Some(PlatformInputEvent::Text(TextInputEvent::CompositionUpdate {
-                text: "A😀B".into(),
-                selection: Some(TextRange { start: 1, end: 2 }),
-            }))
+            Some(PlatformInputEvent::Text(
+                TextInputEvent::CompositionUpdate {
+                    text: "A😀B".into(),
+                    selection: Some(TextRange { start: 1, end: 2 }),
+                }
+            ))
         );
         assert_eq!(
             service.poll_event().unwrap(),
