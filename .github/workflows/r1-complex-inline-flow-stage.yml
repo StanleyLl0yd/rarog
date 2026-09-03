@@ -18,7 +18,7 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Apply complex inline retained-flow slice
-        run: python tools/r1_complex_inline_flow_patch.py
+        run: python tools/r1_complex_inline_flow_patch_v2.py
       - name: Format
         run: cargo fmt --all
       - name: Check workspace
