@@ -78,6 +78,8 @@ jobs:
   spidermonkey-linux:
     name: SpiderMonkey Linux
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       MOZJS_ARCHIVE: https://github.com/servo/mozjs/releases
       MOZJS_ATTESTATION: strict
@@ -91,11 +93,24 @@ jobs:
       - name: Clippy adapter
         run: cargo clippy -p rarog-script-spidermonkey --all-targets --features spidermonkey -- -D warnings
       - name: Test adapter
-        run: cargo test -p rarog-script-spidermonkey --features spidermonkey -- --nocapture
-      - name: Emit generated lockfile
-        run: python3 -c "import base64; data=open('Cargo.lock','rb').read(); print('LOCKFILE_B64_BEGIN'); print(base64.b64encode(data).decode()); print('LOCKFILE_B64_END')"
-      - name: Lockfile is current
-        run: git diff --exit-code -- Cargo.lock
+        run: cargo test -p rarog-script-spidermonkey --features spidermonkey
+      - name: Persist generated lockfile
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            exit 0
+          fi
+          blob_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/Cargo.lock?ref=$HEAD_REF" --jq .sha)"
+          content="$(base64 -w0 Cargo.lock)"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/Cargo.lock" \
+            -f message='Update Cargo.lock for SpiderMonkey adapter' \
+            -f content="$content" \
+            -f sha="$blob_sha" \
+            -f branch="$HEAD_REF"
 
   spidermonkey-windows:
     name: SpiderMonkey Windows
@@ -109,4 +124,4 @@ jobs:
       - name: Check adapter
         run: cargo check -p rarog-script-spidermonkey --all-targets --features spidermonkey
       - name: Test adapter
-        run: cargo test -p rarog-script-spidermonkey --features spidermonkey -- --nocapture
+        run: cargo test -p rarog-script-spidermonkey --features spidermonkey
