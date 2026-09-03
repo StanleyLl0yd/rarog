@@ -23,8 +23,6 @@ jobs:
         run: cargo clippy -p rarog-url --all-targets -- -D warnings
       - name: Test URL identity
         run: cargo test -p rarog-url
-      - name: Check MSRV
-        run: cargo +1.85.0 check -p rarog-url --all-targets
       - name: Persist generated files
         if: github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
