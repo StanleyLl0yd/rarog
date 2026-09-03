@@ -5,7 +5,7 @@ use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_s
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
     Fragment, LayoutNode, LayoutOutput, build_layout_tree, fragment_flow_start_index,
-    fragment_for_dom, fragments_for_dom, layout_document_with_styles, refresh_layout_subtree,
+    fragment_for_dom, fragments_for_dom, layout_document_with_styles, refresh_layout_subtrees,
     refresh_text_node, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
@@ -516,8 +516,7 @@ impl RenderSession {
                     old_parent,
                     new_parent,
                 } => {
-                    requires_full_rebuild = true;
-                    stylesheet_sources_changed |=
+                    let stylesheet_source_changed =
                         subtree_contains_style_element(&self.document, *child)
                             || old_parent.is_some_and(|parent| {
                                 node_is_within_style_element(&self.document, parent)
@@ -525,6 +524,16 @@ impl RenderSession {
                             || new_parent.is_some_and(|parent| {
                                 node_is_within_style_element(&self.document, parent)
                             });
+                    stylesheet_sources_changed |= stylesheet_source_changed;
+                    if stylesheet_source_changed {
+                        requires_full_rebuild = true;
+                    } else {
+                        for parent in old_parent.iter().chain(new_parent.iter()) {
+                            if self.document.is_connected(*parent) {
+                                structural_relayout_nodes.insert(*parent);
+                            }
+                        }
+                    }
                 }
                 MutationKind::CharacterData { node } => {
                     if node_is_within_style_element(&self.document, *node) {
@@ -549,17 +558,23 @@ impl RenderSession {
         let mut flow_relayout_nodes = BTreeSet::new();
 
         if !requires_full_rebuild && !structural_relayout_nodes.is_empty() {
-            for node in structural_relayout_nodes.iter().copied() {
-                if !refresh_layout_subtree(&mut self.layout.tree, &self.document, &new_styles, node)
-                {
-                    requires_full_rebuild = true;
-                    break;
-                }
+            structural_relayout_nodes =
+                minimal_structural_roots(&self.document, &structural_relayout_nodes);
+            let structural_roots = structural_relayout_nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            if !refresh_layout_subtrees(
+                &mut self.layout.tree,
+                &self.document,
+                &new_styles,
+                &structural_roots,
+            ) {
+                requires_full_rebuild = true;
+            } else {
                 geometry_changed = true;
                 subtree_relayout_safe = false;
-                flow_relayout_nodes.insert(node);
-            }
-            if !requires_full_rebuild {
+                flow_relayout_nodes.extend(structural_roots);
                 style_candidates.retain(|candidate| {
                     !structural_relayout_nodes
                         .iter()
@@ -1002,6 +1017,18 @@ fn node_is_within_style_element(document: &Document, mut node: NodeId) -> bool {
         node = parent;
     }
     false
+}
+
+fn minimal_structural_roots(document: &Document, roots: &BTreeSet<NodeId>) -> BTreeSet<NodeId> {
+    roots
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            !roots.iter().copied().any(|other| {
+                other != *candidate && node_is_within_dom_subtree(document, other, *candidate)
+            })
+        })
+        .collect()
 }
 
 fn node_is_within_dom_subtree(document: &Document, root: NodeId, mut node: NodeId) -> bool {
@@ -1720,20 +1747,96 @@ mod tests {
     }
 
     #[test]
-    fn reparent_still_falls_back_to_full_rebuild() {
-        let source = r#"<div id="from"><span id="child">Rarog</span></div><div id="to"></div>"#;
-        let expected_source =
-            r#"<div id="from"></div><div id="to"><span id="child">Rarog</span></div>"#;
+    fn reparent_reflows_both_retained_parents() {
+        let source = r#"<style>#from > span:last-child { height:7px;background:#112233; } #to > span:last-child { height:12px;background:#445566; }</style><div id="from"><span id="child">R</span></div><div id="to"><span id="existing">E</span></div>"#;
+        let expected_source = r#"<style>#from > span:last-child { height:7px;background:#112233; } #to > span:last-child { height:12px;background:#445566; }</style><div id="from"></div><div id="to"><span id="existing">E</span><span id="child">R</span></div>"#;
         let mut session = session(source, deterministic_options());
+        let from = element_with_id(session.document(), "from");
+        let to = element_with_id(session.document(), "to");
         let child = element_with_id(session.document(), "child");
-        let destination = element_with_id(session.document(), "to");
+        let existing = element_with_id(session.document(), "existing");
+        let from_layout = layout_id_for_dom(&session.layout().tree.root, from).unwrap();
+        let to_layout = layout_id_for_dom(&session.layout().tree.root, to).unwrap();
+        let child_layout = layout_id_for_dom(&session.layout().tree.root, child).unwrap();
+        let existing_layout = layout_id_for_dom(&session.layout().tree.root, existing).unwrap();
 
+        session.document_mut().append_child(to, child).unwrap();
+        let report = session.update().expect("reparent reflow succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert_eq!(report.patched_nodes, 2);
+        assert!(report.retained_display_list);
+        assert!(!report.styles_rebuilt);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, from),
+            Some(from_layout)
+        );
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, to),
+            Some(to_layout)
+        );
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, child),
+            Some(child_layout)
+        );
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, existing),
+            Some(existing_layout)
+        );
+        assert_eq!(session.styles(), &expected.styles);
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
+    fn detach_reflows_retained_old_parent() {
+        let source = r#"<div id="parent"><span id="child" style="height:12px;background:#112233">R</span></div><div style="height:10px;background:#445566"></div>"#;
+        let expected_source =
+            r#"<div id="parent"></div><div style="height:10px;background:#445566"></div>"#;
+        let mut session = session(source, deterministic_options());
+        let parent = element_with_id(session.document(), "parent");
+        let child = element_with_id(session.document(), "child");
+        let parent_layout = layout_id_for_dom(&session.layout().tree.root, parent).unwrap();
+
+        session.document_mut().detach(child).unwrap();
+        let report = session.update().expect("detach reflow succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert_eq!(report.patched_nodes, 1);
+        assert!(report.retained_display_list);
+        assert!(!report.styles_rebuilt);
+        assert_eq!(
+            layout_id_for_dom(&session.layout().tree.root, parent),
+            Some(parent_layout)
+        );
+        assert!(layout_id_for_dom(&session.layout().tree.root, child).is_none());
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+    }
+
+    #[test]
+    fn newly_created_then_attached_node_remains_full_rebuild() {
+        let source = r#"<div id="parent"></div>"#;
+        let expected_source = r#"<div id="parent"><span>R</span></div>"#;
+        let mut session = session(source, deterministic_options());
+        let parent = element_with_id(session.document(), "parent");
+        let child = session
+            .document_mut()
+            .create_node(NodeKind::Element(rarog_dom::ElementData::html("span")))
+            .unwrap();
         session
             .document_mut()
-            .append_child(destination, child)
+            .append_new(child, NodeKind::Text("R".into()))
             .unwrap();
+        session.document_mut().append_child(parent, child).unwrap();
 
-        let report = session.update().expect("reparent fallback succeeds");
+        let report = session.update().expect("created-node fallback succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(report.mode, IncrementalMode::FullRebuild);

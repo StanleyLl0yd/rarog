@@ -1242,8 +1242,36 @@ pub fn refresh_layout_subtree(
     styles: &StyleSet,
     dom_node: NodeId,
 ) -> bool {
-    let next_id = max_layout_node_id(&tree.root).saturating_add(1);
-    refresh_layout_subtree_recursive(&mut tree.root, document, styles, dom_node, None, next_id)
+    refresh_layout_subtrees(tree, document, styles, &[dom_node])
+}
+
+pub fn refresh_layout_subtrees(
+    tree: &mut LayoutTree,
+    document: &Document,
+    styles: &StyleSet,
+    dom_nodes: &[NodeId],
+) -> bool {
+    if dom_nodes.is_empty() {
+        return false;
+    }
+
+    let mut retained_ids = std::collections::BTreeMap::new();
+    collect_layout_node_ids(&tree.root, &mut retained_ids);
+    let mut next_id = max_layout_node_id(&tree.root).saturating_add(1);
+    for dom_node in dom_nodes {
+        if !refresh_layout_subtree_recursive(
+            &mut tree.root,
+            document,
+            styles,
+            *dom_node,
+            None,
+            &retained_ids,
+            &mut next_id,
+        ) {
+            return false;
+        }
+    }
+    true
 }
 
 fn refresh_layout_subtree_recursive(
@@ -1252,28 +1280,39 @@ fn refresh_layout_subtree_recursive(
     styles: &StyleSet,
     dom_node: NodeId,
     parent_style: Option<ComputedStyle>,
-    next_id: usize,
+    retained_ids: &std::collections::BTreeMap<NodeId, LayoutNodeId>,
+    next_id: &mut usize,
 ) -> bool {
     if node.dom_node == Some(dom_node) {
-        let mut retained_ids = std::collections::BTreeMap::new();
-        collect_layout_node_ids(node, &mut retained_ids);
-        let mut builder = LayoutTreeBuilder { next_id, styles };
+        let mut builder = LayoutTreeBuilder {
+            next_id: *next_id,
+            styles,
+        };
         let Some(mut replacement) = builder.build_node(document, dom_node, parent_style) else {
             return false;
         };
-        reuse_layout_node_ids(&mut replacement, &retained_ids);
+        *next_id = builder.next_id;
+        reuse_layout_node_ids(&mut replacement, retained_ids);
         *node = replacement;
         return true;
     }
 
     let style = node.style;
-    let changed = node.children.iter_mut().any(|child| {
-        refresh_layout_subtree_recursive(child, document, styles, dom_node, Some(style), next_id)
-    });
-    if changed {
-        node.intrinsic = intrinsic_sizes_for_node(&node.kind, node.style, &node.children);
+    for child in &mut node.children {
+        if refresh_layout_subtree_recursive(
+            child,
+            document,
+            styles,
+            dom_node,
+            Some(style),
+            retained_ids,
+            next_id,
+        ) {
+            node.intrinsic = intrinsic_sizes_for_node(&node.kind, node.style, &node.children);
+            return true;
+        }
     }
-    changed
+    false
 }
 
 fn max_layout_node_id(node: &LayoutNode) -> usize {
