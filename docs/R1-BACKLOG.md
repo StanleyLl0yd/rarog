@@ -48,6 +48,7 @@ Tracking issue: #39.
   - [x] Combine ordinary text reflow with paint-only style mutations while preserving geometry-changing mixed updates as full-rebuild fallbacks.
   - [x] Reuse retained stylesheet sources across ordinary structural full rebuilds when connected `<style>` sources are unchanged.
   - [x] Reflow append-only connected child insertions through retained layout subtrees while preserving existing `LayoutNodeId` identity.
+  - [x] Reflow ordinary reparent and detach mutations across retained structural roots while preserving moved subtree `LayoutNodeId` identity.
 - [ ] Extend retained/damage-aware paint across richer formatting and stacking behavior.
   - [x] Retain and replace the affected display-list suffix across flow-aware fragment relayout.
 

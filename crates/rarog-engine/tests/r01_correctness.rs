@@ -96,7 +96,7 @@ fn incremental_paths_match_fresh_render() {
 }
 
 #[test]
-fn vertical_flow_append_reflow_and_reparent_fallback_are_preserved() {
+fn vertical_flow_append_and_reparent_reflow_are_preserved() {
     let source = r#"<div id="target" style="height:20px;background:#112233"></div><div style="height:10px;background:#445566"></div>"#;
     let expected = r#"<div id="target" style="height:32px;background:#112233"></div><div style="height:10px;background:#445566"></div>"#;
     let (flow, flow_mode) = update_style(source, "height:32px;background:#112233");
@@ -129,10 +129,10 @@ fn vertical_flow_append_reflow_and_reparent_fallback_are_preserved() {
         .document_mut()
         .append_child(destination, child)
         .expect("reparent mutation succeeds");
-    assert_eq!(
-        reparent.update().expect("reparent update succeeds").mode,
-        IncrementalMode::FullRebuild
-    );
+    let reparent_report = reparent.update().expect("reparent update succeeds");
+    assert_eq!(reparent_report.mode, IncrementalMode::FlowRelayout);
+    assert!(reparent_report.retained_display_list);
+    assert!(!reparent_report.styles_rebuilt);
     assert_matches_fresh(&reparent, reparent_expected);
 }
 
