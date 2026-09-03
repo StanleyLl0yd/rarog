@@ -34,7 +34,7 @@ Tracking issue: #79.
 - [x] Add platform-neutral input, text-input and clipboard contracts.
 - [x] Add Windows keyboard and mouse input adapter.
 - [x] Add Windows IME and text-input adapter.
-- [ ] Add Windows clipboard adapter.
+- [x] Add Windows clipboard adapter.
 
 ## Scope boundary
 
