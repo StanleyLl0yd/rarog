@@ -6,6 +6,7 @@ use std::ptr;
 use mozjs::gc::RootedTraceableBox;
 use mozjs::jsapi::{Heap, JSObject, OnNewGlobalHookOption};
 use mozjs::jsval::{JSVal, UndefinedValue};
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::JS_NewGlobalObject;
 use mozjs::rust::{
@@ -182,9 +183,11 @@ impl ScriptRuntime for SpiderMonkeyRuntime<'_> {
         let completion = match evaluation {
             Ok(()) => ScriptCompletion::Normal(state.store_root(result.get())?),
             Err(()) => {
-                let Some(error) =
-                    error_info_from_exception_stack_safe(runtime.cx(), result.handle_mut())
-                else {
+                let error = {
+                    let mut entered = AutoRealm::new_from_handle(runtime.cx(), state.global.handle());
+                    error_info_from_exception_stack_safe(&mut entered, result.handle_mut())
+                };
+                let Some(error) = error else {
                     return Err(ScriptError::new(
                         ScriptErrorKind::Backend,
                         "SpiderMonkey evaluation failed without a pending exception",
