@@ -206,10 +206,12 @@ impl HeaderList {
             ));
         }
         let header = Header::try_new(name, value)?;
-        let bytes = self
-            .bytes
-            .checked_add(header.byte_len())
-            .ok_or_else(|| FetchError::new(FetchErrorKind::HeaderBytesLimitExceeded, "header byte count overflow"))?;
+        let bytes = self.bytes.checked_add(header.byte_len()).ok_or_else(|| {
+            FetchError::new(
+                FetchErrorKind::HeaderBytesLimitExceeded,
+                "header byte count overflow",
+            )
+        })?;
         if bytes > self.max_bytes {
             return Err(FetchError::new(
                 FetchErrorKind::HeaderBytesLimitExceeded,
@@ -585,7 +587,9 @@ fn normalize_header_value(value: String) -> Result<String, FetchError> {
             "header value cannot contain NUL, CR or LF",
         ));
     }
-    Ok(value.trim_matches(|character| matches!(character, ' ' | '\t')).to_owned())
+    Ok(value
+        .trim_matches(|character| matches!(character, ' ' | '\t'))
+        .to_owned())
 }
 
 fn is_http_token_byte(byte: u8) -> bool {
@@ -620,11 +624,17 @@ mod tests {
         request.set_credentials(CredentialsMode::Include);
         request.set_redirect(RedirectMode::Manual);
         request.set_destination(RequestDestination::Script);
-        request.headers_mut().append("Accept", " text/javascript ").unwrap();
+        request
+            .headers_mut()
+            .append("Accept", " text/javascript ")
+            .unwrap();
         let network = request.network_request();
         assert_eq!(network.url().as_str(), "https://api.example.com/data");
         assert_eq!(network.method().as_str(), "GET");
-        assert_eq!(network.headers().get_first("accept"), Some("text/javascript"));
+        assert_eq!(
+            network.headers().get_first("accept"),
+            Some("text/javascript")
+        );
     }
 
     #[test]
@@ -663,7 +673,10 @@ mod tests {
         headers.append("X-Test", " one ").unwrap();
         headers.append("x-test", "two").unwrap();
         assert_eq!(headers.get_first("X-TEST"), Some("one"));
-        assert_eq!(headers.values("x-test").collect::<Vec<_>>(), vec!["one", "two"]);
+        assert_eq!(
+            headers.values("x-test").collect::<Vec<_>>(),
+            vec!["one", "two"]
+        );
         assert_eq!(
             headers.append("third", "value").unwrap_err().kind,
             FetchErrorKind::HeaderCountLimitExceeded
@@ -707,14 +720,9 @@ mod tests {
     #[test]
     fn response_validates_status_and_strips_url_fragment() {
         let url = WebUrl::parse("https://example.com/path#fragment").unwrap();
-        let response = FetchResponse::try_new(
-            Some(url),
-            204,
-            HeaderList::default(),
-            Vec::new(),
-            1024,
-        )
-        .unwrap();
+        let response =
+            FetchResponse::try_new(Some(url), 204, HeaderList::default(), Vec::new(), 1024)
+                .unwrap();
         assert_eq!(response.url().unwrap().as_str(), "https://example.com/path");
         assert!(response.is_success());
         assert_eq!(
@@ -742,10 +750,16 @@ mod tests {
     impl NetworkCapability for FixtureNetwork {
         fn start(&mut self, request: NetworkRequest) -> Result<NetworkTicket, FetchError> {
             let raw = NonZeroU64::new(self.next).ok_or_else(|| {
-                FetchError::new(FetchErrorKind::InvalidNetworkTicket, "network ticket exhausted")
+                FetchError::new(
+                    FetchErrorKind::InvalidNetworkTicket,
+                    "network ticket exhausted",
+                )
             })?;
             self.next = self.next.checked_add(1).ok_or_else(|| {
-                FetchError::new(FetchErrorKind::InvalidNetworkTicket, "network ticket exhausted")
+                FetchError::new(
+                    FetchErrorKind::InvalidNetworkTicket,
+                    "network ticket exhausted",
+                )
             })?;
             let ticket = NetworkTicket::new(raw);
             self.pending.insert(ticket, request);
@@ -754,7 +768,10 @@ mod tests {
 
         fn poll(&mut self, ticket: NetworkTicket) -> Result<NetworkPoll, FetchError> {
             let request = self.pending.remove(&ticket).ok_or_else(|| {
-                FetchError::new(FetchErrorKind::InvalidNetworkTicket, "unknown network ticket")
+                FetchError::new(
+                    FetchErrorKind::InvalidNetworkTicket,
+                    "unknown network ticket",
+                )
             })?;
             let response = FetchResponse::try_new(
                 Some(request.url().clone()),
@@ -768,14 +785,20 @@ mod tests {
 
         fn cancel(&mut self, ticket: NetworkTicket) -> Result<(), FetchError> {
             self.pending.remove(&ticket).map(|_| ()).ok_or_else(|| {
-                FetchError::new(FetchErrorKind::InvalidNetworkTicket, "unknown network ticket")
+                FetchError::new(
+                    FetchErrorKind::InvalidNetworkTicket,
+                    "unknown network ticket",
+                )
             })
         }
     }
 
     #[test]
     fn network_capability_is_object_safe_and_receives_transport_projection() {
-        fn execute(capability: &mut dyn NetworkCapability, request: &FetchRequest) -> FetchResponse {
+        fn execute(
+            capability: &mut dyn NetworkCapability,
+            request: &FetchRequest,
+        ) -> FetchResponse {
             let ticket = capability.start(request.network_request()).unwrap();
             match capability.poll(ticket).unwrap() {
                 NetworkPoll::Complete(response) => response,
