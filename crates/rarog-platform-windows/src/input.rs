@@ -1,8 +1,8 @@
 use rarog_platform::{
     KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey, PlatformInputError,
-    PlatformInputEvent, PlatformInputService, PlatformPoint, PointerAction, PointerButton,
-    PointerButtons, PointerInputEvent, PointerKind, TextInputEvent, WheelDeltaMode,
-    WheelInputEvent,
+    PlatformInputEvent, PlatformInputService, PlatformPoint, PlatformTextInputService,
+    PointerAction, PointerButton, PointerButtons, PointerInputEvent, PointerKind, TextInputEvent,
+    TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -67,16 +67,22 @@ const VK_RMENU: usize = 0xa5;
 #[derive(Debug)]
 pub struct WindowsInputService {
     state: Mutex<WindowsInputState>,
+    text_input_state: Mutex<TextInputState>,
 }
 
 impl WindowsInputService {
     pub fn try_new() -> Result<Self, crate::WindowsPlatformError> {
         if cfg!(target_os = "windows") {
-            Ok(Self {
-                state: Mutex::new(WindowsInputState::default()),
-            })
+            Ok(Self::new_unchecked())
         } else {
             Err(crate::WindowsPlatformError::UnsupportedTarget)
+        }
+    }
+
+    fn new_unchecked() -> Self {
+        Self {
+            state: Mutex::new(WindowsInputState::default()),
+            text_input_state: Mutex::new(TextInputState::disabled()),
         }
     }
 
@@ -114,6 +120,52 @@ impl WindowsInputService {
         state.modifiers = modifiers;
         Ok(())
     }
+
+    pub fn text_input_state(&self) -> Result<TextInputState, PlatformInputError> {
+        self.text_input_state
+            .lock()
+            .map(|state| state.clone())
+            .map_err(|_| PlatformInputError::BackendFailure)
+    }
+
+    pub fn push_ime_composition_start(&self) -> Result<(), PlatformInputError> {
+        self.push_text_event(TextInputEvent::CompositionStart)
+    }
+
+    pub fn push_ime_composition_update_utf16(
+        &self,
+        text: &[u16],
+        selection_utf16: Option<(usize, usize)>,
+    ) -> Result<(), PlatformInputError> {
+        let selection = selection_utf16
+            .map(|(start, end)| utf16_range_to_text_range(text, start, end))
+            .transpose()?;
+        self.push_text_event(TextInputEvent::CompositionUpdate {
+            text: String::from_utf16_lossy(text),
+            selection,
+        })
+    }
+
+    pub fn push_ime_composition_end_utf16(&self, text: &[u16]) -> Result<(), PlatformInputError> {
+        self.push_text_event(TextInputEvent::CompositionEnd {
+            text: String::from_utf16_lossy(text),
+        })
+    }
+
+    pub fn push_ime_commit_utf16(&self, text: &[u16]) -> Result<(), PlatformInputError> {
+        self.push_text_event(TextInputEvent::Commit {
+            text: String::from_utf16_lossy(text),
+        })
+    }
+
+    fn push_text_event(&self, event: TextInputEvent) -> Result<(), PlatformInputError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PlatformInputError::BackendFailure)?;
+        state.queue.push_back(PlatformInputEvent::Text(event));
+        Ok(())
+    }
 }
 
 impl PlatformInputService for WindowsInputService {
@@ -123,6 +175,18 @@ impl PlatformInputService for WindowsInputService {
             .lock()
             .map_err(|_| PlatformInputError::BackendFailure)?;
         Ok(state.queue.pop_front())
+    }
+}
+
+impl PlatformTextInputService for WindowsInputService {
+    fn set_text_input_state(&self, state: &TextInputState) -> Result<(), PlatformInputError> {
+        state.validate()?;
+        let mut current = self
+            .text_input_state
+            .lock()
+            .map_err(|_| PlatformInputError::BackendFailure)?;
+        *current = state.clone();
+        Ok(())
     }
 }
 
@@ -296,6 +360,41 @@ impl WindowsInputState {
                 text: character.to_string(),
             }));
     }
+}
+
+fn utf16_range_to_text_range(
+    text: &[u16],
+    start: usize,
+    end: usize,
+) -> Result<TextRange, PlatformInputError> {
+    if start > end {
+        return Err(PlatformInputError::InvalidTextRange);
+    }
+    let start = utf16_offset_to_char_index(text, start)?;
+    let end = utf16_offset_to_char_index(text, end)?;
+    TextRange::try_new(start, end)
+}
+
+fn utf16_offset_to_char_index(text: &[u16], offset: usize) -> Result<usize, PlatformInputError> {
+    if offset > text.len() {
+        return Err(PlatformInputError::InvalidTextRange);
+    }
+    if offset > 0
+        && offset < text.len()
+        && is_high_surrogate(text[offset - 1])
+        && is_low_surrogate(text[offset])
+    {
+        return Err(PlatformInputError::InvalidTextRange);
+    }
+    Ok(String::from_utf16_lossy(&text[..offset]).chars().count())
+}
+
+fn is_high_surrogate(unit: u16) -> bool {
+    (0xd800..=0xdbff).contains(&unit)
+}
+
+fn is_low_surrogate(unit: u16) -> bool {
+    (0xdc00..=0xdfff).contains(&unit)
 }
 
 fn mouse_position(lparam: isize) -> PlatformPoint {
@@ -592,6 +691,88 @@ mod tests {
         assert_eq!(
             state.push_wheel(f32::NAN, 0.0, PlatformPoint::default()),
             Err(PlatformInputError::InvalidWheelDelta)
+        );
+    }
+
+    #[test]
+    fn text_input_state_is_validated_and_retained_for_native_ime_positioning() {
+        let service = WindowsInputService::new_unchecked();
+        let state = TextInputState {
+            enabled: true,
+            caret_rect: rarog_platform::PlatformRect {
+                x: 10.0,
+                y: 20.0,
+                width: 1.0,
+                height: 18.0,
+            },
+        };
+        PlatformTextInputService::set_text_input_state(&service, &state).unwrap();
+        assert_eq!(service.text_input_state().unwrap(), state);
+
+        let invalid = TextInputState {
+            enabled: true,
+            caret_rect: rarog_platform::PlatformRect {
+                x: f32::NAN,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            },
+        };
+        assert_eq!(
+            PlatformTextInputService::set_text_input_state(&service, &invalid),
+            Err(PlatformInputError::InvalidRectangle)
+        );
+    }
+
+    #[test]
+    fn ime_utf16_bridge_preserves_composition_order_and_scalar_selection() {
+        let service = WindowsInputService::new_unchecked();
+        let text = "A😀B".encode_utf16().collect::<Vec<_>>();
+        service.push_ime_composition_start().unwrap();
+        service
+            .push_ime_composition_update_utf16(&text, Some((1, 3)))
+            .unwrap();
+        service.push_ime_composition_end_utf16(&text).unwrap();
+
+        assert_eq!(
+            service.poll_event().unwrap(),
+            Some(PlatformInputEvent::Text(TextInputEvent::CompositionStart))
+        );
+        assert_eq!(
+            service.poll_event().unwrap(),
+            Some(PlatformInputEvent::Text(TextInputEvent::CompositionUpdate {
+                text: "A😀B".into(),
+                selection: Some(TextRange { start: 1, end: 2 }),
+            }))
+        );
+        assert_eq!(
+            service.poll_event().unwrap(),
+            Some(PlatformInputEvent::Text(TextInputEvent::CompositionEnd {
+                text: "A😀B".into(),
+            }))
+        );
+    }
+
+    #[test]
+    fn ime_selection_cannot_split_a_surrogate_pair() {
+        let service = WindowsInputService::new_unchecked();
+        let text = "A😀B".encode_utf16().collect::<Vec<_>>();
+        assert_eq!(
+            service.push_ime_composition_update_utf16(&text, Some((2, 3))),
+            Err(PlatformInputError::InvalidTextRange)
+        );
+    }
+
+    #[test]
+    fn ime_commit_decodes_utf16_into_the_shared_input_queue() {
+        let service = WindowsInputService::new_unchecked();
+        let text = "入力".encode_utf16().collect::<Vec<_>>();
+        service.push_ime_commit_utf16(&text).unwrap();
+        assert_eq!(
+            service.poll_event().unwrap(),
+            Some(PlatformInputEvent::Text(TextInputEvent::Commit {
+                text: "入力".into()
+            }))
         );
     }
 }
