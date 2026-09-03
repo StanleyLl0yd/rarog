@@ -18,7 +18,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Apply append-only structural reflow slice
-        run: python tools/r1_append_child_reflow_patch.py
+        run: |
+          python tools/r1_append_child_reflow_patch.py
+          python tools/r1_append_child_reflow_fix.py
       - name: Format
         run: cargo fmt --all
       - name: Check workspace
