@@ -30,7 +30,7 @@ R0 exits with:
 
 See `R0-BACKLOG.md` and `R0-EXIT.md` for the completed scope and explicit deferrals.
 
-## R1 — Flame — next
+## R1 — Flame — complete
 
 - replace bootstrap HTML parsing with a standards-oriented tokenizer/tree-builder adapter;
 - replace bootstrap CSS parsing with a standards-oriented tokenizer/parser adapter;
@@ -43,7 +43,9 @@ See `R0-BACKLOG.md` and `R0-EXIT.md` for the completed scope and explicit deferr
 - expand the R0 invalidation graph into standards-aware incremental style/layout work;
 - expand retained/damage-aware paint across richer formatting and stacking behavior.
 
-## R2 — Flight
+See `R1-BACKLOG.md` and `R1-EXIT.md` for the completed scope, retained-rendering boundaries and explicit deferrals.
+
+## R2 — Flight — next
 
 - WebIDL pipeline;
 - replaceable script runtime abstraction;

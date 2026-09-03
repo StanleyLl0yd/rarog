@@ -1,6 +1,6 @@
 # R1 — Flame backlog
 
-Status: **in progress**.
+Status: **complete**.
 
 Tracking issue: #39.
 
@@ -43,7 +43,7 @@ Tracking issue: #39.
 
 ## E — Incremental rendering breadth
 
-- [ ] Extend invalidation into standards-aware style/layout dependencies.
+- [x] Extend invalidation into standards-aware style/layout dependencies.
   - [x] Reflow ordinary `CharacterData` mutations through retained text layout nodes and flow-aware fragment rebuilding.
   - [x] Combine ordinary text reflow with paint-only style mutations while preserving geometry-changing mixed updates as full-rebuild fallbacks.
   - [x] Reuse retained stylesheet sources across ordinary structural full rebuilds when connected `<style>` sources are unchanged.
@@ -53,7 +53,7 @@ Tracking issue: #39.
   - [x] Revalidate retained layout globally when connected stylesheet sources change.
   - [x] Refresh retained parent subtrees for visibility membership, block/inline role and flow-root BFC transitions.
   - [x] Route mixed text/geometry updates and inline or fragmented-inline style/geometry changes through retained parent flow refresh.
-- [ ] Extend retained/damage-aware paint across richer formatting and stacking behavior.
+- [x] Extend retained/damage-aware paint across richer formatting and stacking behavior.
   - [x] Retain and replace the affected display-list suffix across flow-aware fragment relayout.
   - [x] Replay partial damage through clip, stacking, transform and opacity scopes without a full-frame raster fallback.
   - [x] Compute structural damage per stable display item from effective transform/clip/opacity state and paint order.
