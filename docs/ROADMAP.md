@@ -45,7 +45,7 @@ See `R0-BACKLOG.md` and `R0-EXIT.md` for the completed scope and explicit deferr
 
 See `R1-BACKLOG.md` and `R1-EXIT.md` for the completed scope, retained-rendering boundaries and explicit deferrals.
 
-## R2 — Flight — next
+## R2 — Flight — in progress
 
 - WebIDL pipeline;
 - replaceable script runtime abstraction;
