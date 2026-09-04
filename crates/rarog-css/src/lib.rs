@@ -73,6 +73,14 @@ pub enum JustifyContent {
     SpaceEvenly,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlignItems {
+    Stretch,
+    FlexStart,
+    FlexEnd,
+    Center,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedStyle {
     pub width: Option<f32>,
@@ -93,6 +101,7 @@ pub struct ComputedStyle {
     pub flex_grow: f32,
     pub flex_shrink: f32,
     pub justify_content: JustifyContent,
+    pub align_items: AlignItems,
     pub row_gap: f32,
     pub column_gap: f32,
     pub establishes_bfc: bool,
@@ -120,6 +129,7 @@ impl Default for ComputedStyle {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::Stretch,
             row_gap: 0.0,
             column_gap: 0.0,
             establishes_bfc: false,
@@ -302,6 +312,7 @@ pub enum PropertyId {
     FlexGrow,
     FlexShrink,
     JustifyContent,
+    AlignItems,
     RowGap,
     ColumnGap,
     VerticalAlign,
@@ -334,6 +345,7 @@ pub enum PropertyValue {
     Display(DisplayValue),
     Number(f32),
     JustifyContent(JustifyContent),
+    AlignItems(AlignItems),
     VerticalAlign(VerticalAlign),
     CssWide(CssWideKeyword),
 }
@@ -746,6 +758,7 @@ fn copy_property_from_style(
         PropertyId::FlexGrow => style.flex_grow = source.flex_grow,
         PropertyId::FlexShrink => style.flex_shrink = source.flex_shrink,
         PropertyId::JustifyContent => style.justify_content = source.justify_content,
+        PropertyId::AlignItems => style.align_items = source.align_items,
         PropertyId::RowGap => style.row_gap = source.row_gap,
         PropertyId::ColumnGap => style.column_gap = source.column_gap,
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
@@ -816,6 +829,7 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         (PropertyId::JustifyContent, PropertyValue::JustifyContent(value)) => {
             style.justify_content = value
         }
+        (PropertyId::AlignItems, PropertyValue::AlignItems(value)) => style.align_items = value,
         (PropertyId::RowGap, PropertyValue::Length(value)) => style.row_gap = value,
         (PropertyId::ColumnGap, PropertyValue::Length(value)) => style.column_gap = value,
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
@@ -1005,6 +1019,28 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         "row-gap" => push_gap_value(output, PropertyId::RowGap, value, important),
         "column-gap" => push_gap_value(output, PropertyId::ColumnGap, value, important),
         "gap" => push_gap_shorthand(output, value, important),
+        "align-items" => {
+            let value = value.trim();
+            let value =
+                if value.eq_ignore_ascii_case("stretch") || value.eq_ignore_ascii_case("normal") {
+                    Some(AlignItems::Stretch)
+                } else if value.eq_ignore_ascii_case("flex-start") {
+                    Some(AlignItems::FlexStart)
+                } else if value.eq_ignore_ascii_case("flex-end") {
+                    Some(AlignItems::FlexEnd)
+                } else if value.eq_ignore_ascii_case("center") {
+                    Some(AlignItems::Center)
+                } else {
+                    None
+                };
+            if let Some(value) = value {
+                output.push(Declaration {
+                    property: PropertyId::AlignItems,
+                    value: PropertyValue::AlignItems(value),
+                    important,
+                });
+            }
+        }
         "justify-content" => {
             let value = value.trim();
             let value = if value.eq_ignore_ascii_case("flex-start")
@@ -1144,6 +1180,7 @@ fn push_css_wide(
         "flex-grow" => &[PropertyId::FlexGrow],
         "flex-shrink" => &[PropertyId::FlexShrink],
         "justify-content" => &[PropertyId::JustifyContent],
+        "align-items" => &[PropertyId::AlignItems],
         "row-gap" => &[PropertyId::RowGap],
         "column-gap" => &[PropertyId::ColumnGap],
         "gap" => &[PropertyId::RowGap, PropertyId::ColumnGap],
@@ -1988,6 +2025,45 @@ mod finite_geometry_tests {
             value: PropertyValue::CssWide(CssWideKeyword::Initial),
             important: false,
         }));
+    }
+
+    #[test]
+    fn align_items_parses_bounded_cross_axis_values() {
+        let declarations = parse_declarations(
+            "align-items:flex-start;align-items:flex-end;align-items:center;align-items:stretch",
+        );
+        for value in [
+            AlignItems::FlexStart,
+            AlignItems::FlexEnd,
+            AlignItems::Center,
+            AlignItems::Stretch,
+        ] {
+            assert!(declarations.contains(&Declaration {
+                property: PropertyId::AlignItems,
+                value: PropertyValue::AlignItems(value),
+                important: false,
+            }));
+        }
+
+        let normal = parse_declarations("align-items:NoRmAl");
+        assert_eq!(
+            normal,
+            vec![Declaration {
+                property: PropertyId::AlignItems,
+                value: PropertyValue::AlignItems(AlignItems::Stretch),
+                important: false,
+            }]
+        );
+        assert!(parse_declarations("align-items:baseline").is_empty());
+
+        let mut style = ComputedStyle::default();
+        assert_eq!(style.align_items, AlignItems::Stretch);
+        apply_property_value(
+            &mut style,
+            PropertyId::AlignItems,
+            PropertyValue::AlignItems(AlignItems::Center),
+        );
+        assert_eq!(style.align_items, AlignItems::Center);
     }
 
     #[test]

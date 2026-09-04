@@ -1,15 +1,15 @@
 mod flex;
 
 pub use flex::{
-    FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout, FlexRowOptions,
-    FlexRowPlacement, FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
+    FlexCrossAlignment, FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout,
+    FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
     layout_flexible_single_line_flex_row_with_alignment,
     layout_flexible_single_line_flex_row_with_options, layout_single_line_flex_row,
     layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_options,
 };
 
 use rarog_css::{
-    ComputedStyle, JustifyContent, StyleSet, VerticalAlign, computed_style_with_parent,
+    AlignItems, ComputedStyle, JustifyContent, StyleSet, VerticalAlign, computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
@@ -2974,7 +2974,10 @@ impl FragmentBuilder {
             &items,
             FlexRowOptions::default()
                 .with_main_alignment(flex_main_alignment(container.style.justify_content))
-                .with_main_gap(container.style.column_gap),
+                .with_cross_alignment(flex_cross_alignment(container.style.align_items))
+                .with_main_gap(container.style.column_gap)
+                .with_cross_size(container.style.height)
+                .with_cross_size_limits(container.style.min_height, container.style.max_height),
         ) else {
             return (Vec::new(), 0.0);
         };
@@ -3133,6 +3136,15 @@ impl FragmentBuilder {
         let id = FragmentId(self.next_id);
         self.next_id += 1;
         id
+    }
+}
+
+fn flex_cross_alignment(align_items: AlignItems) -> FlexCrossAlignment {
+    match align_items {
+        AlignItems::Stretch => FlexCrossAlignment::Stretch,
+        AlignItems::FlexStart => FlexCrossAlignment::Start,
+        AlignItems::FlexEnd => FlexCrossAlignment::End,
+        AlignItems::Center => FlexCrossAlignment::Center,
     }
 }
 
@@ -3462,6 +3474,96 @@ mod tests {
             Rect::new(20.0, 0.0, 30.0, 15.0)
         );
         assert_eq!(container.boxes.content_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn align_items_positions_explicit_height_items_on_the_cross_axis() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;width:100px;height:60px;align-items:center"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 25.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 20.0);
+        assert_eq!(container.boxes.content_box.size.height, 60.0);
+    }
+
+    #[test]
+    fn align_items_uses_auto_container_min_height_as_the_line_cross_size() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;width:100px;min-height:50px;align-items:flex-end"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 40.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 30.0);
+        assert_eq!(container.boxes.content_box.size.height, 50.0);
+    }
+
+    #[test]
+    fn align_items_stretch_preserves_explicit_item_heights_in_this_slice() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;width:100px;height:60px;align-items:stretch"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box.origin.y, 0.0);
+        assert_eq!(item.boxes.border_box.size.height, 10.0);
     }
 
     #[test]
