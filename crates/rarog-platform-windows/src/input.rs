@@ -1,6 +1,7 @@
 use rarog_platform::{
-    KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey, PlatformInputError,
-    PlatformInputEvent, PlatformInputService, PlatformPoint, PlatformTextInputService,
+    InputLimits, KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey,
+    PlatformInputError, PlatformInputEvent, PlatformInputService, PlatformPoint,
+    PlatformTextInputService,
     PointerAction, PointerButton, PointerButtons, PointerInputEvent, PointerKind, TextInputEvent,
     TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
 };
@@ -71,19 +72,36 @@ pub struct WindowsInputService {
 }
 
 impl WindowsInputService {
-    pub fn try_new() -> Result<Self, crate::WindowsPlatformError> {
-        if cfg!(target_os = "windows") {
-            Ok(Self::new_unchecked())
-        } else {
-            Err(crate::WindowsPlatformError::UnsupportedTarget)
+    pub fn try_new() -> Result<Self, PlatformInputError> {
+        Self::try_with_limits(InputLimits::default())
+    }
+
+    pub fn try_with_limits(limits: InputLimits) -> Result<Self, PlatformInputError> {
+        if !limits.is_valid() {
+            return Err(PlatformInputError::InvalidLimits);
         }
+        if !cfg!(target_os = "windows") {
+            return Err(PlatformInputError::UnsupportedTarget);
+        }
+        Ok(Self::new_unchecked_with_limits(limits))
     }
 
     fn new_unchecked() -> Self {
+        Self::new_unchecked_with_limits(InputLimits::default())
+    }
+
+    fn new_unchecked_with_limits(limits: InputLimits) -> Self {
         Self {
-            state: Mutex::new(WindowsInputState::default()),
+            state: Mutex::new(WindowsInputState::new(limits)),
             text_input_state: Mutex::new(TextInputState::disabled()),
         }
+    }
+
+    pub fn limits(&self) -> Result<InputLimits, PlatformInputError> {
+        self.state
+            .lock()
+            .map(|state| state.limits)
+            .map_err(|_| PlatformInputError::BackendFailure)
     }
 
     pub fn push_window_message(
@@ -140,22 +158,30 @@ impl WindowsInputService {
         let selection = selection_utf16
             .map(|(start, end)| utf16_range_to_text_range(text, start, end))
             .transpose()?;
-        self.push_text_event(TextInputEvent::CompositionUpdate {
-            text: String::from_utf16_lossy(text),
-            selection,
-        })
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PlatformInputError::BackendFailure)?;
+        let text = decode_utf16_bounded(text, state.limits.max_text_bytes)?;
+        state.push_text_event(TextInputEvent::CompositionUpdate { text, selection })
     }
 
     pub fn push_ime_composition_end_utf16(&self, text: &[u16]) -> Result<(), PlatformInputError> {
-        self.push_text_event(TextInputEvent::CompositionEnd {
-            text: String::from_utf16_lossy(text),
-        })
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PlatformInputError::BackendFailure)?;
+        let text = decode_utf16_bounded(text, state.limits.max_text_bytes)?;
+        state.push_text_event(TextInputEvent::CompositionEnd { text })
     }
 
     pub fn push_ime_commit_utf16(&self, text: &[u16]) -> Result<(), PlatformInputError> {
-        self.push_text_event(TextInputEvent::Commit {
-            text: String::from_utf16_lossy(text),
-        })
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PlatformInputError::BackendFailure)?;
+        let text = decode_utf16_bounded(text, state.limits.max_text_bytes)?;
+        state.push_text_event(TextInputEvent::Commit { text })
     }
 
     fn push_text_event(&self, event: TextInputEvent) -> Result<(), PlatformInputError> {
@@ -163,12 +189,18 @@ impl WindowsInputService {
             .state
             .lock()
             .map_err(|_| PlatformInputError::BackendFailure)?;
-        state.queue.push_back(PlatformInputEvent::Text(event));
-        Ok(())
+        state.push_text_event(event)
     }
 }
 
 impl PlatformInputService for WindowsInputService {
+    fn limits(&self) -> InputLimits {
+        self.state
+            .lock()
+            .map(|state| state.limits)
+            .unwrap_or_default()
+    }
+
     fn poll_event(&self) -> Result<Option<PlatformInputEvent>, PlatformInputError> {
         let mut state = self
             .state
@@ -190,14 +222,59 @@ impl PlatformTextInputService for WindowsInputService {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct WindowsInputState {
+    limits: InputLimits,
     queue: VecDeque<PlatformInputEvent>,
     modifiers: ModifierState,
     pending_high_surrogate: Option<u16>,
 }
 
+impl Default for WindowsInputState {
+    fn default() -> Self {
+        Self::new(InputLimits::default())
+    }
+}
+
 impl WindowsInputState {
+    fn new(limits: InputLimits) -> Self {
+        Self {
+            limits,
+            queue: VecDeque::new(),
+            modifiers: ModifierState::default(),
+            pending_high_surrogate: None,
+        }
+    }
+
+    fn ensure_queue_capacity(&self, additional: usize) -> Result<(), PlatformInputError> {
+        let events = self.queue.len().saturating_add(additional);
+        if events > self.limits.max_queued_events {
+            return Err(PlatformInputError::QueueLimitExceeded {
+                events,
+                limit: self.limits.max_queued_events,
+            });
+        }
+        Ok(())
+    }
+
+    fn push_text_event(&mut self, event: TextInputEvent) -> Result<(), PlatformInputError> {
+        let bytes = match &event {
+            TextInputEvent::CompositionStart => 0,
+            TextInputEvent::CompositionUpdate { text, .. }
+            | TextInputEvent::CompositionEnd { text }
+            | TextInputEvent::Commit { text } => text.len(),
+        };
+        if bytes > self.limits.max_text_bytes {
+            return Err(PlatformInputError::TextLimitExceeded {
+                bytes,
+                limit: self.limits.max_text_bytes,
+            });
+        }
+        self.ensure_queue_capacity(1)?;
+        self.queue.push_back(PlatformInputEvent::Text(event));
+        Ok(())
+    }
+
     fn push_window_message(
         &mut self,
         message: u32,
@@ -206,11 +283,11 @@ impl WindowsInputState {
     ) -> Result<bool, PlatformInputError> {
         match message {
             WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
-                self.push_keyboard(message, wparam, lparam);
+                self.push_keyboard(message, wparam, lparam)?;
                 Ok(true)
             }
             WM_CHAR | WM_SYSCHAR => {
-                self.push_utf16_unit(wparam as u16);
+                self.push_utf16_unit(wparam as u16)?;
                 Ok(true)
             }
             WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP
@@ -222,7 +299,13 @@ impl WindowsInputState {
         }
     }
 
-    fn push_keyboard(&mut self, message: u32, virtual_key: usize, lparam: isize) {
+    fn push_keyboard(
+        &mut self,
+        message: u32,
+        virtual_key: usize,
+        lparam: isize,
+    ) -> Result<(), PlatformInputError> {
+        self.ensure_queue_capacity(1)?;
         let pressed = matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN);
         let repeat = pressed && ((lparam as usize >> 30) & 1) != 0;
         self.update_modifier(virtual_key, pressed, repeat);
@@ -240,6 +323,7 @@ impl WindowsInputState {
                 repeat,
                 modifiers: self.modifiers,
             }));
+        Ok(())
     }
 
     fn update_modifier(&mut self, virtual_key: usize, pressed: bool, repeat: bool) {
@@ -308,6 +392,7 @@ impl WindowsInputState {
             modifiers,
         };
         event.validate()?;
+        self.ensure_queue_capacity(1)?;
         self.queue.push_back(PlatformInputEvent::Pointer(event));
         Ok(())
     }
@@ -326,40 +411,71 @@ impl WindowsInputState {
             modifiers: self.modifiers,
         };
         event.validate()?;
+        self.ensure_queue_capacity(1)?;
         self.queue.push_back(PlatformInputEvent::Wheel(event));
         Ok(())
     }
 
-    fn push_utf16_unit(&mut self, unit: u16) {
-        if (0xd800..=0xdbff).contains(&unit) {
+    fn push_utf16_unit(&mut self, unit: u16) -> Result<(), PlatformInputError> {
+        let pending = self.pending_high_surrogate;
+        let additional = if is_high_surrogate(unit) {
+            usize::from(pending.is_some())
+        } else if is_low_surrogate(unit) || pending.is_none() {
+            1
+        } else {
+            2
+        };
+        self.ensure_queue_capacity(additional)?;
+
+        if is_high_surrogate(unit) {
             if self.pending_high_surrogate.replace(unit).is_some() {
-                self.push_character('\u{fffd}');
+                self.push_character_unchecked('\u{fffd}');
             }
-            return;
+            return Ok(());
         }
-        if (0xdc00..=0xdfff).contains(&unit) {
+        if is_low_surrogate(unit) {
             let Some(high) = self.pending_high_surrogate.take() else {
-                self.push_character('\u{fffd}');
-                return;
+                self.push_character_unchecked('\u{fffd}');
+                return Ok(());
             };
             let high = u32::from(high - 0xd800);
             let low = u32::from(unit - 0xdc00);
             let scalar = 0x10000 + ((high << 10) | low);
-            self.push_character(char::from_u32(scalar).unwrap_or('\u{fffd}'));
-            return;
+            self.push_character_unchecked(char::from_u32(scalar).unwrap_or('\u{fffd}'));
+            return Ok(());
         }
         if self.pending_high_surrogate.take().is_some() {
-            self.push_character('\u{fffd}');
+            self.push_character_unchecked('\u{fffd}');
         }
-        self.push_character(char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}'));
+        self.push_character_unchecked(char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}'));
+        Ok(())
     }
 
-    fn push_character(&mut self, character: char) {
+    fn push_character_unchecked(&mut self, character: char) {
         self.queue
             .push_back(PlatformInputEvent::Text(TextInputEvent::Commit {
                 text: character.to_string(),
             }));
     }
+}
+
+fn decode_utf16_bounded(text: &[u16], max_text_bytes: usize) -> Result<String, PlatformInputError> {
+    let bytes = char::decode_utf16(text.iter().copied()).fold(0usize, |total, character| {
+        total.saturating_add(character.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
+    });
+    if bytes > max_text_bytes {
+        return Err(PlatformInputError::TextLimitExceeded {
+            bytes,
+            limit: max_text_bytes,
+        });
+    }
+
+    let mut decoded = String::with_capacity(bytes);
+    decoded.extend(
+        char::decode_utf16(text.iter().copied())
+            .map(|character| character.unwrap_or(char::REPLACEMENT_CHARACTER)),
+    );
+    Ok(decoded)
 }
 
 fn utf16_range_to_text_range(
