@@ -126,14 +126,14 @@ impl StreamingInput {
         if self.closed {
             return Err(InputError::Closed);
         }
-        let bytes = self
-            .buffer
-            .len()
-            .checked_add(chunk.len())
-            .ok_or(InputError::LimitExceeded {
-                bytes: usize::MAX,
-                limit: self.max_bytes,
-            })?;
+        let bytes =
+            self.buffer
+                .len()
+                .checked_add(chunk.len())
+                .ok_or(InputError::LimitExceeded {
+                    bytes: usize::MAX,
+                    limit: self.max_bytes,
+                })?;
         if bytes > self.max_bytes {
             return Err(InputError::LimitExceeded {
                 bytes,
