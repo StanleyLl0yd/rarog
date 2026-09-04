@@ -136,12 +136,10 @@ mod tests {
                 .unwrap();
         let retained_fragments = session.layout().fragments.fragment_count();
         session.limits.max_fragments = retained_fragments;
+        let root = session.document().root();
         session
             .document_mut()
-            .append_new(
-                session.document().root(),
-                NodeKind::Element(ElementData::html("div")),
-            )
+            .append_new(root, NodeKind::Element(ElementData::html("div")))
             .unwrap();
 
         let mut event_loop =
