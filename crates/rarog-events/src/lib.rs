@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_LISTENER_SCOPE: AtomicU64 = AtomicU64::new(1);
 
+pub const DEFAULT_MAX_EVENT_LISTENER_REGISTRATIONS: usize = 65_536;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EventType(Arc<str>);
 
@@ -36,6 +38,8 @@ pub enum EventError {
     ListenerAllocatorIdentityExhausted,
     ListenerIdentityExhausted,
     RegistrationIdentityExhausted,
+    InvalidRegistrationLimit,
+    RegistrationLimitExceeded { registrations: usize, limit: usize },
 }
 
 impl fmt::Display for EventError {
@@ -48,6 +52,8 @@ impl fmt::Display for EventError {
             Self::RegistrationIdentityExhausted => {
                 "event listener registration identity space is exhausted"
             }
+            Self::InvalidRegistrationLimit => "event listener registration limit must be non-zero",
+            Self::RegistrationLimitExceeded { .. } => "event listener registration limit exceeded",
         })
     }
 }
@@ -173,6 +179,8 @@ struct Registration {
 pub struct EventTargetRegistry<T> {
     listeners: BTreeMap<T, Vec<Registration>>,
     next_registration: u64,
+    max_registrations: usize,
+    registration_count: usize,
 }
 
 impl<T> Default for EventTargetRegistry<T> {
@@ -180,11 +188,33 @@ impl<T> Default for EventTargetRegistry<T> {
         Self {
             listeners: BTreeMap::new(),
             next_registration: 1,
+            max_registrations: DEFAULT_MAX_EVENT_LISTENER_REGISTRATIONS,
+            registration_count: 0,
         }
     }
 }
 
 impl<T: Ord + Clone> EventTargetRegistry<T> {
+    pub fn try_with_max_registrations(max_registrations: usize) -> Result<Self, EventError> {
+        if max_registrations == 0 {
+            return Err(EventError::InvalidRegistrationLimit);
+        }
+        Ok(Self {
+            listeners: BTreeMap::new(),
+            next_registration: 1,
+            max_registrations,
+            registration_count: 0,
+        })
+    }
+
+    pub fn max_registrations(&self) -> usize {
+        self.max_registrations
+    }
+
+    pub fn registration_count(&self) -> usize {
+        self.registration_count
+    }
+
     pub fn add_listener(
         &mut self,
         target: T,
@@ -202,6 +232,12 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
         }) {
             return Ok(false);
         }
+        if self.registration_count >= self.max_registrations {
+            return Err(EventError::RegistrationLimitExceeded {
+                registrations: self.registration_count.saturating_add(1),
+                limit: self.max_registrations,
+            });
+        }
 
         let id = NonZeroU64::new(self.next_registration)
             .map(RegistrationId)
@@ -216,6 +252,7 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
                 listener,
                 options,
             });
+        self.registration_count += 1;
         Ok(true)
     }
 
@@ -237,6 +274,7 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
             return false;
         };
         listeners.remove(position);
+        self.registration_count -= 1;
         let remove_target = listeners.is_empty();
         if remove_target {
             self.listeners.remove(target);
@@ -335,6 +373,7 @@ impl<T: Ord + Clone> EventTargetRegistry<T> {
             let options = listeners[position].options;
             if options.once {
                 listeners.remove(position);
+                self.registration_count -= 1;
             }
             (listener, options, listeners.is_empty())
         };
@@ -476,6 +515,70 @@ mod tests {
             allocator.allocate().unwrap_err(),
             EventError::ListenerIdentityExhausted
         );
+    }
+
+    #[test]
+    fn registration_limits_are_global_and_removal_releases_capacity() {
+        let ids = listener_ids(3);
+        let mut registry = EventTargetRegistry::try_with_max_registrations(2).unwrap();
+        assert_eq!(registry.max_registrations(), 2);
+
+        assert!(
+            registry
+                .add_listener(1_u8, "click", ids[0], EventListenerOptions::default())
+                .unwrap()
+        );
+        assert!(
+            registry
+                .add_listener(2_u8, "click", ids[1], EventListenerOptions::default())
+                .unwrap()
+        );
+        assert_eq!(registry.registration_count(), 2);
+
+        assert_eq!(
+            registry
+                .add_listener(3_u8, "click", ids[2], EventListenerOptions::default())
+                .unwrap_err(),
+            EventError::RegistrationLimitExceeded {
+                registrations: 3,
+                limit: 2,
+            }
+        );
+
+        let event_type = EventType::from("click");
+        assert!(registry.remove_listener(&1, &event_type, ids[0], false));
+        assert_eq!(registry.registration_count(), 1);
+        assert!(
+            registry
+                .add_listener(3_u8, "click", ids[2], EventListenerOptions::default())
+                .unwrap()
+        );
+        assert_eq!(registry.registration_count(), 2);
+    }
+
+    #[test]
+    fn duplicate_registration_does_not_consume_listener_budget() {
+        let listener = listener_ids(1)[0];
+        let mut registry = EventTargetRegistry::try_with_max_registrations(1).unwrap();
+        assert!(
+            registry
+                .add_listener(1_u8, "click", listener, EventListenerOptions::default())
+                .unwrap()
+        );
+        assert!(
+            !registry
+                .add_listener(1_u8, "click", listener, EventListenerOptions::default())
+                .unwrap()
+        );
+        assert_eq!(registry.registration_count(), 1);
+    }
+
+    #[test]
+    fn zero_registration_limit_is_rejected() {
+        assert!(matches!(
+            EventTargetRegistry::<u8>::try_with_max_registrations(0),
+            Err(EventError::InvalidRegistrationLimit)
+        ));
     }
 
     #[test]
@@ -700,6 +803,7 @@ mod tests {
             listener
         );
         assert_eq!(registry.listener_count(&1), 0);
+        assert_eq!(registry.registration_count(), 0);
         assert!(registry.next_listener(&mut dispatch).is_none());
     }
 
