@@ -135,6 +135,33 @@ impl DisplayCommand {
             | Self::PopOpacity => None,
         }
     }
+
+    fn has_finite_geometry(self) -> bool {
+        match self {
+            Self::FillRect { rect, .. }
+            | Self::TextPlaceholder { rect, .. }
+            | Self::DrawImage { rect, .. }
+            | Self::PushClip { rect } => rect_is_finite(rect),
+            Self::PushTransform { transform } => transform.is_finite(),
+            Self::PopClip
+            | Self::PushStackingContext { .. }
+            | Self::PopStackingContext
+            | Self::PopTransform
+            | Self::PushOpacity { .. }
+            | Self::PopOpacity => true,
+        }
+    }
+}
+
+fn rect_is_finite(rect: Rect) -> bool {
+    [
+        rect.origin.x,
+        rect.origin.y,
+        rect.size.width,
+        rect.size.height,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -147,6 +174,7 @@ pub struct DisplayList {
 pub enum DisplayListError {
     LengthMismatch { ids: usize, commands: usize },
     DuplicateIds,
+    NonFiniteGeometry,
     UnbalancedStructure,
 }
 
@@ -160,6 +188,9 @@ impl fmt::Display for DisplayListError {
                 )
             }
             Self::DuplicateIds => formatter.write_str("display list contains duplicate item IDs"),
+            Self::NonFiniteGeometry => {
+                formatter.write_str("display list contains non-finite geometry")
+            }
             Self::UnbalancedStructure => {
                 formatter.write_str("display list structural scopes are invalid")
             }
@@ -207,6 +238,14 @@ impl DisplayList {
         }
         if !self.has_unique_ids() {
             return Err(DisplayListError::DuplicateIds);
+        }
+        if self
+            .commands
+            .iter()
+            .copied()
+            .any(|command| !command.has_finite_geometry())
+        {
+            return Err(DisplayListError::NonFiniteGeometry);
         }
         if !self.has_balanced_structure() {
             return Err(DisplayListError::UnbalancedStructure);
@@ -1909,6 +1948,29 @@ mod display_identity_hardening_tests {
         assert_eq!(
             DisplayList::try_from_parts(vec![id], vec![DisplayCommand::PopClip],),
             Err(DisplayListError::UnbalancedStructure)
+        );
+
+        assert_eq!(
+            DisplayList::try_from_parts(
+                vec![id],
+                vec![DisplayCommand::FillRect {
+                    rect: Rect::new(f32::NAN, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                }],
+            ),
+            Err(DisplayListError::NonFiniteGeometry)
+        );
+        assert_eq!(
+            DisplayList::try_from_parts(
+                vec![id, DisplayItemId::test(2)],
+                vec![
+                    DisplayCommand::PushTransform {
+                        transform: Transform2D::translation(f32::INFINITY, 0.0),
+                    },
+                    DisplayCommand::PopTransform,
+                ],
+            ),
+            Err(DisplayListError::NonFiniteGeometry)
         );
     }
 
