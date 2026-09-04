@@ -63,6 +63,16 @@ pub enum VerticalAlign {
     Bottom,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JustifyContent {
+    FlexStart,
+    FlexEnd,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedStyle {
     pub width: Option<f32>,
@@ -82,6 +92,7 @@ pub struct ComputedStyle {
     pub display_flex: bool,
     pub flex_grow: f32,
     pub flex_shrink: f32,
+    pub justify_content: JustifyContent,
     pub establishes_bfc: bool,
     pub vertical_align: VerticalAlign,
 }
@@ -106,6 +117,7 @@ impl Default for ComputedStyle {
             display_flex: false,
             flex_grow: 0.0,
             flex_shrink: 1.0,
+            justify_content: JustifyContent::FlexStart,
             establishes_bfc: false,
             vertical_align: VerticalAlign::Baseline,
         }
@@ -285,6 +297,7 @@ pub enum PropertyId {
     Display,
     FlexGrow,
     FlexShrink,
+    JustifyContent,
     VerticalAlign,
 }
 
@@ -314,6 +327,7 @@ pub enum PropertyValue {
     Color(Color),
     Display(DisplayValue),
     Number(f32),
+    JustifyContent(JustifyContent),
     VerticalAlign(VerticalAlign),
     CssWide(CssWideKeyword),
 }
@@ -725,6 +739,7 @@ fn copy_property_from_style(
         }
         PropertyId::FlexGrow => style.flex_grow = source.flex_grow,
         PropertyId::FlexShrink => style.flex_shrink = source.flex_shrink,
+        PropertyId::JustifyContent => style.justify_content = source.justify_content,
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
     }
 }
@@ -790,6 +805,9 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         }
         (PropertyId::FlexGrow, PropertyValue::Number(value)) => style.flex_grow = value,
         (PropertyId::FlexShrink, PropertyValue::Number(value)) => style.flex_shrink = value,
+        (PropertyId::JustifyContent, PropertyValue::JustifyContent(value)) => {
+            style.justify_content = value
+        }
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
             style.vertical_align = value
         }
@@ -974,6 +992,33 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         }
         "flex-grow" => push_non_negative_number(output, PropertyId::FlexGrow, value, important),
         "flex-shrink" => push_non_negative_number(output, PropertyId::FlexShrink, value, important),
+        "justify-content" => {
+            let value = value.trim();
+            let value = if value.eq_ignore_ascii_case("flex-start")
+                || value.eq_ignore_ascii_case("normal")
+            {
+                Some(JustifyContent::FlexStart)
+            } else if value.eq_ignore_ascii_case("flex-end") {
+                Some(JustifyContent::FlexEnd)
+            } else if value.eq_ignore_ascii_case("center") {
+                Some(JustifyContent::Center)
+            } else if value.eq_ignore_ascii_case("space-between") {
+                Some(JustifyContent::SpaceBetween)
+            } else if value.eq_ignore_ascii_case("space-around") {
+                Some(JustifyContent::SpaceAround)
+            } else if value.eq_ignore_ascii_case("space-evenly") {
+                Some(JustifyContent::SpaceEvenly)
+            } else {
+                None
+            };
+            if let Some(value) = value {
+                output.push(Declaration {
+                    property: PropertyId::JustifyContent,
+                    value: PropertyValue::JustifyContent(value),
+                    important,
+                });
+            }
+        }
         "display" => {
             let display = if value.eq_ignore_ascii_case("none") {
                 Some(DisplayValue::None)
@@ -1085,6 +1130,7 @@ fn push_css_wide(
         "display" => &[PropertyId::Display],
         "flex-grow" => &[PropertyId::FlexGrow],
         "flex-shrink" => &[PropertyId::FlexShrink],
+        "justify-content" => &[PropertyId::JustifyContent],
         "vertical-align" => &[PropertyId::VerticalAlign],
         _ => return,
     };
@@ -1870,6 +1916,46 @@ mod finite_geometry_tests {
             value: PropertyValue::CssWide(CssWideKeyword::Initial),
             important: false,
         }));
+    }
+
+    #[test]
+    fn justify_content_parses_supported_main_axis_values() {
+        let declarations = parse_declarations(
+            "justify-content:flex-end;justify-content:center;justify-content:space-between;justify-content:space-around;justify-content:space-evenly",
+        );
+        for value in [
+            JustifyContent::FlexEnd,
+            JustifyContent::Center,
+            JustifyContent::SpaceBetween,
+            JustifyContent::SpaceAround,
+            JustifyContent::SpaceEvenly,
+        ] {
+            assert!(declarations.contains(&Declaration {
+                property: PropertyId::JustifyContent,
+                value: PropertyValue::JustifyContent(value),
+                important: false,
+            }));
+        }
+
+        let normal = parse_declarations("justify-content:NoRmAl");
+        assert_eq!(
+            normal,
+            vec![Declaration {
+                property: PropertyId::JustifyContent,
+                value: PropertyValue::JustifyContent(JustifyContent::FlexStart),
+                important: false,
+            }]
+        );
+        assert!(parse_declarations("justify-content:stretch").is_empty());
+
+        let mut style = ComputedStyle::default();
+        assert_eq!(style.justify_content, JustifyContent::FlexStart);
+        apply_property_value(
+            &mut style,
+            PropertyId::JustifyContent,
+            PropertyValue::JustifyContent(JustifyContent::SpaceAround),
+        );
+        assert_eq!(style.justify_content, JustifyContent::SpaceAround);
     }
 
     #[test]

@@ -51,6 +51,17 @@ impl FlexibleFlexRowItem {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FlexMainAlignment {
+    #[default]
+    Start,
+    End,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlexRowPlacement {
     pub node: LayoutNodeId,
@@ -130,6 +141,20 @@ pub fn layout_flexible_single_line_flex_row(
     available_size: Size,
     items: &[FlexibleFlexRowItem],
 ) -> Result<FlexRowLayout, FlexLayoutError> {
+    layout_flexible_single_line_flex_row_with_alignment(
+        origin,
+        available_size,
+        items,
+        FlexMainAlignment::Start,
+    )
+}
+
+pub fn layout_flexible_single_line_flex_row_with_alignment(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexibleFlexRowItem],
+    alignment: FlexMainAlignment,
+) -> Result<FlexRowLayout, FlexLayoutError> {
     validate_origin(origin)?;
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
 
@@ -201,13 +226,27 @@ pub fn layout_flexible_single_line_flex_row(
         }
     }
 
-    layout_single_line_flex_row(origin, available_size, &resolved)
+    layout_single_line_flex_row_with_alignment(origin, available_size, &resolved, alignment)
 }
 
 pub fn layout_single_line_flex_row(
     origin: Point,
     available_size: Size,
     items: &[FlexRowItem],
+) -> Result<FlexRowLayout, FlexLayoutError> {
+    layout_single_line_flex_row_with_alignment(
+        origin,
+        available_size,
+        items,
+        FlexMainAlignment::Start,
+    )
+}
+
+pub fn layout_single_line_flex_row_with_alignment(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexRowItem],
+    alignment: FlexMainAlignment,
 ) -> Result<FlexRowLayout, FlexLayoutError> {
     validate_origin(origin)?;
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
@@ -245,7 +284,7 @@ pub fn layout_single_line_flex_row(
         return Err(FlexLayoutError::GeometryOverflow);
     }
     let used_main_size = used_main_size.max(0.0);
-    Ok(FlexRowLayout {
+    let mut layout = FlexRowLayout {
         items: placements,
         content_size: Size {
             width: used_main_size,
@@ -253,7 +292,59 @@ pub fn layout_single_line_flex_row(
         },
         overflows_main_axis: used_main_size > available_size.width,
         overflows_cross_axis: max_cross_size > available_size.height,
-    })
+    };
+    apply_main_alignment(&mut layout, available_size.width, alignment)?;
+    Ok(layout)
+}
+
+fn apply_main_alignment(
+    layout: &mut FlexRowLayout,
+    available_width: f32,
+    alignment: FlexMainAlignment,
+) -> Result<(), FlexLayoutError> {
+    let remaining = available_width - layout.content_size.width;
+    if !remaining.is_finite() {
+        return Err(FlexLayoutError::GeometryOverflow);
+    }
+
+    let count = layout.items.len();
+    let (leading, gap) = if remaining >= 0.0 {
+        match alignment {
+            FlexMainAlignment::Start => (0.0, 0.0),
+            FlexMainAlignment::End => (remaining, 0.0),
+            FlexMainAlignment::Center => (remaining / 2.0, 0.0),
+            FlexMainAlignment::SpaceBetween if count > 1 => (0.0, remaining / (count - 1) as f32),
+            FlexMainAlignment::SpaceBetween => (0.0, 0.0),
+            FlexMainAlignment::SpaceAround if count > 0 => {
+                let gap = remaining / count as f32;
+                (gap / 2.0, gap)
+            }
+            FlexMainAlignment::SpaceAround => (0.0, 0.0),
+            FlexMainAlignment::SpaceEvenly if count > 0 => {
+                let gap = remaining / (count + 1) as f32;
+                (gap, gap)
+            }
+            FlexMainAlignment::SpaceEvenly => (0.0, 0.0),
+        }
+    } else {
+        match alignment {
+            FlexMainAlignment::End => (remaining, 0.0),
+            FlexMainAlignment::Center => (remaining / 2.0, 0.0),
+            FlexMainAlignment::Start
+            | FlexMainAlignment::SpaceBetween
+            | FlexMainAlignment::SpaceAround
+            | FlexMainAlignment::SpaceEvenly => (0.0, 0.0),
+        }
+    };
+
+    let mut accumulated_gap = leading;
+    for (index, placement) in layout.items.iter_mut().enumerate() {
+        placement.border_box.origin.x = finite_add(placement.border_box.origin.x, accumulated_gap)?;
+        if index + 1 < count {
+            accumulated_gap = finite_add(accumulated_gap, gap)?;
+        }
+    }
+    Ok(())
 }
 
 fn finite_mul(left: f32, right: f32) -> Result<f32, FlexLayoutError> {
@@ -427,6 +518,125 @@ mod tests {
         assert_eq!(layout.items[1].border_box.size.width, 25.0);
         assert!(layout.overflows_main_axis);
         assert!(layout.overflows_cross_axis);
+    }
+
+    #[test]
+    fn main_axis_alignment_positions_remaining_free_space() {
+        let items = [item(1, 20.0, 10.0), item(2, 20.0, 10.0)];
+        let available = Size {
+            width: 100.0,
+            height: 20.0,
+        };
+
+        let end = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::End,
+        )
+        .unwrap();
+        assert_eq!(end.items[0].border_box.origin.x, 60.0);
+        assert_eq!(end.items[1].border_box.origin.x, 80.0);
+
+        let center = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::Center,
+        )
+        .unwrap();
+        assert_eq!(center.items[0].border_box.origin.x, 30.0);
+        assert_eq!(center.items[1].border_box.origin.x, 50.0);
+
+        let between = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::SpaceBetween,
+        )
+        .unwrap();
+        assert_eq!(between.items[0].border_box.origin.x, 0.0);
+        assert_eq!(between.items[1].border_box.origin.x, 80.0);
+
+        let around = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::SpaceAround,
+        )
+        .unwrap();
+        assert_eq!(around.items[0].border_box.origin.x, 15.0);
+        assert_eq!(around.items[1].border_box.origin.x, 65.0);
+
+        let evenly = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::SpaceEvenly,
+        )
+        .unwrap();
+        assert_eq!(evenly.items[0].border_box.origin.x, 20.0);
+        assert_eq!(evenly.items[1].border_box.origin.x, 60.0);
+    }
+
+    #[test]
+    fn distributed_alignment_uses_residual_space_after_partial_grow() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 0.25, 1.0),
+            FlexibleFlexRowItem::new(item(2, 20.0, 10.0), 0.25, 1.0),
+        ];
+        let layout = layout_flexible_single_line_flex_row_with_alignment(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+            FlexMainAlignment::SpaceBetween,
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 35.0);
+        assert_eq!(layout.items[1].border_box.size.width, 35.0);
+        assert_eq!(layout.items[0].border_box.origin.x, 0.0);
+        assert_eq!(layout.items[1].border_box.origin.x, 65.0);
+        assert_eq!(layout.content_size.width, 70.0);
+    }
+
+    #[test]
+    fn overflow_alignment_keeps_distributed_values_safe_at_start() {
+        let items = [item(1, 40.0, 10.0), item(2, 40.0, 10.0)];
+        let available = Size {
+            width: 60.0,
+            height: 20.0,
+        };
+
+        let between = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::SpaceBetween,
+        )
+        .unwrap();
+        assert_eq!(between.items[0].border_box.origin.x, 0.0);
+
+        let end = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::End,
+        )
+        .unwrap();
+        assert_eq!(end.items[0].border_box.origin.x, -20.0);
+
+        let center = layout_single_line_flex_row_with_alignment(
+            Point::default(),
+            available,
+            &items,
+            FlexMainAlignment::Center,
+        )
+        .unwrap();
+        assert_eq!(center.items[0].border_box.origin.x, -10.0);
     }
 
     #[test]
