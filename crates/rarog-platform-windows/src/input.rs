@@ -1,9 +1,8 @@
 use rarog_platform::{
     InputLimits, KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey,
     PlatformInputError, PlatformInputEvent, PlatformInputService, PlatformPoint,
-    PlatformTextInputService,
-    PointerAction, PointerButton, PointerButtons, PointerInputEvent, PointerKind, TextInputEvent,
-    TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
+    PlatformTextInputService, PointerAction, PointerButton, PointerButtons, PointerInputEvent,
+    PointerKind, TextInputEvent, TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
