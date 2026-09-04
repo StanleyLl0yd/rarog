@@ -1886,17 +1886,12 @@ mod finite_geometry_tests {
             important: false,
         }));
 
-        let rejected = parse_declarations(
-            "flex-grow:-1;flex-shrink:NaN;flex-grow:1px;flex-shrink:inf",
-        );
+        let rejected =
+            parse_declarations("flex-grow:-1;flex-shrink:NaN;flex-grow:1px;flex-shrink:inf");
         assert!(rejected.is_empty());
 
         let mut style = ComputedStyle::default();
-        apply_property_value(
-            &mut style,
-            PropertyId::FlexGrow,
-            PropertyValue::Number(2.5),
-        );
+        apply_property_value(&mut style, PropertyId::FlexGrow, PropertyValue::Number(2.5));
         apply_property_value(
             &mut style,
             PropertyId::FlexShrink,
