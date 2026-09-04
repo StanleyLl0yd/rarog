@@ -1608,11 +1608,7 @@ mod tests {
 
         session
             .document_mut()
-            .set_attribute(
-                first,
-                "style",
-                "width:40px;height:10px;background:#112233",
-            )
+            .set_attribute(first, "style", "width:40px;height:10px;background:#112233")
             .unwrap();
         let report = session.update().expect("flex row update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
