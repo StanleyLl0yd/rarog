@@ -80,6 +80,8 @@ pub struct ComputedStyle {
     pub display_none: bool,
     pub display_inline: bool,
     pub display_flex: bool,
+    pub flex_grow: f32,
+    pub flex_shrink: f32,
     pub establishes_bfc: bool,
     pub vertical_align: VerticalAlign,
 }
@@ -102,6 +104,8 @@ impl Default for ComputedStyle {
             display_none: false,
             display_inline: false,
             display_flex: false,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
             establishes_bfc: false,
             vertical_align: VerticalAlign::Baseline,
         }
@@ -279,6 +283,8 @@ pub enum PropertyId {
     BackgroundColor,
     BorderColor,
     Display,
+    FlexGrow,
+    FlexShrink,
     VerticalAlign,
 }
 
@@ -307,6 +313,7 @@ pub enum PropertyValue {
     NoneKeyword,
     Color(Color),
     Display(DisplayValue),
+    Number(f32),
     VerticalAlign(VerticalAlign),
     CssWide(CssWideKeyword),
 }
@@ -716,6 +723,8 @@ fn copy_property_from_style(
             style.display_flex = source.display_flex;
             style.establishes_bfc = source.establishes_bfc;
         }
+        PropertyId::FlexGrow => style.flex_grow = source.flex_grow,
+        PropertyId::FlexShrink => style.flex_shrink = source.flex_shrink,
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
     }
 }
@@ -779,6 +788,8 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
             style.display_flex = display == DisplayValue::Flex;
             style.establishes_bfc = display == DisplayValue::FlowRoot;
         }
+        (PropertyId::FlexGrow, PropertyValue::Number(value)) => style.flex_grow = value,
+        (PropertyId::FlexShrink, PropertyValue::Number(value)) => style.flex_shrink = value,
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
             style.vertical_align = value
         }
@@ -961,6 +972,8 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 });
             }
         }
+        "flex-grow" => push_non_negative_number(output, PropertyId::FlexGrow, value, important),
+        "flex-shrink" => push_non_negative_number(output, PropertyId::FlexShrink, value, important),
         "display" => {
             let display = if value.eq_ignore_ascii_case("none") {
                 Some(DisplayValue::None)
@@ -1070,6 +1083,8 @@ fn push_css_wide(
         "background" | "background-color" => &[PropertyId::BackgroundColor],
         "border-color" => &[PropertyId::BorderColor],
         "display" => &[PropertyId::Display],
+        "flex-grow" => &[PropertyId::FlexGrow],
+        "flex-shrink" => &[PropertyId::FlexShrink],
         "vertical-align" => &[PropertyId::VerticalAlign],
         _ => return,
     };
@@ -1127,6 +1142,25 @@ fn push_length(
             important,
         });
     }
+}
+
+fn push_non_negative_number(
+    output: &mut Vec<Declaration>,
+    property: PropertyId,
+    value: &str,
+    important: bool,
+) {
+    let Ok(value) = value.trim().parse::<f32>() else {
+        return;
+    };
+    if !value.is_finite() || value < 0.0 {
+        return;
+    }
+    output.push(Declaration {
+        property,
+        value: PropertyValue::Number(value),
+        important,
+    });
 }
 
 fn push_edges(
@@ -1836,6 +1870,35 @@ mod finite_geometry_tests {
             value: PropertyValue::CssWide(CssWideKeyword::Initial),
             important: false,
         }));
+    }
+
+    #[test]
+    fn flex_factors_parse_as_finite_non_negative_numbers() {
+        let declarations = parse_declarations("flex-grow:2.5;flex-shrink:0");
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::FlexGrow,
+            value: PropertyValue::Number(2.5),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::FlexShrink,
+            value: PropertyValue::Number(0.0),
+            important: false,
+        }));
+
+        let rejected =
+            parse_declarations("flex-grow:-1;flex-shrink:NaN;flex-grow:1px;flex-shrink:inf");
+        assert!(rejected.is_empty());
+
+        let mut style = ComputedStyle::default();
+        apply_property_value(&mut style, PropertyId::FlexGrow, PropertyValue::Number(2.5));
+        apply_property_value(
+            &mut style,
+            PropertyId::FlexShrink,
+            PropertyValue::Number(0.25),
+        );
+        assert_eq!(style.flex_grow, 2.5);
+        assert_eq!(style.flex_shrink, 0.25);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 mod flex;
 
 pub use flex::{
-    FlexLayoutError, FlexRowItem, FlexRowLayout, FlexRowPlacement, layout_single_line_flex_row,
+    FlexLayoutError, FlexRowItem, FlexRowLayout, FlexRowPlacement, FlexibleFlexRowItem,
+    layout_flexible_single_line_flex_row, layout_single_line_flex_row,
 };
 
 use rarog_css::{ComputedStyle, StyleSet, VerticalAlign, computed_style_with_parent};
@@ -2810,6 +2811,16 @@ impl FragmentBuilder {
         containing_block: ContainingBlock,
         cursor_y: &mut f32,
     ) -> Fragment {
+        self.layout_flex_box_with_content_width(node, containing_block, cursor_y, None)
+    }
+
+    fn layout_flex_box_with_content_width(
+        &mut self,
+        node: &LayoutNode,
+        containing_block: ContainingBlock,
+        cursor_y: &mut f32,
+        content_width_override: Option<f32>,
+    ) -> Fragment {
         let style = node.style;
         let x = containing_block.origin.x;
         let available_width = containing_block.available.width;
@@ -2817,13 +2828,15 @@ impl FragmentBuilder {
             + style.border_width.horizontal()
             + style.padding.horizontal();
 
-        let content_width = clamp_used_dimension(
-            style
-                .width
-                .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0)),
-            style.min_width,
-            style.max_width,
-        );
+        let content_width = content_width_override.unwrap_or_else(|| {
+            clamp_used_dimension(
+                style
+                    .width
+                    .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0)),
+                style.min_width,
+                style.max_width,
+            )
+        });
 
         let border_x = x + style.margin.left;
         let border_y = *cursor_y;
@@ -2848,7 +2861,7 @@ impl FragmentBuilder {
             },
         };
         let (children, natural_content_height) =
-            self.layout_fixed_flex_children(node, child_containing_block);
+            self.layout_flex_children(node, child_containing_block);
         let content_height = clamp_used_dimension(
             style.height.unwrap_or(natural_content_height),
             style.min_height,
@@ -2896,7 +2909,7 @@ impl FragmentBuilder {
         }
     }
 
-    fn layout_fixed_flex_children(
+    fn layout_flex_children(
         &mut self,
         container: &LayoutNode,
         containing_block: ContainingBlock,
@@ -2916,18 +2929,32 @@ impl FragmentBuilder {
                         clamp_used_dimension(width, style.min_width, style.max_width);
                     let content_height =
                         clamp_used_dimension(height, style.min_height, style.max_height);
-                    items.push(FlexRowItem::new(
-                        child.id,
-                        Size {
-                            width: content_width
-                                + style.padding.horizontal()
-                                + style.border_width.horizontal(),
-                            height: content_height
-                                + style.padding.vertical()
-                                + style.border_width.vertical(),
-                        },
-                        style.margin,
-                    ));
+                    let horizontal_noncontent =
+                        style.padding.horizontal() + style.border_width.horizontal();
+                    let effective_min_width = style.min_width.unwrap_or(0.0);
+                    let effective_max_width = style
+                        .max_width
+                        .map(|maximum| maximum.max(effective_min_width));
+                    items.push(
+                        FlexibleFlexRowItem::new(
+                            FlexRowItem::new(
+                                child.id,
+                                Size {
+                                    width: content_width + horizontal_noncontent,
+                                    height: content_height
+                                        + style.padding.vertical()
+                                        + style.border_width.vertical(),
+                                },
+                                style.margin,
+                            ),
+                            style.flex_grow,
+                            style.flex_shrink,
+                        )
+                        .with_main_size_limits(
+                            effective_min_width + horizontal_noncontent,
+                            effective_max_width.map(|maximum| maximum + horizontal_noncontent),
+                        ),
+                    );
                     nodes.push(child);
                 }
                 LayoutNodeKind::Text(_) | LayoutNodeKind::Root => {
@@ -2936,7 +2963,7 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(row) = layout_single_line_flex_row(
+        let Ok(row) = layout_flexible_single_line_flex_row(
             containing_block.origin,
             containing_block.available,
             &items,
@@ -2956,11 +2983,25 @@ impl FragmentBuilder {
                     height: containing_block.available.height,
                 },
             };
+            let flex_content_width = (placement.border_box.size.width
+                - child.style.padding.horizontal()
+                - child.style.border_width.horizontal())
+            .max(0.0);
             let mut child_y = placement.border_box.origin.y;
             let fragment = if child.style.display_flex {
-                self.layout_flex_box(child, child_containing_block, &mut child_y)
+                self.layout_flex_box_with_content_width(
+                    child,
+                    child_containing_block,
+                    &mut child_y,
+                    Some(flex_content_width),
+                )
             } else {
-                self.layout_box(child, child_containing_block, &mut child_y)
+                self.layout_box_with_content_width(
+                    child,
+                    child_containing_block,
+                    &mut child_y,
+                    Some(flex_content_width),
+                )
             };
             fragments.push(fragment);
         }
@@ -2974,6 +3015,16 @@ impl FragmentBuilder {
         containing_block: ContainingBlock,
         cursor_y: &mut f32,
     ) -> Fragment {
+        self.layout_box_with_content_width(node, containing_block, cursor_y, None)
+    }
+
+    fn layout_box_with_content_width(
+        &mut self,
+        node: &LayoutNode,
+        containing_block: ContainingBlock,
+        cursor_y: &mut f32,
+        content_width_override: Option<f32>,
+    ) -> Fragment {
         let style = node.style;
         let x = containing_block.origin.x;
         let available_width = containing_block.available.width;
@@ -2981,13 +3032,15 @@ impl FragmentBuilder {
             + style.border_width.horizontal()
             + style.padding.horizontal();
 
-        let content_width = clamp_used_dimension(
-            style
-                .width
-                .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0)),
-            style.min_width,
-            style.max_width,
-        );
+        let content_width = content_width_override.unwrap_or_else(|| {
+            clamp_used_dimension(
+                style
+                    .width
+                    .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0)),
+                style.min_width,
+                style.max_width,
+            )
+        });
 
         let border_x = x + style.margin.left;
         let border_y = *cursor_y;
@@ -3390,6 +3443,113 @@ mod tests {
             Rect::new(20.0, 0.0, 30.0, 15.0)
         );
         assert_eq!(container.boxes.content_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn flex_grow_and_shrink_change_used_item_widths() {
+        let mut grow_doc = Document::new();
+        let grow_container = grow_doc
+            .append_new(
+                grow_doc.root(),
+                element("div", Some("display:flex;width:100px")),
+            )
+            .unwrap();
+        grow_doc
+            .append_new(
+                grow_container,
+                element(
+                    "div",
+                    Some("width:20px;height:10px;flex-grow:1;flex-shrink:1"),
+                ),
+            )
+            .unwrap();
+        grow_doc
+            .append_new(
+                grow_container,
+                element(
+                    "div",
+                    Some("width:20px;height:10px;flex-grow:3;flex-shrink:1"),
+                ),
+            )
+            .unwrap();
+
+        let grow = layout_document(
+            &grow_doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grow_container = &grow.fragments.root.children[0];
+        assert_eq!(grow_container.children[0].boxes.border_box.size.width, 35.0);
+        assert_eq!(grow_container.children[1].boxes.border_box.size.width, 65.0);
+        assert_eq!(grow_container.children[1].boxes.border_box.origin.x, 35.0);
+
+        let mut shrink_doc = Document::new();
+        let shrink_container = shrink_doc
+            .append_new(
+                shrink_doc.root(),
+                element("div", Some("display:flex;width:45px")),
+            )
+            .unwrap();
+        shrink_doc
+            .append_new(
+                shrink_container,
+                element("div", Some("width:40px;height:10px;flex-shrink:1")),
+            )
+            .unwrap();
+        shrink_doc
+            .append_new(
+                shrink_container,
+                element("div", Some("width:20px;height:10px;flex-shrink:1")),
+            )
+            .unwrap();
+
+        let shrink = layout_document(
+            &shrink_doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let shrink_container = &shrink.fragments.root.children[0];
+        assert_eq!(
+            shrink_container.children[0].boxes.border_box.size.width,
+            30.0
+        );
+        assert_eq!(
+            shrink_container.children[1].boxes.border_box.size.width,
+            15.0
+        );
+        assert_eq!(shrink_container.children[1].boxes.border_box.origin.x, 30.0);
+    }
+
+    #[test]
+    fn flex_sizing_fails_closed_when_post_flex_limits_need_redistribution() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(doc.root(), element("div", Some("display:flex;width:100px")))
+            .unwrap();
+        doc.append_new(
+            container,
+            element(
+                "div",
+                Some("width:20px;max-width:30px;height:10px;flex-grow:1"),
+            ),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert!(container.children.is_empty());
+        assert_eq!(container.boxes.content_box.size.height, 0.0);
     }
 
     #[test]

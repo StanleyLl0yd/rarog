@@ -21,6 +21,37 @@ impl FlexRowItem {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlexibleFlexRowItem {
+    pub item: FlexRowItem,
+    pub grow: f32,
+    pub shrink: f32,
+    pub min_main_size: f32,
+    pub max_main_size: Option<f32>,
+}
+
+impl FlexibleFlexRowItem {
+    pub const fn new(item: FlexRowItem, grow: f32, shrink: f32) -> Self {
+        Self {
+            item,
+            grow,
+            shrink,
+            min_main_size: 0.0,
+            max_main_size: None,
+        }
+    }
+
+    pub const fn with_main_size_limits(
+        mut self,
+        min_main_size: f32,
+        max_main_size: Option<f32>,
+    ) -> Self {
+        self.min_main_size = min_main_size;
+        self.max_main_size = max_main_size;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlexRowPlacement {
     pub node: LayoutNodeId,
     pub border_box: Rect,
@@ -41,6 +72,10 @@ pub enum FlexLayoutError {
     InvalidItemSize { node: LayoutNodeId },
     InvalidMargin { node: LayoutNodeId },
     NegativeMarginUnsupported { node: LayoutNodeId },
+    InvalidFlexFactor { node: LayoutNodeId },
+    InvalidFlexMainSizeLimit { node: LayoutNodeId },
+    FlexMainSizeLimitRequiresRedistribution { node: LayoutNodeId },
+    ShrinkWouldProduceNegativeSize { node: LayoutNodeId },
     GeometryOverflow,
 }
 
@@ -61,6 +96,26 @@ impl fmt::Display for FlexLayoutError {
                 formatter,
                 "flex item {node:?} uses a negative margin outside the first row slice"
             ),
+            Self::InvalidFlexFactor { node } => {
+                write!(
+                    formatter,
+                    "flex item {node:?} has an invalid grow or shrink factor"
+                )
+            }
+            Self::InvalidFlexMainSizeLimit { node } => {
+                write!(
+                    formatter,
+                    "flex item {node:?} has an invalid main-size limit"
+                )
+            }
+            Self::FlexMainSizeLimitRequiresRedistribution { node } => write!(
+                formatter,
+                "flex item {node:?} reached a main-size limit before freeze redistribution is available"
+            ),
+            Self::ShrinkWouldProduceNegativeSize { node } => write!(
+                formatter,
+                "flex item {node:?} would shrink below zero before a later min-size slice"
+            ),
             Self::GeometryOverflow => {
                 formatter.write_str("flex layout geometry overflowed the finite coordinate range")
             }
@@ -69,6 +124,85 @@ impl fmt::Display for FlexLayoutError {
 }
 
 impl std::error::Error for FlexLayoutError {}
+
+pub fn layout_flexible_single_line_flex_row(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexibleFlexRowItem],
+) -> Result<FlexRowLayout, FlexLayoutError> {
+    validate_origin(origin)?;
+    validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
+
+    let mut outer_base_width = 0.0_f32;
+    let mut total_grow = 0.0_f32;
+    let mut total_shrink = 0.0_f32;
+    for flexible in items {
+        validate_item(flexible.item)?;
+        validate_flex_factors(*flexible)?;
+        outer_base_width = finite_add(outer_base_width, flexible.item.margin.left)?;
+        outer_base_width = finite_add(outer_base_width, flexible.item.base_size.width)?;
+        outer_base_width = finite_add(outer_base_width, flexible.item.margin.right)?;
+        total_grow = finite_add(total_grow, flexible.grow)?;
+        total_shrink = finite_add(total_shrink, flexible.shrink)?;
+    }
+
+    let free_space = available_size.width - outer_base_width;
+    if !free_space.is_finite() {
+        return Err(FlexLayoutError::GeometryOverflow);
+    }
+
+    let mut resolved = items.iter().map(|item| item.item).collect::<Vec<_>>();
+    if free_space > 0.0 && total_grow > 0.0 {
+        let distributable = if total_grow < 1.0 {
+            finite_mul(free_space, total_grow)?
+        } else {
+            free_space
+        };
+        for (target, flexible) in resolved.iter_mut().zip(items) {
+            if flexible.grow == 0.0 {
+                continue;
+            }
+            let share = finite_mul(distributable, flexible.grow)? / total_grow;
+            let width = finite_add(target.base_size.width, share)?;
+            validate_flexible_width(*flexible, width)?;
+            target.base_size.width = width;
+        }
+    } else if free_space < 0.0 && total_shrink > 0.0 {
+        let deficit = -free_space;
+        let distributable = if total_shrink < 1.0 {
+            finite_mul(deficit, total_shrink)?
+        } else {
+            deficit
+        };
+        let mut scaled_total = 0.0_f32;
+        let mut scaled = Vec::with_capacity(items.len());
+        for flexible in items {
+            let factor = finite_mul(flexible.shrink, flexible.item.base_size.width)?;
+            scaled_total = finite_add(scaled_total, factor)?;
+            scaled.push(factor);
+        }
+        if scaled_total > 0.0 {
+            for ((target, flexible), factor) in resolved.iter_mut().zip(items).zip(scaled) {
+                if factor == 0.0 {
+                    continue;
+                }
+                let reduction = finite_mul(distributable, factor)? / scaled_total;
+                let width = target.base_size.width - reduction;
+                let tolerance = f32::EPSILON * target.base_size.width.max(1.0) * 4.0;
+                if width < -tolerance {
+                    return Err(FlexLayoutError::ShrinkWouldProduceNegativeSize {
+                        node: flexible.item.node,
+                    });
+                }
+                let width = width.max(0.0);
+                validate_flexible_width(*flexible, width)?;
+                target.base_size.width = width;
+            }
+        }
+    }
+
+    layout_single_line_flex_row(origin, available_size, &resolved)
+}
 
 pub fn layout_single_line_flex_row(
     origin: Point,
@@ -122,12 +256,54 @@ pub fn layout_single_line_flex_row(
     })
 }
 
+fn finite_mul(left: f32, right: f32) -> Result<f32, FlexLayoutError> {
+    let value = left * right;
+    value
+        .is_finite()
+        .then_some(value)
+        .ok_or(FlexLayoutError::GeometryOverflow)
+}
+
 fn finite_add(left: f32, right: f32) -> Result<f32, FlexLayoutError> {
     let value = left + right;
     value
         .is_finite()
         .then_some(value)
         .ok_or(FlexLayoutError::GeometryOverflow)
+}
+
+fn validate_flex_factors(item: FlexibleFlexRowItem) -> Result<(), FlexLayoutError> {
+    if !item.grow.is_finite() || !item.shrink.is_finite() || item.grow < 0.0 || item.shrink < 0.0 {
+        return Err(FlexLayoutError::InvalidFlexFactor {
+            node: item.item.node,
+        });
+    }
+    if !item.min_main_size.is_finite()
+        || item.min_main_size < 0.0
+        || item
+            .max_main_size
+            .is_some_and(|max| !max.is_finite() || max < item.min_main_size)
+    {
+        return Err(FlexLayoutError::InvalidFlexMainSizeLimit {
+            node: item.item.node,
+        });
+    }
+    Ok(())
+}
+
+fn validate_flexible_width(item: FlexibleFlexRowItem, width: f32) -> Result<(), FlexLayoutError> {
+    let tolerance = f32::EPSILON * item.item.base_size.width.max(1.0) * 4.0;
+    let below_min = width + tolerance < item.min_main_size;
+    let above_max = item
+        .max_main_size
+        .is_some_and(|max| width - tolerance > max);
+    if below_min || above_max {
+        Err(FlexLayoutError::FlexMainSizeLimitRequiresRedistribution {
+            node: item.item.node,
+        })
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_origin(origin: Point) -> Result<(), FlexLayoutError> {
@@ -251,6 +427,169 @@ mod tests {
         assert_eq!(layout.items[1].border_box.size.width, 25.0);
         assert!(layout.overflows_main_axis);
         assert!(layout.overflows_cross_axis);
+    }
+
+    #[test]
+    fn grow_distributes_positive_free_space_by_factor() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 1.0, 1.0),
+            FlexibleFlexRowItem::new(item(2, 20.0, 10.0), 3.0, 1.0),
+        ];
+        let layout = layout_flexible_single_line_flex_row(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 35.0);
+        assert_eq!(layout.items[1].border_box.size.width, 65.0);
+        assert_eq!(layout.content_size.width, 100.0);
+        assert!(!layout.overflows_main_axis);
+    }
+
+    #[test]
+    fn grow_sum_below_one_leaves_part_of_free_space_unclaimed() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 0.25, 1.0),
+            FlexibleFlexRowItem::new(item(2, 20.0, 10.0), 0.25, 1.0),
+        ];
+        let layout = layout_flexible_single_line_flex_row(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 35.0);
+        assert_eq!(layout.items[1].border_box.size.width, 35.0);
+        assert_eq!(layout.content_size.width, 70.0);
+    }
+
+    #[test]
+    fn shrink_uses_scaled_base_size_factors() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 40.0, 10.0), 0.0, 1.0),
+            FlexibleFlexRowItem::new(item(2, 20.0, 10.0), 0.0, 1.0),
+        ];
+        let layout = layout_flexible_single_line_flex_row(
+            Point::default(),
+            Size {
+                width: 45.0,
+                height: 20.0,
+            },
+            &items,
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 30.0);
+        assert_eq!(layout.items[1].border_box.size.width, 15.0);
+        assert_eq!(layout.content_size.width, 45.0);
+        assert!(!layout.overflows_main_axis);
+    }
+
+    #[test]
+    fn shrink_sum_below_one_preserves_residual_overflow() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 40.0, 10.0), 0.0, 0.25),
+            FlexibleFlexRowItem::new(item(2, 40.0, 10.0), 0.0, 0.25),
+        ];
+        let layout = layout_flexible_single_line_flex_row(
+            Point::default(),
+            Size {
+                width: 40.0,
+                height: 20.0,
+            },
+            &items,
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 30.0);
+        assert_eq!(layout.items[1].border_box.size.width, 30.0);
+        assert_eq!(layout.content_size.width, 60.0);
+        assert!(layout.overflows_main_axis);
+    }
+
+    #[test]
+    fn flexible_main_size_limits_fail_closed_until_freeze_redistribution_exists() {
+        let grow_limited = [FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 1.0, 1.0)
+            .with_main_size_limits(0.0, Some(30.0))];
+        assert_eq!(
+            layout_flexible_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 20.0,
+                },
+                &grow_limited,
+            ),
+            Err(FlexLayoutError::FlexMainSizeLimitRequiresRedistribution {
+                node: LayoutNodeId(1)
+            })
+        );
+
+        let shrink_limited = [FlexibleFlexRowItem::new(item(2, 40.0, 10.0), 0.0, 1.0)
+            .with_main_size_limits(30.0, None)];
+        assert_eq!(
+            layout_flexible_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: 20.0,
+                    height: 20.0,
+                },
+                &shrink_limited,
+            ),
+            Err(FlexLayoutError::FlexMainSizeLimitRequiresRedistribution {
+                node: LayoutNodeId(2)
+            })
+        );
+    }
+
+    #[test]
+    fn invalid_factors_and_unresolved_negative_shrink_are_rejected() {
+        let invalid = [FlexibleFlexRowItem::new(item(1, 20.0, 10.0), f32::NAN, 1.0)];
+        assert_eq!(
+            layout_flexible_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 20.0,
+                },
+                &invalid,
+            ),
+            Err(FlexLayoutError::InvalidFlexFactor {
+                node: LayoutNodeId(1)
+            })
+        );
+
+        let item = FlexRowItem::new(
+            LayoutNodeId(2),
+            Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            EdgeSizes::new(0.0, 40.0, 0.0, 40.0),
+        );
+        let excessive = [FlexibleFlexRowItem::new(item, 0.0, 1.0)];
+        assert_eq!(
+            layout_flexible_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: 0.0,
+                    height: 20.0,
+                },
+                &excessive,
+            ),
+            Err(FlexLayoutError::ShrinkWouldProduceNegativeSize {
+                node: LayoutNodeId(2)
+            })
+        );
     }
 
     #[test]
