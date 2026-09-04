@@ -1,11 +1,15 @@
 mod flex;
 
 pub use flex::{
-    FlexLayoutError, FlexRowItem, FlexRowLayout, FlexRowPlacement, FlexibleFlexRowItem,
-    layout_flexible_single_line_flex_row, layout_single_line_flex_row,
+    FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout, FlexRowPlacement,
+    FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
+    layout_flexible_single_line_flex_row_with_alignment, layout_single_line_flex_row,
+    layout_single_line_flex_row_with_alignment,
 };
 
-use rarog_css::{ComputedStyle, StyleSet, VerticalAlign, computed_style_with_parent};
+use rarog_css::{
+    ComputedStyle, JustifyContent, StyleSet, VerticalAlign, computed_style_with_parent,
+};
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
 use unicode_bidi::BidiInfo;
@@ -2963,10 +2967,11 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(row) = layout_flexible_single_line_flex_row(
+        let Ok(row) = layout_flexible_single_line_flex_row_with_alignment(
             containing_block.origin,
             containing_block.available,
             &items,
+            flex_main_alignment(container.style.justify_content),
         ) else {
             return (Vec::new(), 0.0);
         };
@@ -3125,6 +3130,17 @@ impl FragmentBuilder {
         let id = FragmentId(self.next_id);
         self.next_id += 1;
         id
+    }
+}
+
+fn flex_main_alignment(justify_content: JustifyContent) -> FlexMainAlignment {
+    match justify_content {
+        JustifyContent::FlexStart => FlexMainAlignment::Start,
+        JustifyContent::FlexEnd => FlexMainAlignment::End,
+        JustifyContent::Center => FlexMainAlignment::Center,
+        JustifyContent::SpaceBetween => FlexMainAlignment::SpaceBetween,
+        JustifyContent::SpaceAround => FlexMainAlignment::SpaceAround,
+        JustifyContent::SpaceEvenly => FlexMainAlignment::SpaceEvenly,
     }
 }
 
@@ -3443,6 +3459,65 @@ mod tests {
             Rect::new(20.0, 0.0, 30.0, 15.0)
         );
         assert_eq!(container.boxes.content_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn justify_content_positions_fixed_flex_items_on_the_main_axis() {
+        let mut centered_doc = Document::new();
+        let centered = centered_doc
+            .append_new(
+                centered_doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;width:100px;justify-content:center"),
+                ),
+            )
+            .unwrap();
+        centered_doc
+            .append_new(centered, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        centered_doc
+            .append_new(centered, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+
+        let centered_output = layout_document(
+            &centered_doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let centered = &centered_output.fragments.root.children[0];
+        assert_eq!(centered.children[0].boxes.border_box.origin.x, 30.0);
+        assert_eq!(centered.children[1].boxes.border_box.origin.x, 50.0);
+
+        let mut between_doc = Document::new();
+        let between = between_doc
+            .append_new(
+                between_doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;width:100px;justify-content:space-between"),
+                ),
+            )
+            .unwrap();
+        between_doc
+            .append_new(between, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        between_doc
+            .append_new(between, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+
+        let between_output = layout_document(
+            &between_doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let between = &between_output.fragments.root.children[0];
+        assert_eq!(between.children[0].boxes.border_box.origin.x, 0.0);
+        assert_eq!(between.children[1].boxes.border_box.origin.x, 80.0);
     }
 
     #[test]
