@@ -688,9 +688,8 @@ impl RenderSession {
                         .and_then(|current| current.parent)
                         .and_then(|parent| layout_style_for_dom(&layout.tree.root, parent))
                         .is_some_and(|style| style.display_flex);
-                    let flex_container_changed =
-                        (old_style.display_flex || new_style.display_flex)
-                            && flex_container_layout_changed(old_style, new_style);
+                    let flex_container_changed = (old_style.display_flex || new_style.display_flex)
+                        && flex_container_layout_changed(old_style, new_style);
                     let layout_changed = layout_style_changed(old_style, new_style)
                         || (parent_is_flex && flex_factor_changed(old_style, new_style))
                         || flex_container_changed;
@@ -1667,9 +1666,7 @@ mod tests {
                 "display:flex;width:100px;justify-content:center",
             )
             .unwrap();
-        let report = session
-            .update()
-            .expect("justify-content update succeeds");
+        let report = session.update().expect("justify-content update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(
