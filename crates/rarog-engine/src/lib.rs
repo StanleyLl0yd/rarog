@@ -2398,9 +2398,11 @@ mod render_boundary_hardening_tests {
 
     #[test]
     fn incremental_fragment_limit_failure_preserves_retained_state_and_mutations() {
-        let mut session =
-            RenderSession::new("<div style=\"height:10px\"></div>", RenderOptions::default())
-                .unwrap();
+        let mut session = RenderSession::new(
+            "<div style=\"height:10px\"></div>",
+            RenderOptions::default(),
+        )
+        .unwrap();
         let body = body_node(&session);
         let tree_before = session.layout().tree.snapshot();
         let fragments_before = session.layout().fragments.snapshot();
@@ -2429,9 +2431,11 @@ mod render_boundary_hardening_tests {
 
     #[test]
     fn incremental_display_limit_failure_preserves_retained_state_and_mutations() {
-        let mut session =
-            RenderSession::new("<div style=\"height:10px\"></div>", RenderOptions::default())
-                .unwrap();
+        let mut session = RenderSession::new(
+            "<div style=\"height:10px\"></div>",
+            RenderOptions::default(),
+        )
+        .unwrap();
         let body = body_node(&session);
         let tree_before = session.layout().tree.snapshot();
         let fragments_before = session.layout().fragments.snapshot();
