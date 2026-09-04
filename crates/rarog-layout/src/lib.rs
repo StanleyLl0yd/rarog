@@ -2822,22 +2822,6 @@ impl FragmentBuilder {
         self.layout_flex_box_with_content_size(node, containing_block, cursor_y, None, None)
     }
 
-    fn layout_flex_box_with_content_width(
-        &mut self,
-        node: &LayoutNode,
-        containing_block: ContainingBlock,
-        cursor_y: &mut f32,
-        content_width_override: Option<f32>,
-    ) -> Fragment {
-        self.layout_flex_box_with_content_size(
-            node,
-            containing_block,
-            cursor_y,
-            content_width_override,
-            None,
-        )
-    }
-
     fn layout_flex_box_with_content_size(
         &mut self,
         node: &LayoutNode,
@@ -3077,22 +3061,6 @@ impl FragmentBuilder {
         cursor_y: &mut f32,
     ) -> Fragment {
         self.layout_box_with_content_size(node, containing_block, cursor_y, None, None)
-    }
-
-    fn layout_box_with_content_width(
-        &mut self,
-        node: &LayoutNode,
-        containing_block: ContainingBlock,
-        cursor_y: &mut f32,
-        content_width_override: Option<f32>,
-    ) -> Fragment {
-        self.layout_box_with_content_size(
-            node,
-            containing_block,
-            cursor_y,
-            content_width_override,
-            None,
-        )
     }
 
     fn layout_box_with_content_size(
