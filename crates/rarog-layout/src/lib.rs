@@ -3581,9 +3581,18 @@ mod tests {
         );
         let container = &output.fragments.root.children[0];
 
-        assert_eq!(container.children[0].boxes.border_box.origin, Point { x: 0.0, y: 0.0 });
-        assert_eq!(container.children[1].boxes.border_box.origin, Point { x: 50.0, y: 0.0 });
-        assert_eq!(container.children[2].boxes.border_box.origin, Point { x: 0.0, y: 25.0 });
+        assert_eq!(
+            container.children[0].boxes.border_box.origin,
+            Point { x: 0.0, y: 0.0 }
+        );
+        assert_eq!(
+            container.children[1].boxes.border_box.origin,
+            Point { x: 50.0, y: 0.0 }
+        );
+        assert_eq!(
+            container.children[2].boxes.border_box.origin,
+            Point { x: 0.0, y: 25.0 }
+        );
         assert_eq!(container.boxes.content_box.size.height, 40.0);
     }
 
