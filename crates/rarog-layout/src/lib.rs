@@ -1,17 +1,17 @@
 mod flex;
 
 pub use flex::{
-    FlexCrossAlignment, FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout,
-    FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
-    layout_flexible_single_line_flex_row_with_alignment,
+    FlexCrossAlignment, FlexLayoutError, FlexMainAlignment, FlexMultiLineLayout, FlexRowItem,
+    FlexRowLayout, FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem,
+    layout_flexible_single_line_flex_row, layout_flexible_single_line_flex_row_with_alignment,
     layout_flexible_single_line_flex_row_with_item_alignments,
     layout_flexible_single_line_flex_row_with_options, layout_single_line_flex_row,
     layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_item_alignments,
-    layout_single_line_flex_row_with_options,
+    layout_single_line_flex_row_with_options, layout_wrapped_flexible_rows_with_item_alignments,
 };
 
 use rarog_css::{
-    AlignItems, AlignSelf, ComputedStyle, JustifyContent, StyleSet, VerticalAlign,
+    AlignItems, AlignSelf, ComputedStyle, FlexWrap, JustifyContent, StyleSet, VerticalAlign,
     computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
@@ -2995,25 +2995,44 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(row) = layout_flexible_single_line_flex_row_with_item_alignments(
-            containing_block.origin,
-            containing_block.available,
-            &items,
-            FlexRowOptions::default()
-                .with_main_alignment(flex_main_alignment(container.style.justify_content))
-                .with_cross_alignment(container_cross_alignment)
-                .with_main_gap(container.style.column_gap)
-                .with_cross_size(definite_cross_size)
-                .with_cross_size_limits(container.style.min_height, container.style.max_height),
-            &item_cross_alignments,
-        ) else {
-            return (Vec::new(), 0.0);
+        let options = FlexRowOptions::default()
+            .with_main_alignment(flex_main_alignment(container.style.justify_content))
+            .with_cross_alignment(container_cross_alignment)
+            .with_main_gap(container.style.column_gap)
+            .with_cross_gap(container.style.row_gap)
+            .with_cross_size(definite_cross_size)
+            .with_cross_size_limits(container.style.min_height, container.style.max_height);
+        let (placements, natural_content_height) = match container.style.flex_wrap {
+            FlexWrap::NoWrap => {
+                let Ok(row) = layout_flexible_single_line_flex_row_with_item_alignments(
+                    containing_block.origin,
+                    containing_block.available,
+                    &items,
+                    options,
+                    &item_cross_alignments,
+                ) else {
+                    return (Vec::new(), 0.0);
+                };
+                (row.items, row.content_size.height)
+            }
+            FlexWrap::Wrap => {
+                let Ok(layout) = layout_wrapped_flexible_rows_with_item_alignments(
+                    containing_block.origin,
+                    containing_block.available,
+                    &items,
+                    options,
+                    &item_cross_alignments,
+                ) else {
+                    return (Vec::new(), 0.0);
+                };
+                (layout.items, layout.content_size.height)
+            }
         };
 
         let mut fragments = Vec::with_capacity(nodes.len());
         for ((child, placement), content_height_override) in nodes
             .into_iter()
-            .zip(row.items.iter())
+            .zip(placements.iter())
             .zip(content_height_overrides)
         {
             let child_containing_block = ContainingBlock {
@@ -3051,7 +3070,7 @@ impl FragmentBuilder {
             fragments.push(fragment);
         }
 
-        (fragments, row.content_size.height)
+        (fragments, natural_content_height)
     }
 
     fn layout_box(
@@ -3531,6 +3550,105 @@ mod tests {
             Rect::new(20.0, 0.0, 30.0, 15.0)
         );
         assert_eq!(container.boxes.content_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn flex_wrap_creates_multiple_lines_and_uses_row_gap() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;flex-wrap:wrap;width:100px;column-gap:10px;row-gap:5px"),
+                ),
+            )
+            .unwrap();
+        for height in [10, 20, 15] {
+            doc.append_new(
+                container,
+                element("div", Some(&format!("width:40px;height:{height}px"))),
+            )
+            .unwrap();
+        }
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin, Point::new(0.0, 0.0));
+        assert_eq!(container.children[1].boxes.border_box.origin, Point::new(50.0, 0.0));
+        assert_eq!(container.children[2].boxes.border_box.origin, Point::new(0.0, 25.0));
+        assert_eq!(container.boxes.content_box.size.height, 40.0);
+    }
+
+    #[test]
+    fn flex_wrap_distributes_grow_per_line() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;flex-wrap:wrap;width:80px;column-gap:10px"),
+                ),
+            )
+            .unwrap();
+        for _ in 0..3 {
+            doc.append_new(
+                container,
+                element("div", Some("width:30px;height:10px;flex-grow:1")),
+            )
+            .unwrap();
+        }
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.size.width, 35.0);
+        assert_eq!(container.children[1].boxes.border_box.size.width, 35.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 45.0);
+        assert_eq!(container.children[2].boxes.border_box.size.width, 80.0);
+        assert_eq!(container.children[2].boxes.border_box.origin.y, 10.0);
+    }
+
+    #[test]
+    fn wrapped_definite_height_container_remains_fail_closed_until_align_content() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;flex-wrap:wrap;width:100px;height:60px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:10px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+
+        assert!(output.fragments.root.children[0].children.is_empty());
     }
 
     #[test]
