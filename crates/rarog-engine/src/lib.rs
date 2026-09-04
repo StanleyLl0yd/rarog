@@ -688,13 +688,18 @@ impl RenderSession {
                         .and_then(|current| current.parent)
                         .and_then(|parent| layout_style_for_dom(&layout.tree.root, parent))
                         .is_some_and(|style| style.display_flex);
+                    let flex_container_changed =
+                        (old_style.display_flex || new_style.display_flex)
+                            && flex_container_layout_changed(old_style, new_style);
                     let layout_changed = layout_style_changed(old_style, new_style)
-                        || (parent_is_flex && flex_factor_changed(old_style, new_style));
+                        || (parent_is_flex && flex_factor_changed(old_style, new_style))
+                        || flex_container_changed;
                     if layout_changed
                         && (!text_relayout_nodes.is_empty()
                             || old_style.display_inline
                             || new_style.display_inline
-                            || parent_is_flex)
+                            || parent_is_flex
+                            || flex_container_changed)
                     {
                         let Some(root) =
                             retained_structural_parent(&self.document, &layout.tree.root, node)
@@ -1283,6 +1288,10 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
         || before.vertical_align != after.vertical_align
 }
 
+fn flex_container_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
+    before.justify_content != after.justify_content
+}
+
 fn flex_factor_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
     before.flex_grow != after.flex_grow || before.flex_shrink != after.flex_shrink
 }
@@ -1626,6 +1635,60 @@ mod tests {
                 .origin
                 .x,
             flex_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn justify_content_change_relayouts_the_flex_container() {
+        let source = r#"<div id="flex" style="display:flex;width:100px"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:20px;height:10px;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;width:100px;justify-content:center"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:20px;height:10px;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
+        let first = element_with_id(session.document(), "first");
+        let second = element_with_id(session.document(), "second");
+        let flex_x = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("flex container exists")
+            .boxes
+            .content_box
+            .origin
+            .x;
+
+        session
+            .document_mut()
+            .set_attribute(
+                flex,
+                "style",
+                "display:flex;width:100px;justify-content:center",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("justify-content update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, first)
+                .expect("first flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 30.0
+        );
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 50.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
