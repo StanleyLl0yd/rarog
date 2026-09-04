@@ -984,6 +984,7 @@ impl UnicodeLineBreaker {
         }
 
         let characters = run.text.chars().collect::<Vec<_>>();
+        let character_count = characters.len();
         let boundaries = grapheme_boundaries(&run.text);
         let opportunities = unicode_break_opportunities(&run.text);
         let mut prefix_advance = vec![0.0f32; characters.len().saturating_add(1)];
@@ -1017,7 +1018,7 @@ impl UnicodeLineBreaker {
                 continue;
             }
 
-            let terminal = if boundary == run.character_count() {
+            let terminal = if boundary == character_count {
                 terminal_reserve
             } else {
                 0.0
@@ -1051,8 +1052,8 @@ impl UnicodeLineBreaker {
             }
         }
 
-        if line_start < run.character_count() {
-            ranges.push(TextRange::new(line_start, run.character_count()));
+        if line_start < character_count {
+            ranges.push(TextRange::new(line_start, character_count));
         }
         if ranges.is_empty() {
             ranges.push(TextRange::new(0, 0));
