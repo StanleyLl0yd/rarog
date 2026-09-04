@@ -2769,13 +2769,11 @@ impl FragmentBuilder {
         child_y += trailing_margin.resolved();
 
         let natural_content_height = (child_y - content_y).max(0.0);
-        let content_height = content_height_override.unwrap_or_else(|| {
-            clamp_used_dimension(
-                style.height.unwrap_or(natural_content_height),
-                style.min_height,
-                style.max_height,
-            )
-        });
+        let content_height = clamp_used_dimension(
+            style.height.unwrap_or(natural_content_height),
+            style.min_height,
+            style.max_height,
+        );
         let content_box = Rect::new(content_x, content_y, content_width, content_height);
         let padding_box = Rect::new(
             padding_x,
@@ -3154,11 +3152,13 @@ impl FragmentBuilder {
         }
 
         let natural_content_height = (child_y - content_y).max(0.0);
-        let content_height = clamp_used_dimension(
-            style.height.unwrap_or(natural_content_height),
-            style.min_height,
-            style.max_height,
-        );
+        let content_height = content_height_override.unwrap_or_else(|| {
+            clamp_used_dimension(
+                style.height.unwrap_or(natural_content_height),
+                style.min_height,
+                style.max_height,
+            )
+        });
 
         let content_box = Rect::new(content_x, content_y, content_width, content_height);
         let padding_box = Rect::new(
