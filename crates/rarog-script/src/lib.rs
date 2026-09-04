@@ -5,6 +5,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_REALM_SCOPE: AtomicU64 = AtomicU64::new(1);
 static NEXT_ROOT_SCOPE: AtomicU64 = AtomicU64::new(1);
 
+fn allocate_scope(counter: &AtomicU64, exhausted: &'static str) -> Result<NonZeroU64, ScriptError> {
+    let value = counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .map_err(|_| ScriptError::new(ScriptErrorKind::ResourceLimit, exhausted))?;
+    NonZeroU64::new(value)
+        .ok_or_else(|| ScriptError::new(ScriptErrorKind::ResourceLimit, exhausted))
+}
+
+fn allocate_serial(next: &mut u64, exhausted: &'static str) -> Result<NonZeroU64, ScriptError> {
+    let serial = NonZeroU64::new(*next)
+        .ok_or_else(|| ScriptError::new(ScriptErrorKind::ResourceLimit, exhausted))?;
+    *next = next.checked_add(1).unwrap_or(0);
+    Ok(serial)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RealmId {
     scope: NonZeroU64,
@@ -19,33 +36,15 @@ pub struct RealmIdAllocator {
 
 impl RealmIdAllocator {
     pub fn new() -> Result<Self, ScriptError> {
-        let scope = NEXT_REALM_SCOPE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .map_err(|_| {
-                ScriptError::new(
-                    ScriptErrorKind::ResourceLimit,
-                    "script runtime identity space is exhausted",
-                )
-            })?;
-        let scope = NonZeroU64::new(scope).ok_or_else(|| {
-            ScriptError::new(
-                ScriptErrorKind::ResourceLimit,
-                "script runtime identity space is exhausted",
-            )
-        })?;
+        let scope = allocate_scope(
+            &NEXT_REALM_SCOPE,
+            "script runtime identity space is exhausted",
+        )?;
         Ok(Self { scope, next: 1 })
     }
 
     pub fn allocate(&mut self) -> Result<RealmId, ScriptError> {
-        let serial = NonZeroU64::new(self.next).ok_or_else(|| {
-            ScriptError::new(
-                ScriptErrorKind::ResourceLimit,
-                "script realm identity space is exhausted",
-            )
-        })?;
-        self.next = self.next.checked_add(1).unwrap_or(0);
+        let serial = allocate_serial(&mut self.next, "script realm identity space is exhausted")?;
         Ok(RealmId {
             scope: self.scope,
             serial,
@@ -144,22 +143,10 @@ pub struct RootedValueIdAllocator {
 
 impl RootedValueIdAllocator {
     pub fn new(realm: RealmId) -> Result<Self, ScriptError> {
-        let scope = NEXT_ROOT_SCOPE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .map_err(|_| {
-                ScriptError::new(
-                    ScriptErrorKind::ResourceLimit,
-                    "script rooted-value allocator identity space is exhausted",
-                )
-            })?;
-        let scope = NonZeroU64::new(scope).ok_or_else(|| {
-            ScriptError::new(
-                ScriptErrorKind::ResourceLimit,
-                "script rooted-value allocator identity space is exhausted",
-            )
-        })?;
+        let scope = allocate_scope(
+            &NEXT_ROOT_SCOPE,
+            "script rooted-value allocator identity space is exhausted",
+        )?;
         Ok(Self {
             realm,
             scope,
@@ -168,13 +155,10 @@ impl RootedValueIdAllocator {
     }
 
     pub fn allocate(&mut self) -> Result<RootedValueId, ScriptError> {
-        let serial = NonZeroU64::new(self.next).ok_or_else(|| {
-            ScriptError::new(
-                ScriptErrorKind::ResourceLimit,
-                "script rooted-value identity space is exhausted",
-            )
-        })?;
-        self.next = self.next.checked_add(1).unwrap_or(0);
+        let serial = allocate_serial(
+            &mut self.next,
+            "script rooted-value identity space is exhausted",
+        )?;
         Ok(RootedValueId {
             realm: self.realm,
             scope: self.scope,
