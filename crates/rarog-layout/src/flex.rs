@@ -133,9 +133,7 @@ impl fmt::Display for FlexLayoutError {
                 formatter.write_str("flex available size must be finite and non-negative")
             }
             Self::InvalidOrigin => formatter.write_str("flex origin must be finite"),
-            Self::InvalidGap => {
-                formatter.write_str("flex gap must be finite and non-negative")
-            }
+            Self::InvalidGap => formatter.write_str("flex gap must be finite and non-negative"),
             Self::InvalidItemSize { node } => {
                 write!(formatter, "flex item {node:?} has an invalid base size")
             }
@@ -365,11 +363,7 @@ pub fn layout_single_line_flex_row_with_options(
         overflows_main_axis: used_main_size > available_size.width,
         overflows_cross_axis: max_cross_size > available_size.height,
     };
-    apply_main_alignment(
-        &mut layout,
-        available_size.width,
-        options.main_alignment(),
-    )?;
+    apply_main_alignment(&mut layout, available_size.width, options.main_alignment())?;
     Ok(layout)
 }
 
