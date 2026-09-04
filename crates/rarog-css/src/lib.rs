@@ -90,6 +90,12 @@ pub enum AlignSelf {
     Center,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlexWrap {
+    NoWrap,
+    Wrap,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedStyle {
     pub width: Option<f32>,
@@ -112,6 +118,7 @@ pub struct ComputedStyle {
     pub justify_content: JustifyContent,
     pub align_items: AlignItems,
     pub align_self: AlignSelf,
+    pub flex_wrap: FlexWrap,
     pub row_gap: f32,
     pub column_gap: f32,
     pub establishes_bfc: bool,
@@ -141,6 +148,7 @@ impl Default for ComputedStyle {
             justify_content: JustifyContent::FlexStart,
             align_items: AlignItems::Stretch,
             align_self: AlignSelf::Auto,
+            flex_wrap: FlexWrap::NoWrap,
             row_gap: 0.0,
             column_gap: 0.0,
             establishes_bfc: false,
@@ -325,6 +333,7 @@ pub enum PropertyId {
     JustifyContent,
     AlignItems,
     AlignSelf,
+    FlexWrap,
     RowGap,
     ColumnGap,
     VerticalAlign,
@@ -359,6 +368,7 @@ pub enum PropertyValue {
     JustifyContent(JustifyContent),
     AlignItems(AlignItems),
     AlignSelf(AlignSelf),
+    FlexWrap(FlexWrap),
     VerticalAlign(VerticalAlign),
     CssWide(CssWideKeyword),
 }
@@ -773,6 +783,7 @@ fn copy_property_from_style(
         PropertyId::JustifyContent => style.justify_content = source.justify_content,
         PropertyId::AlignItems => style.align_items = source.align_items,
         PropertyId::AlignSelf => style.align_self = source.align_self,
+        PropertyId::FlexWrap => style.flex_wrap = source.flex_wrap,
         PropertyId::RowGap => style.row_gap = source.row_gap,
         PropertyId::ColumnGap => style.column_gap = source.column_gap,
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
@@ -845,6 +856,7 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         }
         (PropertyId::AlignItems, PropertyValue::AlignItems(value)) => style.align_items = value,
         (PropertyId::AlignSelf, PropertyValue::AlignSelf(value)) => style.align_self = value,
+        (PropertyId::FlexWrap, PropertyValue::FlexWrap(value)) => style.flex_wrap = value,
         (PropertyId::RowGap, PropertyValue::Length(value)) => style.row_gap = value,
         (PropertyId::ColumnGap, PropertyValue::Length(value)) => style.column_gap = value,
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
@@ -1034,6 +1046,23 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         "row-gap" => push_gap_value(output, PropertyId::RowGap, value, important),
         "column-gap" => push_gap_value(output, PropertyId::ColumnGap, value, important),
         "gap" => push_gap_shorthand(output, value, important),
+        "flex-wrap" => {
+            let value = value.trim();
+            let value = if value.eq_ignore_ascii_case("nowrap") {
+                Some(FlexWrap::NoWrap)
+            } else if value.eq_ignore_ascii_case("wrap") {
+                Some(FlexWrap::Wrap)
+            } else {
+                None
+            };
+            if let Some(value) = value {
+                output.push(Declaration {
+                    property: PropertyId::FlexWrap,
+                    value: PropertyValue::FlexWrap(value),
+                    important,
+                });
+            }
+        }
         "align-items" => {
             if let Some(value) = parse_bounded_cross_alignment(value) {
                 output.push(Declaration {
@@ -1204,6 +1233,7 @@ fn push_css_wide(
         "justify-content" => &[PropertyId::JustifyContent],
         "align-items" => &[PropertyId::AlignItems],
         "align-self" => &[PropertyId::AlignSelf],
+        "flex-wrap" => &[PropertyId::FlexWrap],
         "row-gap" => &[PropertyId::RowGap],
         "column-gap" => &[PropertyId::ColumnGap],
         "gap" => &[PropertyId::RowGap, PropertyId::ColumnGap],
@@ -2063,6 +2093,36 @@ mod finite_geometry_tests {
             value: PropertyValue::CssWide(CssWideKeyword::Initial),
             important: false,
         }));
+    }
+
+    #[test]
+    fn flex_wrap_parses_nowrap_and_wrap_but_not_wrap_reverse() {
+        assert_eq!(
+            parse_declarations("flex-wrap:wrap"),
+            vec![Declaration {
+                property: PropertyId::FlexWrap,
+                value: PropertyValue::FlexWrap(FlexWrap::Wrap),
+                important: false,
+            }]
+        );
+        assert_eq!(
+            parse_declarations("flex-wrap:NoWrAp"),
+            vec![Declaration {
+                property: PropertyId::FlexWrap,
+                value: PropertyValue::FlexWrap(FlexWrap::NoWrap),
+                important: false,
+            }]
+        );
+        assert!(parse_declarations("flex-wrap:wrap-reverse").is_empty());
+
+        let mut style = ComputedStyle::default();
+        assert_eq!(style.flex_wrap, FlexWrap::NoWrap);
+        apply_property_value(
+            &mut style,
+            PropertyId::FlexWrap,
+            PropertyValue::FlexWrap(FlexWrap::Wrap),
+        );
+        assert_eq!(style.flex_wrap, FlexWrap::Wrap);
     }
 
     #[test]
