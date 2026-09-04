@@ -52,12 +52,8 @@ impl fmt::Display for EventError {
             Self::RegistrationIdentityExhausted => {
                 "event listener registration identity space is exhausted"
             }
-            Self::InvalidRegistrationLimit => {
-                "event listener registration limit must be non-zero"
-            }
-            Self::RegistrationLimitExceeded { .. } => {
-                "event listener registration limit exceeded"
-            }
+            Self::InvalidRegistrationLimit => "event listener registration limit must be non-zero",
+            Self::RegistrationLimitExceeded { .. } => "event listener registration limit exceeded",
         })
     }
 }
