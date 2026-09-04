@@ -25,11 +25,29 @@ pub struct FlexibleFlexRowItem {
     pub item: FlexRowItem,
     pub grow: f32,
     pub shrink: f32,
+    pub min_main_size: f32,
+    pub max_main_size: Option<f32>,
 }
 
 impl FlexibleFlexRowItem {
     pub const fn new(item: FlexRowItem, grow: f32, shrink: f32) -> Self {
-        Self { item, grow, shrink }
+        Self {
+            item,
+            grow,
+            shrink,
+            min_main_size: 0.0,
+            max_main_size: None,
+        }
+    }
+
+    pub const fn with_main_size_limits(
+        mut self,
+        min_main_size: f32,
+        max_main_size: Option<f32>,
+    ) -> Self {
+        self.min_main_size = min_main_size;
+        self.max_main_size = max_main_size;
+        self
     }
 }
 
@@ -55,6 +73,8 @@ pub enum FlexLayoutError {
     InvalidMargin { node: LayoutNodeId },
     NegativeMarginUnsupported { node: LayoutNodeId },
     InvalidFlexFactor { node: LayoutNodeId },
+    InvalidFlexMainSizeLimit { node: LayoutNodeId },
+    FlexMainSizeLimitRequiresRedistribution { node: LayoutNodeId },
     ShrinkWouldProduceNegativeSize { node: LayoutNodeId },
     GeometryOverflow,
 }
@@ -79,6 +99,13 @@ impl fmt::Display for FlexLayoutError {
             Self::InvalidFlexFactor { node } => {
                 write!(formatter, "flex item {node:?} has an invalid grow or shrink factor")
             }
+            Self::InvalidFlexMainSizeLimit { node } => {
+                write!(formatter, "flex item {node:?} has an invalid main-size limit")
+            }
+            Self::FlexMainSizeLimitRequiresRedistribution { node } => write!(
+                formatter,
+                "flex item {node:?} reached a main-size limit before freeze redistribution is available"
+            ),
             Self::ShrinkWouldProduceNegativeSize { node } => write!(
                 formatter,
                 "flex item {node:?} would shrink below zero before a later min-size slice"
@@ -130,7 +157,9 @@ pub fn layout_flexible_single_line_flex_row(
                 continue;
             }
             let share = finite_mul(distributable, flexible.grow)? / total_grow;
-            target.base_size.width = finite_add(target.base_size.width, share)?;
+            let width = finite_add(target.base_size.width, share)?;
+            validate_flexible_width(*flexible, width)?;
+            target.base_size.width = width;
         }
     } else if free_space < 0.0 && total_shrink > 0.0 {
         let deficit = -free_space;
@@ -159,7 +188,9 @@ pub fn layout_flexible_single_line_flex_row(
                         node: flexible.item.node,
                     });
                 }
-                target.base_size.width = width.max(0.0);
+                let width = width.max(0.0);
+                validate_flexible_width(*flexible, width)?;
+                target.base_size.width = width;
             }
         }
     }
@@ -236,16 +267,43 @@ fn finite_add(left: f32, right: f32) -> Result<f32, FlexLayoutError> {
 }
 
 fn validate_flex_factors(item: FlexibleFlexRowItem) -> Result<(), FlexLayoutError> {
-    if item.grow.is_finite()
-        && item.shrink.is_finite()
-        && item.grow >= 0.0
-        && item.shrink >= 0.0
+    if !item.grow.is_finite()
+        || !item.shrink.is_finite()
+        || item.grow < 0.0
+        || item.shrink < 0.0
     {
-        Ok(())
-    } else {
-        Err(FlexLayoutError::InvalidFlexFactor {
+        return Err(FlexLayoutError::InvalidFlexFactor {
+            node: item.item.node,
+        });
+    }
+    if !item.min_main_size.is_finite()
+        || item.min_main_size < 0.0
+        || item
+            .max_main_size
+            .is_some_and(|max| !max.is_finite() || max < item.min_main_size)
+    {
+        return Err(FlexLayoutError::InvalidFlexMainSizeLimit {
+            node: item.item.node,
+        });
+    }
+    Ok(())
+}
+
+fn validate_flexible_width(
+    item: FlexibleFlexRowItem,
+    width: f32,
+) -> Result<(), FlexLayoutError> {
+    let tolerance = f32::EPSILON * item.item.base_size.width.max(1.0) * 4.0;
+    let below_min = width + tolerance < item.min_main_size;
+    let above_max = item
+        .max_main_size
+        .is_some_and(|max| width - tolerance > max);
+    if below_min || above_max {
+        Err(FlexLayoutError::FlexMainSizeLimitRequiresRedistribution {
             node: item.item.node,
         })
+    } else {
+        Ok(())
     }
 }
 
@@ -457,6 +515,49 @@ mod tests {
         assert_eq!(layout.items[1].border_box.size.width, 30.0);
         assert_eq!(layout.content_size.width, 60.0);
         assert!(layout.overflows_main_axis);
+    }
+
+    #[test]
+    fn flexible_main_size_limits_fail_closed_until_freeze_redistribution_exists() {
+        let grow_limited = [FlexibleFlexRowItem::new(
+            item(1, 20.0, 10.0),
+            1.0,
+            1.0,
+        )
+        .with_main_size_limits(0.0, Some(30.0))];
+        assert_eq!(
+            layout_flexible_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 20.0,
+                },
+                &grow_limited,
+            ),
+            Err(FlexLayoutError::FlexMainSizeLimitRequiresRedistribution {
+                node: LayoutNodeId(1)
+            })
+        );
+
+        let shrink_limited = [FlexibleFlexRowItem::new(
+            item(2, 40.0, 10.0),
+            0.0,
+            1.0,
+        )
+        .with_main_size_limits(30.0, None)];
+        assert_eq!(
+            layout_flexible_single_line_flex_row(
+                Point::default(),
+                Size {
+                    width: 20.0,
+                    height: 20.0,
+                },
+                &shrink_limited,
+            ),
+            Err(FlexLayoutError::FlexMainSizeLimitRequiresRedistribution {
+                node: LayoutNodeId(2)
+            })
+        );
     }
 
     #[test]
