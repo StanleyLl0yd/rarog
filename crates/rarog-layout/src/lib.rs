@@ -4,12 +4,15 @@ pub use flex::{
     FlexCrossAlignment, FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout,
     FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
     layout_flexible_single_line_flex_row_with_alignment,
+    layout_flexible_single_line_flex_row_with_item_alignments,
     layout_flexible_single_line_flex_row_with_options, layout_single_line_flex_row,
-    layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_options,
+    layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_item_alignments,
+    layout_single_line_flex_row_with_options,
 };
 
 use rarog_css::{
-    AlignItems, ComputedStyle, JustifyContent, StyleSet, VerticalAlign, computed_style_with_parent,
+    AlignItems, AlignSelf, ComputedStyle, JustifyContent, StyleSet, VerticalAlign,
+    computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
@@ -2921,6 +2924,7 @@ impl FragmentBuilder {
     ) -> (Vec<Fragment>, f32) {
         let mut nodes = Vec::new();
         let mut items = Vec::new();
+        let mut item_cross_alignments = Vec::new();
 
         for child in &container.children {
             match &child.kind {
@@ -2960,6 +2964,7 @@ impl FragmentBuilder {
                             effective_max_width.map(|maximum| maximum + horizontal_noncontent),
                         ),
                     );
+                    item_cross_alignments.push(flex_item_cross_alignment(style.align_self));
                     nodes.push(child);
                 }
                 LayoutNodeKind::Text(_) | LayoutNodeKind::Root => {
@@ -2968,7 +2973,7 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(row) = layout_flexible_single_line_flex_row_with_options(
+        let Ok(row) = layout_flexible_single_line_flex_row_with_item_alignments(
             containing_block.origin,
             containing_block.available,
             &items,
@@ -2978,6 +2983,7 @@ impl FragmentBuilder {
                 .with_main_gap(container.style.column_gap)
                 .with_cross_size(container.style.height)
                 .with_cross_size_limits(container.style.min_height, container.style.max_height),
+            &item_cross_alignments,
         ) else {
             return (Vec::new(), 0.0);
         };
@@ -3136,6 +3142,16 @@ impl FragmentBuilder {
         let id = FragmentId(self.next_id);
         self.next_id += 1;
         id
+    }
+}
+
+fn flex_item_cross_alignment(align_self: AlignSelf) -> Option<FlexCrossAlignment> {
+    match align_self {
+        AlignSelf::Auto => None,
+        AlignSelf::Stretch => Some(FlexCrossAlignment::Stretch),
+        AlignSelf::FlexStart => Some(FlexCrossAlignment::Start),
+        AlignSelf::FlexEnd => Some(FlexCrossAlignment::End),
+        AlignSelf::Center => Some(FlexCrossAlignment::Center),
     }
 }
 
@@ -3474,6 +3490,72 @@ mod tests {
             Rect::new(20.0, 0.0, 30.0, 15.0)
         );
         assert_eq!(container.boxes.content_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn align_self_overrides_container_cross_axis_alignment_per_item() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;width:100px;height:60px;align-items:center"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element(
+                "div",
+                Some("width:20px;height:10px;align-self:flex-end"),
+            ),
+        )
+        .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 50.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 20.0);
+    }
+
+    #[test]
+    fn align_self_auto_uses_container_align_items() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;width:100px;height:60px;align-items:flex-end"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("width:20px;height:10px;align-self:auto")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box.origin.y, 50.0);
     }
 
     #[test]
