@@ -81,6 +81,15 @@ pub enum AlignItems {
     Center,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlignSelf {
+    Auto,
+    Stretch,
+    FlexStart,
+    FlexEnd,
+    Center,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedStyle {
     pub width: Option<f32>,
@@ -102,6 +111,7 @@ pub struct ComputedStyle {
     pub flex_shrink: f32,
     pub justify_content: JustifyContent,
     pub align_items: AlignItems,
+    pub align_self: AlignSelf,
     pub row_gap: f32,
     pub column_gap: f32,
     pub establishes_bfc: bool,
@@ -130,6 +140,7 @@ impl Default for ComputedStyle {
             flex_shrink: 1.0,
             justify_content: JustifyContent::FlexStart,
             align_items: AlignItems::Stretch,
+            align_self: AlignSelf::Auto,
             row_gap: 0.0,
             column_gap: 0.0,
             establishes_bfc: false,
@@ -313,6 +324,7 @@ pub enum PropertyId {
     FlexShrink,
     JustifyContent,
     AlignItems,
+    AlignSelf,
     RowGap,
     ColumnGap,
     VerticalAlign,
@@ -346,6 +358,7 @@ pub enum PropertyValue {
     Number(f32),
     JustifyContent(JustifyContent),
     AlignItems(AlignItems),
+    AlignSelf(AlignSelf),
     VerticalAlign(VerticalAlign),
     CssWide(CssWideKeyword),
 }
@@ -759,6 +772,7 @@ fn copy_property_from_style(
         PropertyId::FlexShrink => style.flex_shrink = source.flex_shrink,
         PropertyId::JustifyContent => style.justify_content = source.justify_content,
         PropertyId::AlignItems => style.align_items = source.align_items,
+        PropertyId::AlignSelf => style.align_self = source.align_self,
         PropertyId::RowGap => style.row_gap = source.row_gap,
         PropertyId::ColumnGap => style.column_gap = source.column_gap,
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
@@ -830,6 +844,7 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
             style.justify_content = value
         }
         (PropertyId::AlignItems, PropertyValue::AlignItems(value)) => style.align_items = value,
+        (PropertyId::AlignSelf, PropertyValue::AlignSelf(value)) => style.align_self = value,
         (PropertyId::RowGap, PropertyValue::Length(value)) => style.row_gap = value,
         (PropertyId::ColumnGap, PropertyValue::Length(value)) => style.column_gap = value,
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
@@ -1020,23 +1035,30 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         "column-gap" => push_gap_value(output, PropertyId::ColumnGap, value, important),
         "gap" => push_gap_shorthand(output, value, important),
         "align-items" => {
-            let value = value.trim();
-            let value =
-                if value.eq_ignore_ascii_case("stretch") || value.eq_ignore_ascii_case("normal") {
-                    Some(AlignItems::Stretch)
-                } else if value.eq_ignore_ascii_case("flex-start") {
-                    Some(AlignItems::FlexStart)
-                } else if value.eq_ignore_ascii_case("flex-end") {
-                    Some(AlignItems::FlexEnd)
-                } else if value.eq_ignore_ascii_case("center") {
-                    Some(AlignItems::Center)
-                } else {
-                    None
-                };
-            if let Some(value) = value {
+            if let Some(value) = parse_bounded_cross_alignment(value) {
                 output.push(Declaration {
                     property: PropertyId::AlignItems,
                     value: PropertyValue::AlignItems(value),
+                    important,
+                });
+            }
+        }
+        "align-self" => {
+            let value = value.trim();
+            let value = if value.eq_ignore_ascii_case("auto") {
+                Some(AlignSelf::Auto)
+            } else {
+                parse_bounded_cross_alignment(value).map(|value| match value {
+                    AlignItems::Stretch => AlignSelf::Stretch,
+                    AlignItems::FlexStart => AlignSelf::FlexStart,
+                    AlignItems::FlexEnd => AlignSelf::FlexEnd,
+                    AlignItems::Center => AlignSelf::Center,
+                })
+            };
+            if let Some(value) = value {
+                output.push(Declaration {
+                    property: PropertyId::AlignSelf,
+                    value: PropertyValue::AlignSelf(value),
                     important,
                 });
             }
@@ -1181,6 +1203,7 @@ fn push_css_wide(
         "flex-shrink" => &[PropertyId::FlexShrink],
         "justify-content" => &[PropertyId::JustifyContent],
         "align-items" => &[PropertyId::AlignItems],
+        "align-self" => &[PropertyId::AlignSelf],
         "row-gap" => &[PropertyId::RowGap],
         "column-gap" => &[PropertyId::ColumnGap],
         "gap" => &[PropertyId::RowGap, PropertyId::ColumnGap],
@@ -1240,6 +1263,21 @@ fn push_length(
             value: PropertyValue::Length(value),
             important,
         });
+    }
+}
+
+fn parse_bounded_cross_alignment(value: &str) -> Option<AlignItems> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("stretch") || value.eq_ignore_ascii_case("normal") {
+        Some(AlignItems::Stretch)
+    } else if value.eq_ignore_ascii_case("flex-start") {
+        Some(AlignItems::FlexStart)
+    } else if value.eq_ignore_ascii_case("flex-end") {
+        Some(AlignItems::FlexEnd)
+    } else if value.eq_ignore_ascii_case("center") {
+        Some(AlignItems::Center)
+    } else {
+        None
     }
 }
 
@@ -2025,6 +2063,46 @@ mod finite_geometry_tests {
             value: PropertyValue::CssWide(CssWideKeyword::Initial),
             important: false,
         }));
+    }
+
+    #[test]
+    fn align_self_parses_auto_and_bounded_cross_axis_overrides() {
+        let declarations = parse_declarations(
+            "align-self:auto;align-self:flex-start;align-self:flex-end;align-self:center;align-self:stretch",
+        );
+        for value in [
+            AlignSelf::Auto,
+            AlignSelf::FlexStart,
+            AlignSelf::FlexEnd,
+            AlignSelf::Center,
+            AlignSelf::Stretch,
+        ] {
+            assert!(declarations.contains(&Declaration {
+                property: PropertyId::AlignSelf,
+                value: PropertyValue::AlignSelf(value),
+                important: false,
+            }));
+        }
+
+        let normal = parse_declarations("align-self:NoRmAl");
+        assert_eq!(
+            normal,
+            vec![Declaration {
+                property: PropertyId::AlignSelf,
+                value: PropertyValue::AlignSelf(AlignSelf::Stretch),
+                important: false,
+            }]
+        );
+        assert!(parse_declarations("align-self:baseline").is_empty());
+
+        let mut style = ComputedStyle::default();
+        assert_eq!(style.align_self, AlignSelf::Auto);
+        apply_property_value(
+            &mut style,
+            PropertyId::AlignSelf,
+            PropertyValue::AlignSelf(AlignSelf::FlexEnd),
+        );
+        assert_eq!(style.align_self, AlignSelf::FlexEnd);
     }
 
     #[test]
