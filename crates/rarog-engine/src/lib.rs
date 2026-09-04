@@ -11,7 +11,7 @@ use rarog_layout::{
     refresh_text_node, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
-    DamageRegion, DisplayList, Framebuffer, FramebufferError, build_display_list,
+    DamageRegion, DisplayList, DisplayListError, Framebuffer, FramebufferError, build_display_list,
     replace_display_items_for_fragment, replace_display_items_for_fragments,
 };
 use rarog_types::{Color, Size};
@@ -80,6 +80,7 @@ pub enum RenderError {
     CssRuleLimitExceeded { rules: usize, limit: usize },
     FragmentLimitExceeded { fragments: usize, limit: usize },
     DisplayCommandLimitExceeded { commands: usize, limit: usize },
+    DisplayList(DisplayListError),
     Framebuffer(FramebufferError),
 }
 
@@ -117,12 +118,19 @@ impl std::fmt::Display for RenderError {
                 formatter,
                 "paint produced {commands} display commands; limit is {limit}"
             ),
+            Self::DisplayList(error) => write!(formatter, "{error}"),
             Self::Framebuffer(error) => write!(formatter, "{error}"),
         }
     }
 }
 
 impl std::error::Error for RenderError {}
+
+impl From<DisplayListError> for RenderError {
+    fn from(error: DisplayListError) -> Self {
+        Self::DisplayList(error)
+    }
+}
 
 impl From<FramebufferError> for RenderError {
     fn from(error: FramebufferError) -> Self {
@@ -1086,6 +1094,7 @@ fn validate_display_list_limits(
     display_list: &DisplayList,
     limits: RenderLimits,
 ) -> Result<(), RenderError> {
+    display_list.validate()?;
     let commands = display_list.len();
     if commands > limits.max_display_commands {
         return Err(RenderError::DisplayCommandLimitExceeded {
