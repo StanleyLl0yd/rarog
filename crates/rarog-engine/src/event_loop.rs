@@ -122,7 +122,6 @@ impl<T, M> EngineEventLoop<T, M> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,9 +130,11 @@ mod tests {
 
     #[test]
     fn failed_render_checkpoint_remains_due_for_retry() {
-        let mut session =
-            RenderSession::new("<div style=\"height:10px\"></div>", RenderOptions::default())
-                .unwrap();
+        let mut session = RenderSession::new(
+            "<div style=\"height:10px\"></div>",
+            RenderOptions::default(),
+        )
+        .unwrap();
         let retained_fragments = session.layout().fragments.fragment_count();
         session.limits.max_fragments = retained_fragments;
         let root = session.document().root();
