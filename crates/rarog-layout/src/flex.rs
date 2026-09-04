@@ -170,6 +170,7 @@ pub enum FlexLayoutError {
     InvalidOrigin,
     InvalidGap,
     InvalidCrossSize,
+    InvalidItemAlignmentCount { expected: usize, actual: usize },
     InvalidItemSize { node: LayoutNodeId },
     InvalidMargin { node: LayoutNodeId },
     NegativeMarginUnsupported { node: LayoutNodeId },
@@ -191,6 +192,10 @@ impl fmt::Display for FlexLayoutError {
             Self::InvalidCrossSize => {
                 formatter.write_str("flex cross size constraints must be finite and non-negative")
             }
+            Self::InvalidItemAlignmentCount { expected, actual } => write!(
+                formatter,
+                "flex item alignment count mismatch: expected {expected}, got {actual}"
+            ),
             Self::InvalidItemSize { node } => {
                 write!(formatter, "flex item {node:?} has an invalid base size")
             }
@@ -263,9 +268,26 @@ pub fn layout_flexible_single_line_flex_row_with_options(
     items: &[FlexibleFlexRowItem],
     options: FlexRowOptions,
 ) -> Result<FlexRowLayout, FlexLayoutError> {
+    layout_flexible_single_line_flex_row_with_item_alignments(
+        origin,
+        available_size,
+        items,
+        options,
+        &[],
+    )
+}
+
+pub fn layout_flexible_single_line_flex_row_with_item_alignments(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexibleFlexRowItem],
+    options: FlexRowOptions,
+    item_cross_alignments: &[Option<FlexCrossAlignment>],
+) -> Result<FlexRowLayout, FlexLayoutError> {
     validate_origin(origin)?;
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
     validate_options(options)?;
+    validate_item_alignment_count(items.len(), item_cross_alignments)?;
 
     let mut outer_base_width = main_gap_extent(items.len(), options.main_gap())?;
     let mut total_grow = 0.0_f32;
@@ -335,7 +357,13 @@ pub fn layout_flexible_single_line_flex_row_with_options(
         }
     }
 
-    layout_single_line_flex_row_with_options(origin, available_size, &resolved, options)
+    layout_single_line_flex_row_with_item_alignments(
+        origin,
+        available_size,
+        &resolved,
+        options,
+        item_cross_alignments,
+    )
 }
 
 pub fn layout_single_line_flex_row(
@@ -371,9 +399,20 @@ pub fn layout_single_line_flex_row_with_options(
     items: &[FlexRowItem],
     options: FlexRowOptions,
 ) -> Result<FlexRowLayout, FlexLayoutError> {
+    layout_single_line_flex_row_with_item_alignments(origin, available_size, items, options, &[])
+}
+
+pub fn layout_single_line_flex_row_with_item_alignments(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexRowItem],
+    options: FlexRowOptions,
+    item_cross_alignments: &[Option<FlexCrossAlignment>],
+) -> Result<FlexRowLayout, FlexLayoutError> {
     validate_origin(origin)?;
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
     validate_options(options)?;
+    validate_item_alignment_count(items.len(), item_cross_alignments)?;
 
     let mut cursor_x = origin.x;
     let mut max_cross_size = 0.0_f32;
@@ -428,6 +467,7 @@ pub fn layout_single_line_flex_row_with_options(
         origin.y,
         used_cross_size,
         options.cross_alignment(),
+        item_cross_alignments,
     )?;
     Ok(layout)
 }
@@ -437,9 +477,15 @@ fn apply_cross_alignment(
     items: &[FlexRowItem],
     origin_y: f32,
     cross_size: f32,
-    alignment: FlexCrossAlignment,
+    container_alignment: FlexCrossAlignment,
+    item_cross_alignments: &[Option<FlexCrossAlignment>],
 ) -> Result<(), FlexLayoutError> {
-    for (placement, item) in layout.items.iter_mut().zip(items) {
+    for (index, (placement, item)) in layout.items.iter_mut().zip(items).enumerate() {
+        let alignment = item_cross_alignments
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or(container_alignment);
         let outer_height = finite_add(item.margin.top, item.base_size.height)?;
         let outer_height = finite_add(outer_height, item.margin.bottom)?;
         let remaining = cross_size - outer_height;
@@ -521,6 +567,20 @@ fn apply_main_alignment(
         }
     }
     Ok(())
+}
+
+fn validate_item_alignment_count(
+    item_count: usize,
+    item_cross_alignments: &[Option<FlexCrossAlignment>],
+) -> Result<(), FlexLayoutError> {
+    if item_cross_alignments.is_empty() || item_cross_alignments.len() == item_count {
+        Ok(())
+    } else {
+        Err(FlexLayoutError::InvalidItemAlignmentCount {
+            expected: item_count,
+            actual: item_cross_alignments.len(),
+        })
+    }
 }
 
 fn validate_options(options: FlexRowOptions) -> Result<(), FlexLayoutError> {
@@ -721,6 +781,48 @@ mod tests {
         assert_eq!(layout.items[1].border_box.size.width, 25.0);
         assert!(layout.overflows_main_axis);
         assert!(layout.overflows_cross_axis);
+    }
+
+    #[test]
+    fn per_item_cross_alignment_overrides_container_alignment() {
+        let items = [item(1, 20.0, 10.0), item(2, 20.0, 20.0)];
+        let layout = layout_single_line_flex_row_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 60.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_cross_alignment(FlexCrossAlignment::Center)
+                .with_cross_size(Some(60.0)),
+            &[Some(FlexCrossAlignment::End), None],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.y, 50.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 20.0);
+    }
+
+    #[test]
+    fn item_cross_alignment_count_must_match_when_overrides_are_present() {
+        let items = [item(1, 20.0, 10.0), item(2, 20.0, 20.0)];
+        assert_eq!(
+            layout_single_line_flex_row_with_item_alignments(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 60.0,
+                },
+                &items,
+                FlexRowOptions::default(),
+                &[Some(FlexCrossAlignment::End)],
+            ),
+            Err(FlexLayoutError::InvalidItemAlignmentCount {
+                expected: 2,
+                actual: 1,
+            })
+        );
     }
 
     #[test]
