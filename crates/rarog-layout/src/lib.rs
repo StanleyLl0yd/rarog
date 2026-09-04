@@ -2,15 +2,14 @@ mod flex;
 
 pub use flex::{
     FlexCrossAlignment, FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout,
-    FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem,
-    layout_flexible_single_line_flex_row, layout_flexible_single_line_flex_row_with_alignment,
+    FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
+    layout_flexible_single_line_flex_row_with_alignment,
     layout_flexible_single_line_flex_row_with_options, layout_single_line_flex_row,
     layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_options,
 };
 
 use rarog_css::{
-    AlignItems, ComputedStyle, JustifyContent, StyleSet, VerticalAlign,
-    computed_style_with_parent,
+    AlignItems, ComputedStyle, JustifyContent, StyleSet, VerticalAlign, computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
