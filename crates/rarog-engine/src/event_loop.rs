@@ -87,9 +87,13 @@ impl<T, M> EngineEventLoop<T, M> {
         Ok(Some(match step {
             SchedulerStep::Task(task) => EngineEventLoopStep::Task(task),
             SchedulerStep::Microtask(microtask) => EngineEventLoopStep::Microtask(microtask),
-            SchedulerStep::MicrotaskCheckpointComplete => {
-                EngineEventLoopStep::RenderCheckpoint(session.update()?)
-            }
+            SchedulerStep::MicrotaskCheckpointComplete => match session.update() {
+                Ok(report) => EngineEventLoopStep::RenderCheckpoint(report),
+                Err(error) => {
+                    self.scheduler.request_microtask_checkpoint();
+                    return Err(error.into());
+                }
+            },
         }))
     }
 
@@ -115,5 +119,48 @@ impl<T, M> EngineEventLoop<T, M> {
 
     pub fn pending_microtask_count(&self) -> usize {
         self.scheduler.pending_microtask_count()
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DEFAULT_MAX_FRAGMENTS, RenderOptions};
+    use rarog_dom::{ElementData, NodeKind};
+
+    #[test]
+    fn failed_render_checkpoint_remains_due_for_retry() {
+        let mut session =
+            RenderSession::new("<div style=\"height:10px\"></div>", RenderOptions::default())
+                .unwrap();
+        let retained_fragments = session.layout().fragments.fragment_count();
+        session.limits.max_fragments = retained_fragments;
+        session
+            .document_mut()
+            .append_new(
+                session.document().root(),
+                NodeKind::Element(ElementData::html("div")),
+            )
+            .unwrap();
+
+        let mut event_loop =
+            EngineEventLoop::<(), ()>::new(SchedulerLimits::try_new(4, 4).unwrap()).unwrap();
+        event_loop.request_microtask_checkpoint();
+
+        assert!(matches!(
+            event_loop.next_step(&mut session),
+            Err(EngineEventLoopError::Render(
+                RenderError::FragmentLimitExceeded { .. }
+            ))
+        ));
+        assert!(event_loop.checkpoint_due());
+
+        session.limits.max_fragments = DEFAULT_MAX_FRAGMENTS;
+        assert!(matches!(
+            event_loop.next_step(&mut session).unwrap(),
+            Some(EngineEventLoopStep::RenderCheckpoint(_))
+        ));
+        assert!(!event_loop.checkpoint_due());
     }
 }
