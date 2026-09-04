@@ -75,6 +75,17 @@ impl Transform2D {
             y: self.m12 * point.x + self.m22 * point.y + self.ty,
         }
     }
+
+    fn then(self, next: Self) -> Self {
+        Self {
+            m11: next.m11 * self.m11 + next.m21 * self.m12,
+            m12: next.m12 * self.m11 + next.m22 * self.m12,
+            m21: next.m11 * self.m21 + next.m21 * self.m22,
+            m22: next.m12 * self.m21 + next.m22 * self.m22,
+            tx: next.m11 * self.tx + next.m21 * self.ty + next.tx,
+            ty: next.m12 * self.tx + next.m22 * self.ty + next.ty,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -250,6 +261,9 @@ impl DisplayList {
         if !self.has_balanced_structure() {
             return Err(DisplayListError::UnbalancedStructure);
         }
+        if !self.has_finite_transformed_geometry() {
+            return Err(DisplayListError::NonFiniteGeometry);
+        }
         Ok(())
     }
 
@@ -275,6 +289,43 @@ impl DisplayList {
             }
         }
         scopes.is_empty()
+    }
+
+    fn has_finite_transformed_geometry(&self) -> bool {
+        let mut transforms = vec![Transform2D::IDENTITY];
+        for command in &self.commands {
+            match *command {
+                DisplayCommand::PushTransform { transform } => {
+                    let current = *transforms.last().unwrap_or(&Transform2D::IDENTITY);
+                    let combined = current.then(transform);
+                    if !combined.is_finite() {
+                        return false;
+                    }
+                    transforms.push(combined);
+                }
+                DisplayCommand::PopTransform => {
+                    if transforms.len() <= 1 {
+                        return false;
+                    }
+                    transforms.pop();
+                }
+                DisplayCommand::FillRect { rect, .. }
+                | DisplayCommand::TextPlaceholder { rect, .. }
+                | DisplayCommand::DrawImage { rect, .. }
+                | DisplayCommand::PushClip { rect } => {
+                    let current = *transforms.last().unwrap_or(&Transform2D::IDENTITY);
+                    if !rect_is_finite(transform_rect(rect, current)) {
+                        return false;
+                    }
+                }
+                DisplayCommand::PopClip
+                | DisplayCommand::PushStackingContext { .. }
+                | DisplayCommand::PopStackingContext
+                | DisplayCommand::PushOpacity { .. }
+                | DisplayCommand::PopOpacity => {}
+            }
+        }
+        transforms.len() == 1
     }
 
     pub fn snapshot(&self) -> String {
@@ -466,7 +517,7 @@ fn replace_display_items(
         .commands
         .splice(range.start..range.end, current.commands.iter().copied());
 
-    if !candidate.has_unique_ids() || !candidate.has_balanced_structure() {
+    if candidate.validate().is_err() {
         return false;
     }
     *list = candidate;
@@ -642,7 +693,7 @@ struct EffectivePaintItem {
 
 fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, EffectivePaintItem> {
     let mut output = BTreeMap::new();
-    let mut transforms = Vec::new();
+    let mut transforms = vec![Transform2D::IDENTITY];
     let mut clips: Vec<Option<Rect>> = vec![None];
     let mut opacities = vec![Opacity::ONE];
     let mut ordinal = 0usize;
@@ -656,7 +707,7 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
         match command {
             DisplayCommand::FillRect { rect, color }
             | DisplayCommand::TextPlaceholder { rect, color } => {
-                let destination = transform_rect(rect, &transforms);
+                let destination = transform_rect(rect, *transforms.last().expect("transform state"));
                 let bounds = match *clips.last().expect("clip state") {
                     Some(clip) => intersection(destination, clip),
                     None => Some(destination),
@@ -673,7 +724,7 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
                 ordinal = ordinal.saturating_add(1);
             }
             DisplayCommand::DrawImage { rect, image } => {
-                let destination = transform_rect(rect, &transforms);
+                let destination = transform_rect(rect, *transforms.last().expect("transform state"));
                 let bounds = match *clips.last().expect("clip state") {
                     Some(clip) => intersection(destination, clip),
                     None => Some(destination),
@@ -693,7 +744,7 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
                 ordinal = ordinal.saturating_add(1);
             }
             DisplayCommand::PushClip { rect } => {
-                let rect = transform_rect(rect, &transforms);
+                let rect = transform_rect(rect, *transforms.last().expect("transform state"));
                 let clip = match *clips.last().expect("clip state") {
                     Some(current) => {
                         Some(intersection(current, rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)))
@@ -708,9 +759,14 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
                 }
             }
             DisplayCommand::PushStackingContext { .. } | DisplayCommand::PopStackingContext => {}
-            DisplayCommand::PushTransform { transform } => transforms.push(transform),
+            DisplayCommand::PushTransform { transform } => {
+                let current = *transforms.last().expect("transform state");
+                transforms.push(current.then(transform));
+            }
             DisplayCommand::PopTransform => {
-                transforms.pop();
+                if transforms.len() > 1 {
+                    transforms.pop();
+                }
             }
             DisplayCommand::PushOpacity { opacity } => {
                 let current = *opacities.last().expect("opacity state");
@@ -783,7 +839,7 @@ fn canonical_float_bits(value: f32) -> u32 {
     if value == 0.0 { 0 } else { value.to_bits() }
 }
 
-fn transform_rect(rect: Rect, transforms: &[Transform2D]) -> Rect {
+fn transform_rect(rect: Rect, transform: Transform2D) -> Rect {
     let corners = [
         rect.origin,
         Point {
@@ -799,12 +855,7 @@ fn transform_rect(rect: Rect, transforms: &[Transform2D]) -> Rect {
             y: rect.origin.y + rect.size.height,
         },
     ];
-    let transformed = corners.map(|mut point| {
-        for transform in transforms {
-            point = transform.transform_point(point);
-        }
-        point
-    });
+    let transformed = corners.map(|point| transform.transform_point(point));
     let min_x = transformed
         .iter()
         .map(|point| point.x)
@@ -922,20 +973,20 @@ impl Framebuffer {
         let framebuffer_clip =
             intersection(framebuffer, initial_clip).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0));
         let mut clips = vec![framebuffer_clip];
-        let mut transforms = Vec::new();
+        let mut transforms = vec![Transform2D::IDENTITY];
         let mut opacities = vec![Opacity::ONE];
         for command in &list.commands {
             match *command {
                 DisplayCommand::FillRect { rect, color }
                 | DisplayCommand::TextPlaceholder { rect, color } => {
-                    let rect = transform_rect(rect, &transforms);
+                    let rect = transform_rect(rect, *transforms.last().expect("transform state"));
                     if let Some(clipped) = intersection(rect, *clips.last().expect("clip stack")) {
                         let color = apply_opacity(color, *opacities.last().expect("opacity stack"));
                         self.fill_rect(clipped, color);
                     }
                 }
                 DisplayCommand::DrawImage { rect, image } => {
-                    let destination = transform_rect(rect, &transforms);
+                    let destination = transform_rect(rect, *transforms.last().expect("transform state"));
                     let decoded = images.and_then(|store| store.image(image));
                     if let (Some(decoded), Some(clipped)) = (
                         decoded,
@@ -950,7 +1001,7 @@ impl Framebuffer {
                     }
                 }
                 DisplayCommand::PushClip { rect } => {
-                    let rect = transform_rect(rect, &transforms);
+                    let rect = transform_rect(rect, *transforms.last().expect("transform state"));
                     let current = *clips.last().expect("clip stack");
                     clips
                         .push(intersection(current, rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)));
@@ -960,9 +1011,14 @@ impl Framebuffer {
                 }
                 DisplayCommand::PushStackingContext { .. } | DisplayCommand::PopStackingContext => {
                 }
-                DisplayCommand::PushTransform { transform } => transforms.push(transform),
+                DisplayCommand::PushTransform { transform } => {
+                    let current = *transforms.last().expect("transform stack");
+                    transforms.push(current.then(transform));
+                }
                 DisplayCommand::PopTransform => {
-                    transforms.pop();
+                    if transforms.len() > 1 {
+                        transforms.pop();
+                    }
                 }
                 DisplayCommand::PushOpacity { opacity } => {
                     let current = *opacities.last().expect("opacity stack");
@@ -1883,15 +1939,64 @@ mod tests {
     }
 
     #[test]
-    fn nested_transform_order_follows_display_list_push_order() {
-        let rect = Rect::new(1.0, 1.0, 2.0, 2.0);
-        let transformed = transform_rect(
-            rect,
-            &[
-                Transform2D::translation(10.0, 0.0),
-                Transform2D::scale(2.0, 3.0),
+    fn cumulative_transform_overflow_is_rejected_before_paint() {
+        let list = DisplayList::try_from_parts(
+            vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+                DisplayItemId::test(4),
+                DisplayItemId::test(5),
+            ],
+            vec![
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::scale(f32::MAX, 1.0),
+                },
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::scale(2.0, 1.0),
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::PopTransform,
+                DisplayCommand::PopTransform,
             ],
         );
+
+        assert_eq!(list, Err(DisplayListError::NonFiniteGeometry));
+    }
+
+    #[test]
+    fn finite_matrix_with_overflowing_transformed_rect_is_rejected() {
+        let list = DisplayList::try_from_parts(
+            vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+            ],
+            vec![
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::scale(2.0, 1.0),
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(f32::MAX, 0.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::PopTransform,
+            ],
+        );
+
+        assert_eq!(list, Err(DisplayListError::NonFiniteGeometry));
+    }
+
+    #[test]
+    fn nested_transform_order_follows_display_list_push_order() {
+        let rect = Rect::new(1.0, 1.0, 2.0, 2.0);
+        let transform = Transform2D::IDENTITY
+            .then(Transform2D::translation(10.0, 0.0))
+            .then(Transform2D::scale(2.0, 3.0));
+        let transformed = transform_rect(rect, transform);
         assert_eq!(transformed, Rect::new(22.0, 3.0, 4.0, 6.0));
     }
 
