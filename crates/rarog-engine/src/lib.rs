@@ -1656,13 +1656,11 @@ mod tests {
 
         session
             .document_mut()
-            .set_attribute(
-                first,
-                "style",
-                "width:20px;height:auto;background:#112233",
-            )
+            .set_attribute(first, "style", "width:20px;height:auto;background:#112233")
             .unwrap();
-        let report = session.update().expect("auto-height stretch update succeeds");
+        let report = session
+            .update()
+            .expect("auto-height stretch update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
 
         assert_eq!(
