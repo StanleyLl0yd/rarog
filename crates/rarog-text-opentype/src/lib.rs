@@ -241,16 +241,8 @@ impl OpenTypeShapingBackend {
             return Err(OpenTypeShapingError::UnknownFace(request.run.face));
         }
 
-        let scalar_boundaries = scalar_byte_boundaries(text);
-        let start_byte = *scalar_boundaries
-            .get(request.run.range.start)
+        let (start_byte, end_byte) = scalar_range_byte_offsets(text, request.run.range)
             .ok_or(OpenTypeShapingError::InvalidTextRange(request.run.range))?;
-        let end_byte = *scalar_boundaries
-            .get(request.run.range.end)
-            .ok_or(OpenTypeShapingError::InvalidTextRange(request.run.range))?;
-        if request.run.range.start > request.run.range.end || start_byte > end_byte {
-            return Err(OpenTypeShapingError::InvalidTextRange(request.run.range));
-        }
         if start_byte == end_byte {
             return Ok(ShapedRun {
                 run: request.run,
@@ -372,6 +364,41 @@ fn script_for_request(value: ShapingScript) -> harfrust::Script {
             .unwrap_or(script::COMMON),
         ShapingScript::Unknown => script::UNKNOWN,
     }
+}
+
+fn scalar_range_byte_offsets(text: &str, range: TextRange) -> Option<(usize, usize)> {
+    if range.start > range.end {
+        return None;
+    }
+
+    let mut scalar_index = 0usize;
+    let mut start_byte = (range.start == 0).then_some(0);
+    let mut end_byte = (range.end == 0).then_some(0);
+    if end_byte.is_some() {
+        return Some((start_byte?, end_byte?));
+    }
+
+    for (byte_index, _) in text.char_indices() {
+        if scalar_index == range.start {
+            start_byte = Some(byte_index);
+        }
+        if scalar_index == range.end {
+            end_byte = Some(byte_index);
+            break;
+        }
+        scalar_index += 1;
+    }
+
+    if end_byte.is_none() {
+        if scalar_index == range.start {
+            start_byte = Some(text.len());
+        }
+        if scalar_index == range.end {
+            end_byte = Some(text.len());
+        }
+    }
+
+    Some((start_byte?, end_byte?))
 }
 
 fn scalar_byte_boundaries(text: &str) -> Vec<usize> {
@@ -560,6 +587,29 @@ mod tests {
         let shaped = backend.try_shape_run("office", &configured, &face).unwrap();
         assert!(!shaped.glyphs.is_empty());
         assert!(shaped.advance > 0.0);
+    }
+
+    #[test]
+    fn scalar_range_mapping_handles_unicode_and_terminal_offsets() {
+        let text = "A😀Б";
+        assert_eq!(
+            scalar_range_byte_offsets(text, TextRange::new(0, 0)),
+            Some((0, 0))
+        );
+        assert_eq!(
+            scalar_range_byte_offsets(text, TextRange::new(1, 2)),
+            Some((1, 5))
+        );
+        assert_eq!(
+            scalar_range_byte_offsets(text, TextRange::new(2, 3)),
+            Some((5, text.len()))
+        );
+        assert_eq!(
+            scalar_range_byte_offsets(text, TextRange::new(3, 3)),
+            Some((text.len(), text.len()))
+        );
+        assert_eq!(scalar_range_byte_offsets(text, TextRange::new(4, 4)), None);
+        assert_eq!(scalar_range_byte_offsets(text, TextRange::new(2, 1)), None);
     }
 
     #[test]
