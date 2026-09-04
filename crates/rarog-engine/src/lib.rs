@@ -1648,6 +1648,39 @@ mod tests {
     }
 
     #[test]
+    fn auto_height_stretch_transition_relayouts_the_parent_flex_row() {
+        let source = r#"<div id="flex" style="display:flex;width:100px;height:60px"><div id="first" style="width:20px;height:10px;background:#112233"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;width:100px;height:60px"><div id="first" style="width:20px;height:auto;background:#112233"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let first = element_with_id(session.document(), "first");
+
+        session
+            .document_mut()
+            .set_attribute(first, "style", "width:20px;height:auto;background:#112233")
+            .unwrap();
+        let report = session
+            .update()
+            .expect("auto-height stretch update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, first)
+                .expect("stretched flex item remains")
+                .boxes
+                .border_box
+                .size
+                .height,
+            60.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
     fn align_self_change_relayouts_the_parent_flex_row() {
         let source = r#"<div id="flex" style="display:flex;width:100px;height:60px;align-items:center"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:20px;height:20px;background:#445566"></div></div>"#;
         let expected_source = r#"<div id="flex" style="display:flex;width:100px;height:60px;align-items:center"><div id="first" style="width:20px;height:10px;align-self:flex-end;background:#112233"></div><div id="second" style="width:20px;height:20px;background:#445566"></div></div>"#;
