@@ -2452,7 +2452,10 @@ mod render_boundary_hardening_tests {
         assert_eq!(session.layout().fragments.snapshot(), fragments_before);
         assert_eq!(session.display_list().snapshot(), display_before);
         assert_eq!(session.framebuffer().stable_hash64(), framebuffer_before);
-        assert_eq!(session.dirty_state().through_generation(), generation_before);
+        assert_eq!(
+            session.dirty_state().through_generation(),
+            generation_before
+        );
         assert!(session.dirty_state().is_clean());
 
         session.limits.max_display_commands = DEFAULT_MAX_DISPLAY_COMMANDS;
