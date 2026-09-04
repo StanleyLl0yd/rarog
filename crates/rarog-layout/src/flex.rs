@@ -97,10 +97,16 @@ impl fmt::Display for FlexLayoutError {
                 "flex item {node:?} uses a negative margin outside the first row slice"
             ),
             Self::InvalidFlexFactor { node } => {
-                write!(formatter, "flex item {node:?} has an invalid grow or shrink factor")
+                write!(
+                    formatter,
+                    "flex item {node:?} has an invalid grow or shrink factor"
+                )
             }
             Self::InvalidFlexMainSizeLimit { node } => {
-                write!(formatter, "flex item {node:?} has an invalid main-size limit")
+                write!(
+                    formatter,
+                    "flex item {node:?} has an invalid main-size limit"
+                )
             }
             Self::FlexMainSizeLimitRequiresRedistribution { node } => write!(
                 formatter,
@@ -267,11 +273,7 @@ fn finite_add(left: f32, right: f32) -> Result<f32, FlexLayoutError> {
 }
 
 fn validate_flex_factors(item: FlexibleFlexRowItem) -> Result<(), FlexLayoutError> {
-    if !item.grow.is_finite()
-        || !item.shrink.is_finite()
-        || item.grow < 0.0
-        || item.shrink < 0.0
-    {
+    if !item.grow.is_finite() || !item.shrink.is_finite() || item.grow < 0.0 || item.shrink < 0.0 {
         return Err(FlexLayoutError::InvalidFlexFactor {
             node: item.item.node,
         });
@@ -289,10 +291,7 @@ fn validate_flex_factors(item: FlexibleFlexRowItem) -> Result<(), FlexLayoutErro
     Ok(())
 }
 
-fn validate_flexible_width(
-    item: FlexibleFlexRowItem,
-    width: f32,
-) -> Result<(), FlexLayoutError> {
+fn validate_flexible_width(item: FlexibleFlexRowItem, width: f32) -> Result<(), FlexLayoutError> {
     let tolerance = f32::EPSILON * item.item.base_size.width.max(1.0) * 4.0;
     let below_min = width + tolerance < item.min_main_size;
     let above_max = item
@@ -519,12 +518,8 @@ mod tests {
 
     #[test]
     fn flexible_main_size_limits_fail_closed_until_freeze_redistribution_exists() {
-        let grow_limited = [FlexibleFlexRowItem::new(
-            item(1, 20.0, 10.0),
-            1.0,
-            1.0,
-        )
-        .with_main_size_limits(0.0, Some(30.0))];
+        let grow_limited = [FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 1.0, 1.0)
+            .with_main_size_limits(0.0, Some(30.0))];
         assert_eq!(
             layout_flexible_single_line_flex_row(
                 Point::default(),
@@ -539,12 +534,8 @@ mod tests {
             })
         );
 
-        let shrink_limited = [FlexibleFlexRowItem::new(
-            item(2, 40.0, 10.0),
-            0.0,
-            1.0,
-        )
-        .with_main_size_limits(30.0, None)];
+        let shrink_limited = [FlexibleFlexRowItem::new(item(2, 40.0, 10.0), 0.0, 1.0)
+            .with_main_size_limits(30.0, None)];
         assert_eq!(
             layout_flexible_single_line_flex_row(
                 Point::default(),
@@ -562,11 +553,7 @@ mod tests {
 
     #[test]
     fn invalid_factors_and_unresolved_negative_shrink_are_rejected() {
-        let invalid = [FlexibleFlexRowItem::new(
-            item(1, 20.0, 10.0),
-            f32::NAN,
-            1.0,
-        )];
+        let invalid = [FlexibleFlexRowItem::new(item(1, 20.0, 10.0), f32::NAN, 1.0)];
         assert_eq!(
             layout_flexible_single_line_flex_row(
                 Point::default(),
