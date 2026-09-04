@@ -7,7 +7,7 @@ Tracking issue: #109.
 ## A — Flexbox and Grid
 
 - [x] Introduce the Rarog-owned bounded single-line flex-row geometry/placement primitive (#110).
-- [ ] Connect `display: flex` computed style and layout-tree dispatch to the measured row algorithm.
+- [x] Connect `display: flex` computed style and layout-tree dispatch to the measured row algorithm (#136).
 - [ ] Add flex grow/shrink and main-axis free-space distribution.
 - [ ] Add flex alignment, wrapping and reverse directions in measured slices.
 - [ ] Introduce Rarog-owned grid track/item metadata and a first measured grid layout slice.

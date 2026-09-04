@@ -683,10 +683,17 @@ impl RenderSession {
                         );
                     }
                     let layout_changed = layout_style_changed(old_style, new_style);
+                    let parent_is_flex = self
+                        .document
+                        .node(node)
+                        .and_then(|current| current.parent)
+                        .and_then(|parent| layout_style_for_dom(&layout.tree.root, parent))
+                        .is_some_and(|style| style.display_flex);
                     if layout_changed
                         && (!text_relayout_nodes.is_empty()
                             || old_style.display_inline
-                            || new_style.display_inline)
+                            || new_style.display_inline
+                            || parent_is_flex)
                     {
                         let Some(root) =
                             retained_structural_parent(&self.document, &layout.tree.root, node)
@@ -1148,6 +1155,7 @@ fn subtree_contains_style_element(document: &Document, root: NodeId) -> bool {
 fn formatting_boundary_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
     before.display_none != after.display_none
         || before.display_inline != after.display_inline
+        || before.display_flex != after.display_flex
         || before.establishes_bfc != after.establishes_bfc
 }
 
@@ -1269,6 +1277,7 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
         || before.padding != after.padding
         || before.display_none != after.display_none
         || before.display_inline != after.display_inline
+        || before.display_flex != after.display_flex
         || before.establishes_bfc != after.establishes_bfc
         || before.vertical_align != after.vertical_align
 }
@@ -1570,6 +1579,55 @@ mod tests {
         assert_ne!(session.framebuffer().stable_hash64(), framebuffer_before);
         assert!(!session.damage().rects.is_empty());
         assert!(session.dirty_state().is_clean());
+    }
+
+    #[test]
+    fn flex_item_geometry_change_relayouts_the_parent_row() {
+        let source = r#"<div id="flex" style="display:flex;width:100px"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:30px;height:10px;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;width:100px"><div id="first" style="width:40px;height:10px;background:#112233"></div><div id="second" style="width:30px;height:10px;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
+        let first = element_with_id(session.document(), "first");
+        let second = element_with_id(session.document(), "second");
+        let flex_x = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("flex container exists")
+            .boxes
+            .content_box
+            .origin
+            .x;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second flex item exists")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 20.0
+        );
+
+        session
+            .document_mut()
+            .set_attribute(first, "style", "width:40px;height:10px;background:#112233")
+            .unwrap();
+        let report = session.update().expect("flex row update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
     }
 
     #[test]

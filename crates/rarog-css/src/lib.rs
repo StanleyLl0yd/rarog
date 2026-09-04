@@ -79,6 +79,7 @@ pub struct ComputedStyle {
     pub border_color: Color,
     pub display_none: bool,
     pub display_inline: bool,
+    pub display_flex: bool,
     pub establishes_bfc: bool,
     pub vertical_align: VerticalAlign,
 }
@@ -100,6 +101,7 @@ impl Default for ComputedStyle {
             border_color: Color::TRANSPARENT,
             display_none: false,
             display_inline: false,
+            display_flex: false,
             establishes_bfc: false,
             vertical_align: VerticalAlign::Baseline,
         }
@@ -284,6 +286,7 @@ pub enum PropertyId {
 pub enum DisplayValue {
     Block,
     Inline,
+    Flex,
     FlowRoot,
     None,
 }
@@ -710,6 +713,7 @@ fn copy_property_from_style(
         PropertyId::Display => {
             style.display_none = source.display_none;
             style.display_inline = source.display_inline;
+            style.display_flex = source.display_flex;
             style.establishes_bfc = source.establishes_bfc;
         }
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
@@ -772,6 +776,7 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         (PropertyId::Display, PropertyValue::Display(display)) => {
             style.display_none = display == DisplayValue::None;
             style.display_inline = display == DisplayValue::Inline;
+            style.display_flex = display == DisplayValue::Flex;
             style.establishes_bfc = display == DisplayValue::FlowRoot;
         }
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
@@ -963,6 +968,8 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 Some(DisplayValue::Block)
             } else if value.eq_ignore_ascii_case("inline") {
                 Some(DisplayValue::Inline)
+            } else if value.eq_ignore_ascii_case("flex") {
+                Some(DisplayValue::Flex)
             } else if value.eq_ignore_ascii_case("flow-root") {
                 Some(DisplayValue::FlowRoot)
             } else {
@@ -1829,6 +1836,27 @@ mod finite_geometry_tests {
             value: PropertyValue::CssWide(CssWideKeyword::Initial),
             important: false,
         }));
+    }
+
+    #[test]
+    fn display_flex_is_parsed_and_sets_a_distinct_computed_state() {
+        let declarations = parse_declarations("display:FlEx");
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::Display,
+            value: PropertyValue::Display(DisplayValue::Flex),
+            important: false,
+        }));
+
+        let mut style = ComputedStyle::default();
+        apply_property_value(
+            &mut style,
+            PropertyId::Display,
+            PropertyValue::Display(DisplayValue::Flex),
+        );
+        assert!(style.display_flex);
+        assert!(!style.display_none);
+        assert!(!style.display_inline);
+        assert!(!style.establishes_bfc);
     }
 
     #[test]
