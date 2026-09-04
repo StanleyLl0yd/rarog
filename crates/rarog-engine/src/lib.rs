@@ -691,7 +691,7 @@ impl RenderSession {
                     let flex_container_changed = (old_style.display_flex || new_style.display_flex)
                         && flex_container_layout_changed(old_style, new_style);
                     let layout_changed = layout_style_changed(old_style, new_style)
-                        || (parent_is_flex && flex_factor_changed(old_style, new_style))
+                        || (parent_is_flex && flex_item_layout_changed(old_style, new_style))
                         || flex_container_changed;
                     if layout_changed
                         && (!text_relayout_nodes.is_empty()
@@ -1293,8 +1293,10 @@ fn flex_container_layout_changed(before: ComputedStyle, after: ComputedStyle) ->
         || before.column_gap != after.column_gap
 }
 
-fn flex_factor_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
-    before.flex_grow != after.flex_grow || before.flex_shrink != after.flex_shrink
+fn flex_item_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
+    before.flex_grow != after.flex_grow
+        || before.flex_shrink != after.flex_shrink
+        || before.align_self != after.align_self
 }
 
 fn vertical_footprint_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
@@ -1636,6 +1638,58 @@ mod tests {
                 .origin
                 .x,
             flex_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn align_self_change_relayouts_the_parent_flex_row() {
+        let source = r#"<div id="flex" style="display:flex;width:100px;height:60px;align-items:center"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:20px;height:20px;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;width:100px;height:60px;align-items:center"><div id="first" style="width:20px;height:10px;align-self:flex-end;background:#112233"></div><div id="second" style="width:20px;height:20px;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
+        let first = element_with_id(session.document(), "first");
+        let second = element_with_id(session.document(), "second");
+        let flex_y = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("flex container exists")
+            .boxes
+            .content_box
+            .origin
+            .y;
+
+        session
+            .document_mut()
+            .set_attribute(
+                first,
+                "style",
+                "width:20px;height:10px;align-self:flex-end;background:#112233",
+            )
+            .unwrap();
+        let report = session.update().expect("align-self update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, first)
+                .expect("first flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .y,
+            flex_y + 50.0
+        );
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .y,
+            flex_y + 20.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
