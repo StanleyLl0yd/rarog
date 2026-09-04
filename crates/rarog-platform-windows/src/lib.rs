@@ -6,8 +6,8 @@ pub use input::WindowsInputService;
 
 use rarog_platform::{
     ClipboardError, PlatformCapabilities, PlatformClipboardService, PlatformFontError,
-    PlatformFontRequest, PlatformFontService, PlatformHost, PlatformInputError, PlatformInputService,
-    PlatformTextInputService, ResolvedPlatformFont,
+    PlatformFontRequest, PlatformFontService, PlatformHost, PlatformInputError,
+    PlatformInputService, PlatformTextInputService, ResolvedPlatformFont,
 };
 use std::fmt;
 
