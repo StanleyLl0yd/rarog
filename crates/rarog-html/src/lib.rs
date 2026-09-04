@@ -1,6 +1,8 @@
 mod standards;
 
 use rarog_dom::Document;
+
+pub const DEFAULT_MAX_STREAMING_INPUT_BYTES: usize = 16 * 1024 * 1024;
 use std::error::Error;
 use std::fmt;
 
@@ -43,12 +45,23 @@ pub struct ParseOutput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputError {
     Closed,
+    InvalidLimit,
+    LimitExceeded { bytes: usize, limit: usize },
 }
 
 impl fmt::Display for InputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Closed => formatter.write_str("streaming HTML input is already closed"),
+            Self::InvalidLimit => {
+                formatter.write_str("streaming HTML input limit must be non-zero")
+            }
+            Self::LimitExceeded { bytes, limit } => {
+                write!(
+                    formatter,
+                    "streaming HTML input would contain {bytes} bytes; limit is {limit}"
+                )
+            }
         }
     }
 }
@@ -72,10 +85,21 @@ impl fmt::Display for ParseError {
 
 impl Error for ParseError {}
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamingInput {
     buffer: String,
     closed: bool,
+    max_bytes: usize,
+}
+
+impl Default for StreamingInput {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            closed: false,
+            max_bytes: DEFAULT_MAX_STREAMING_INPUT_BYTES,
+        }
+    }
 }
 
 impl StreamingInput {
@@ -83,9 +107,38 @@ impl StreamingInput {
         Self::default()
     }
 
+    pub fn try_with_max_bytes(max_bytes: usize) -> Result<Self, InputError> {
+        if max_bytes == 0 {
+            return Err(InputError::InvalidLimit);
+        }
+        Ok(Self {
+            buffer: String::new(),
+            closed: false,
+            max_bytes,
+        })
+    }
+
+    pub const fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+
     pub fn feed(&mut self, chunk: &str) -> Result<(), InputError> {
         if self.closed {
             return Err(InputError::Closed);
+        }
+        let bytes = self
+            .buffer
+            .len()
+            .checked_add(chunk.len())
+            .ok_or(InputError::LimitExceeded {
+                bytes: usize::MAX,
+                limit: self.max_bytes,
+            })?;
+        if bytes > self.max_bytes {
+            return Err(InputError::LimitExceeded {
+                bytes,
+                limit: self.max_bytes,
+            });
         }
         self.buffer.push_str(chunk);
         Ok(())
@@ -192,6 +245,26 @@ mod tests {
         };
         assert_eq!(element.namespace, rarog_dom::Namespace::Html);
         assert_eq!(element.tag_name.as_str(), "html");
+    }
+
+    #[test]
+    fn streaming_input_limit_is_enforced_before_retaining_chunk_bytes() {
+        let mut input = StreamingInput::try_with_max_bytes(4).unwrap();
+        input.feed("ab").unwrap();
+        assert_eq!(
+            input.feed("cde"),
+            Err(InputError::LimitExceeded { bytes: 5, limit: 4 })
+        );
+        assert_eq!(input.len(), 2);
+        assert_eq!(input.max_bytes(), 4);
+    }
+
+    #[test]
+    fn zero_streaming_input_limit_is_rejected() {
+        assert_eq!(
+            StreamingInput::try_with_max_bytes(0),
+            Err(InputError::InvalidLimit)
+        );
     }
 
     #[test]
