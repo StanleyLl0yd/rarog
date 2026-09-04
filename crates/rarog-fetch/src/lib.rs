@@ -579,14 +579,15 @@ pub trait NetworkCapability {
     fn cancel(&mut self, ticket: NetworkTicket) -> Result<(), FetchError>;
 }
 
-fn normalize_header_name(name: String) -> Result<String, FetchError> {
+fn normalize_header_name(mut name: String) -> Result<String, FetchError> {
     if name.is_empty() || !name.bytes().all(is_http_token_byte) {
         return Err(FetchError::new(
             FetchErrorKind::InvalidHeaderName,
             "header name must be a non-empty HTTP token",
         ));
     }
-    Ok(name.to_ascii_lowercase())
+    name.make_ascii_lowercase();
+    Ok(name)
 }
 
 fn normalize_header_value(value: String) -> Result<String, FetchError> {
