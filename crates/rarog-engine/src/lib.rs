@@ -635,11 +635,9 @@ impl RenderSession {
                         if new_style.display_none {
                             continue;
                         }
-                        let Some(root) = retained_structural_parent(
-                            &self.document,
-                            &layout.tree.root,
-                            node,
-                        ) else {
+                        let Some(root) =
+                            retained_structural_parent(&self.document, &layout.tree.root, node)
+                        else {
                             requires_full_rebuild = true;
                             break;
                         };
@@ -661,11 +659,9 @@ impl RenderSession {
                 }
                 if old_style != new_style {
                     if fragments_for_dom(&layout.fragments, node).len() > 1 {
-                        let Some(root) = retained_structural_parent(
-                            &self.document,
-                            &layout.tree.root,
-                            node,
-                        ) else {
+                        let Some(root) =
+                            retained_structural_parent(&self.document, &layout.tree.root, node)
+                        else {
                             requires_full_rebuild = true;
                             break;
                         };
@@ -685,11 +681,9 @@ impl RenderSession {
                             || old_style.display_inline
                             || new_style.display_inline)
                     {
-                        let Some(root) = retained_structural_parent(
-                            &self.document,
-                            &layout.tree.root,
-                            node,
-                        ) else {
+                        let Some(root) =
+                            retained_structural_parent(&self.document, &layout.tree.root, node)
+                        else {
                             requires_full_rebuild = true;
                             break;
                         };
@@ -780,11 +774,7 @@ impl RenderSession {
             for &(node, _) in &style_updates {
                 let previous_fragment = fragment_for_dom(&layout.fragments, node).cloned();
                 if previous_fragment.is_none()
-                    || !relayout_fragment_subtree(
-                        &layout.tree,
-                        &mut layout.fragments,
-                        node,
-                    )
+                    || !relayout_fragment_subtree(&layout.tree, &mut layout.fragments, node)
                 {
                     subtree_applied = false;
                     break;
@@ -901,7 +891,6 @@ impl RenderSession {
             elapsed: update_started.elapsed(),
         })
     }
-
 }
 
 pub fn render_html(source: &str, options: RenderOptions) -> Result<RenderOutput, RenderError> {
@@ -2420,11 +2409,16 @@ mod render_boundary_hardening_tests {
         assert_eq!(session.layout().fragments.snapshot(), fragments_before);
         assert_eq!(session.display_list().snapshot(), display_before);
         assert_eq!(session.framebuffer().stable_hash64(), framebuffer_before);
-        assert_eq!(session.dirty_state().through_generation(), generation_before);
+        assert_eq!(
+            session.dirty_state().through_generation(),
+            generation_before
+        );
         assert!(session.dirty_state().is_clean());
 
         session.limits.max_fragments = DEFAULT_MAX_FRAGMENTS;
-        let report = session.update().expect("retained mutation remains retryable");
+        let report = session
+            .update()
+            .expect("retained mutation remains retryable");
         assert_ne!(report.mode, IncrementalMode::Unchanged);
         assert!(session.layout().fragments.fragment_count() > retained_fragments);
     }
