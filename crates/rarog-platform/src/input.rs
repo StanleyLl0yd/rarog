@@ -360,16 +360,20 @@ mod tests {
     #[test]
     fn input_limits_require_non_zero_queue_and_text_budgets() {
         assert!(InputLimits::default().is_valid());
-        assert!(!InputLimits {
-            max_queued_events: 0,
-            max_text_bytes: 1,
-        }
-        .is_valid());
-        assert!(!InputLimits {
-            max_queued_events: 1,
-            max_text_bytes: 0,
-        }
-        .is_valid());
+        assert!(
+            !InputLimits {
+                max_queued_events: 0,
+                max_text_bytes: 1,
+            }
+            .is_valid()
+        );
+        assert!(
+            !InputLimits {
+                max_queued_events: 1,
+                max_text_bytes: 0,
+            }
+            .is_valid()
+        );
     }
 
     #[test]
