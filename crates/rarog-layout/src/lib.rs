@@ -1855,7 +1855,9 @@ impl<'a> LayoutTreeBuilder<'a> {
             || dom_node
                 .parent
                 .is_some_and(|parent| document_node_is_root(doc, parent))
-            || style.establishes_bfc;
+            || style.establishes_bfc
+            || style.display_flex
+            || parent_style.is_some_and(|parent| parent.display_flex);
 
         let id = self.allocate_id();
         let mut children = Vec::new();
@@ -2274,6 +2276,9 @@ impl FragmentBuilder {
         match &node.kind {
             LayoutNodeKind::Root => unreachable!("only the layout root may have Root kind"),
             LayoutNodeKind::Text(run) => self.layout_text(node, run, containing_block, cursor_y),
+            LayoutNodeKind::Box if node.style.display_flex => {
+                vec![self.layout_flex_box(node, containing_block, cursor_y)]
+            }
             LayoutNodeKind::Box if node.style.display_inline => vec![self.layout_inline_box(
                 node,
                 containing_block,
@@ -2799,6 +2804,168 @@ impl FragmentBuilder {
         }
     }
 
+    fn layout_flex_box(
+        &mut self,
+        node: &LayoutNode,
+        containing_block: ContainingBlock,
+        cursor_y: &mut f32,
+    ) -> Fragment {
+        let style = node.style;
+        let x = containing_block.origin.x;
+        let available_width = containing_block.available.width;
+        let horizontal_edges = style.margin.horizontal()
+            + style.border_width.horizontal()
+            + style.padding.horizontal();
+
+        let content_width = clamp_used_dimension(
+            style
+                .width
+                .unwrap_or_else(|| (available_width - horizontal_edges).max(0.0)),
+            style.min_width,
+            style.max_width,
+        );
+
+        let border_x = x + style.margin.left;
+        let border_y = *cursor_y;
+        let margin_top = border_y - style.margin.top;
+        let padding_x = border_x + style.border_width.left;
+        let padding_y = border_y + style.border_width.top;
+        let content_x = padding_x + style.padding.left;
+        let content_y = padding_y + style.padding.top;
+        let available_content_height = style
+            .height
+            .map(|height| clamp_used_dimension(height, style.min_height, style.max_height))
+            .unwrap_or_else(|| containing_block.available.height.max(0.0));
+
+        let child_containing_block = ContainingBlock {
+            origin: Point {
+                x: content_x,
+                y: content_y,
+            },
+            available: Size {
+                width: content_width,
+                height: available_content_height,
+            },
+        };
+        let (children, natural_content_height) =
+            self.layout_fixed_flex_children(node, child_containing_block);
+        let content_height = clamp_used_dimension(
+            style.height.unwrap_or(natural_content_height),
+            style.min_height,
+            style.max_height,
+        );
+
+        let content_box = Rect::new(content_x, content_y, content_width, content_height);
+        let padding_box = Rect::new(
+            padding_x,
+            padding_y,
+            content_width + style.padding.horizontal(),
+            content_height + style.padding.vertical(),
+        );
+        let border_box = Rect::new(
+            border_x,
+            border_y,
+            padding_box.size.width + style.border_width.horizontal(),
+            padding_box.size.height + style.border_width.vertical(),
+        );
+        let margin_box = Rect::new(
+            x,
+            margin_top,
+            border_box.size.width + style.margin.horizontal(),
+            border_box.size.height + style.margin.vertical(),
+        );
+
+        *cursor_y = border_box.origin.y + border_box.size.height;
+
+        Fragment {
+            id: self.allocate_id(),
+            ordinal: FragmentOrdinal(0),
+            layout_node: node.id,
+            dom_node: node.dom_node,
+            kind: FragmentKind::Box,
+            boxes: BoxModel {
+                margin_box,
+                border_box,
+                padding_box,
+                content_box,
+            },
+            style,
+            text_range: None,
+            line_box: None,
+            children,
+        }
+    }
+
+    fn layout_fixed_flex_children(
+        &mut self,
+        container: &LayoutNode,
+        containing_block: ContainingBlock,
+    ) -> (Vec<Fragment>, f32) {
+        let mut nodes = Vec::new();
+        let mut items = Vec::new();
+
+        for child in &container.children {
+            match &child.kind {
+                LayoutNodeKind::Text(run) if run.text.chars().all(char::is_whitespace) => continue,
+                LayoutNodeKind::Box => {
+                    let style = child.style;
+                    let (Some(width), Some(height)) = (style.width, style.height) else {
+                        return (Vec::new(), 0.0);
+                    };
+                    let content_width =
+                        clamp_used_dimension(width, style.min_width, style.max_width);
+                    let content_height =
+                        clamp_used_dimension(height, style.min_height, style.max_height);
+                    items.push(FlexRowItem::new(
+                        child.id,
+                        Size {
+                            width: content_width
+                                + style.padding.horizontal()
+                                + style.border_width.horizontal(),
+                            height: content_height
+                                + style.padding.vertical()
+                                + style.border_width.vertical(),
+                        },
+                        style.margin,
+                    ));
+                    nodes.push(child);
+                }
+                LayoutNodeKind::Text(_) | LayoutNodeKind::Root => {
+                    return (Vec::new(), 0.0);
+                }
+            }
+        }
+
+        let Ok(row) =
+            layout_single_line_flex_row(containing_block.origin, containing_block.available, &items)
+        else {
+            return (Vec::new(), 0.0);
+        };
+
+        let mut fragments = Vec::with_capacity(nodes.len());
+        for (child, placement) in nodes.into_iter().zip(row.items.iter()) {
+            let child_containing_block = ContainingBlock {
+                origin: Point {
+                    x: placement.border_box.origin.x - child.style.margin.left,
+                    y: placement.border_box.origin.y - child.style.margin.top,
+                },
+                available: Size {
+                    width: placement.border_box.size.width + child.style.margin.horizontal(),
+                    height: containing_block.available.height,
+                },
+            };
+            let mut child_y = placement.border_box.origin.y;
+            let fragment = if child.style.display_flex {
+                self.layout_flex_box(child, child_containing_block, &mut child_y)
+            } else {
+                self.layout_box(child, child_containing_block, &mut child_y)
+            };
+            fragments.push(fragment);
+        }
+
+        (fragments, row.content_size.height)
+    }
+
     fn layout_box(
         &mut self,
         node: &LayoutNode,
@@ -3188,6 +3355,101 @@ mod tests {
             fragment.boxes.content_box,
             Rect::new(17.0, 17.0, 100.0, 20.0)
         );
+    }
+
+    #[test]
+    fn display_flex_places_fixed_items_in_one_source_order_row() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element("div", Some("display:flex;width:120px")),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("width:20px;height:10px")),
+        )
+        .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("width:30px;height:15px")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert!(output.tree.root.children[0].style.display_flex);
+        assert_eq!(container.children.len(), 2);
+        assert_eq!(container.children[0].boxes.border_box, Rect::new(0.0, 0.0, 20.0, 10.0));
+        assert_eq!(container.children[1].boxes.border_box, Rect::new(20.0, 0.0, 30.0, 15.0));
+        assert_eq!(container.boxes.content_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn flex_ignores_whitespace_between_fixed_items() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element("div", Some("display:flex;width:120px")),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("width:20px;height:10px")),
+        )
+        .unwrap();
+        doc.append_new(container, NodeKind::Text(" \n ".into())).unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("width:30px;height:15px")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children.len(), 2);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 20.0);
+    }
+
+    #[test]
+    fn unsupported_auto_sized_flex_items_do_not_fall_back_to_block_flow() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element("div", Some("display:flex;width:120px")),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert!(container.children.is_empty());
+        assert_eq!(container.boxes.content_box.size.height, 0.0);
     }
 
     #[test]
