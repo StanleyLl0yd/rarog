@@ -943,9 +943,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(layout.line_count, 2);
-        assert_eq!(layout.items[0].border_box.origin, Point::new(0.0, 0.0));
-        assert_eq!(layout.items[1].border_box.origin, Point::new(50.0, 0.0));
-        assert_eq!(layout.items[2].border_box.origin, Point::new(0.0, 25.0));
+        assert_eq!(layout.items[0].border_box.origin, Point { x: 0.0, y: 0.0 });
+        assert_eq!(layout.items[1].border_box.origin, Point { x: 50.0, y: 0.0 });
+        assert_eq!(layout.items[2].border_box.origin, Point { x: 0.0, y: 25.0 });
         assert_eq!(layout.content_size.height, 40.0);
     }
 
@@ -998,9 +998,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(layout.line_count, 2);
-        assert_eq!(layout.items[0].border_box.origin, Point::new(5.0, 10.0));
-        assert_eq!(layout.items[1].border_box.origin, Point::new(50.0, 0.0));
-        assert_eq!(layout.items[2].border_box.origin, Point::new(27.5, 20.0));
+        assert_eq!(layout.items[0].border_box.origin, Point { x: 5.0, y: 10.0 });
+        assert_eq!(layout.items[1].border_box.origin, Point { x: 50.0, y: 0.0 });
+        assert_eq!(layout.items[2].border_box.origin, Point { x: 27.5, y: 20.0 });
     }
 
     #[test]
