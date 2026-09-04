@@ -2456,7 +2456,9 @@ mod render_boundary_hardening_tests {
         assert!(session.dirty_state().is_clean());
 
         session.limits.max_display_commands = DEFAULT_MAX_DISPLAY_COMMANDS;
-        let report = session.update().expect("retained mutation remains retryable");
+        let report = session
+            .update()
+            .expect("retained mutation remains retryable");
         assert_ne!(report.mode, IncrementalMode::Unchanged);
         assert!(session.display_list().len() > retained_commands);
     }
