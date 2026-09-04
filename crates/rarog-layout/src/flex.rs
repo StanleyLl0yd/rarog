@@ -313,9 +313,7 @@ fn apply_main_alignment(
             FlexMainAlignment::Start => (0.0, 0.0),
             FlexMainAlignment::End => (remaining, 0.0),
             FlexMainAlignment::Center => (remaining / 2.0, 0.0),
-            FlexMainAlignment::SpaceBetween if count > 1 => {
-                (0.0, remaining / (count - 1) as f32)
-            }
+            FlexMainAlignment::SpaceBetween if count > 1 => (0.0, remaining / (count - 1) as f32),
             FlexMainAlignment::SpaceBetween => (0.0, 0.0),
             FlexMainAlignment::SpaceAround if count > 0 => {
                 let gap = remaining / count as f32;
@@ -341,8 +339,7 @@ fn apply_main_alignment(
 
     let mut accumulated_gap = leading;
     for (index, placement) in layout.items.iter_mut().enumerate() {
-        placement.border_box.origin.x =
-            finite_add(placement.border_box.origin.x, accumulated_gap)?;
+        placement.border_box.origin.x = finite_add(placement.border_box.origin.x, accumulated_gap)?;
         if index + 1 < count {
             accumulated_gap = finite_add(accumulated_gap, gap)?;
         }
