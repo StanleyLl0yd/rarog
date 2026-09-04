@@ -194,6 +194,7 @@ pub enum MutationError {
     NotElement(NodeId),
     NotText(NodeId),
     WouldCreateCycle { parent: NodeId, child: NodeId },
+    GenerationOverflow,
 }
 
 impl fmt::Display for MutationError {
@@ -217,6 +218,7 @@ impl fmt::Display for MutationError {
                     "appending node {child} to {parent} would create a cycle"
                 )
             }
+            Self::GenerationOverflow => formatter.write_str("DOM generation counter overflow"),
         }
     }
 }
@@ -386,18 +388,20 @@ impl Document {
 
     pub fn create_node(&mut self, kind: NodeKind) -> Result<NodeId, MutationError> {
         self.ensure_creatable_kind(&kind)?;
+        let generation = self.next_generation()?;
         let id = self.allocate_node(kind, None);
-        self.record_mutation(MutationKind::NodeCreated { node: id });
+        self.record_mutation(generation, MutationKind::NodeCreated { node: id });
         Ok(id)
     }
 
     pub fn append_new(&mut self, parent: NodeId, kind: NodeKind) -> Result<NodeId, MutationError> {
         self.ensure_can_have_children(parent)?;
         self.ensure_creatable_kind(&kind)?;
+        let generation = self.next_generation()?;
 
         let id = self.allocate_node(kind, Some(parent));
         self.nodes[parent.index()].children.push(id);
-        self.record_mutation(MutationKind::ChildAdded { parent, child: id });
+        self.record_mutation(generation, MutationKind::ChildAdded { parent, child: id });
         Ok(id)
     }
 
@@ -419,6 +423,7 @@ impl Document {
             return Ok(());
         }
 
+        let generation = self.next_generation()?;
         let old_parent = self.nodes[child.index()].parent;
         if let Some(old_parent) = old_parent {
             self.nodes[old_parent.index()]
@@ -430,11 +435,14 @@ impl Document {
         if !self.nodes[parent.index()].children.contains(&child) {
             self.nodes[parent.index()].children.push(child);
         }
-        self.record_mutation(MutationKind::Reparented {
-            child,
-            old_parent,
-            new_parent: Some(parent),
-        });
+        self.record_mutation(
+            generation,
+            MutationKind::Reparented {
+                child,
+                old_parent,
+                new_parent: Some(parent),
+            },
+        );
         Ok(())
     }
 
@@ -447,16 +455,20 @@ impl Document {
         let Some(parent) = self.nodes[child.index()].parent else {
             return Ok(());
         };
+        let generation = self.next_generation()?;
 
         self.nodes[parent.index()]
             .children
             .retain(|candidate| *candidate != child);
         self.nodes[child.index()].parent = None;
-        self.record_mutation(MutationKind::Reparented {
-            child,
-            old_parent: Some(parent),
-            new_parent: None,
-        });
+        self.record_mutation(
+            generation,
+            MutationKind::Reparented {
+                child,
+                old_parent: Some(parent),
+                new_parent: None,
+            },
+        );
         Ok(())
     }
 
@@ -477,9 +489,13 @@ impl Document {
         if element.attributes.get(&name) == Some(&value) {
             return Ok(());
         }
+        let generation = self.next_generation()?;
 
+        let NodeKind::Element(element) = &mut self.nodes[node.index()].kind else {
+            unreachable!("element kind was validated above");
+        };
         element.attributes.insert(name.clone(), value);
-        self.record_mutation(MutationKind::Attribute { node, name });
+        self.record_mutation(generation, MutationKind::Attribute { node, name });
         Ok(())
     }
 
@@ -489,17 +505,25 @@ impl Document {
         name: &str,
     ) -> Result<Option<String>, MutationError> {
         self.ensure_node(node)?;
-        let NodeKind::Element(element) = &mut self.nodes[node.index()].kind else {
+        let NodeKind::Element(element) = &self.nodes[node.index()].kind else {
             return Err(MutationError::NotElement(node));
         };
+        if !element.attributes.contains_key(name) {
+            return Ok(None);
+        }
+        let generation = self.next_generation()?;
 
+        let NodeKind::Element(element) = &mut self.nodes[node.index()].kind else {
+            unreachable!("element kind was validated above");
+        };
         let removed = element.attributes.remove(name);
-        if removed.is_some() {
-            self.record_mutation(MutationKind::Attribute {
+        self.record_mutation(
+            generation,
+            MutationKind::Attribute {
                 node,
                 name: name.to_string(),
-            });
-        }
+            },
+        );
         Ok(removed)
     }
 
@@ -517,9 +541,13 @@ impl Document {
         if text == &value {
             return Ok(());
         }
+        let generation = self.next_generation()?;
 
+        let NodeKind::Text(text) = &mut self.nodes[node.index()].kind else {
+            unreachable!("text kind was validated above");
+        };
         *text = value;
-        self.record_mutation(MutationKind::CharacterData { node });
+        self.record_mutation(generation, MutationKind::CharacterData { node });
         Ok(())
     }
 
@@ -672,15 +700,15 @@ impl Document {
         false
     }
 
-    fn record_mutation(&mut self, kind: MutationKind) {
-        self.generation = self
-            .generation
+    fn next_generation(&self) -> Result<u64, MutationError> {
+        self.generation
             .checked_add(1)
-            .expect("DOM generation counter overflow");
-        self.mutations.push(MutationRecord {
-            generation: self.generation,
-            kind,
-        });
+            .ok_or(MutationError::GenerationOverflow)
+    }
+
+    fn record_mutation(&mut self, generation: u64, kind: MutationKind) {
+        self.generation = generation;
+        self.mutations.push(MutationRecord { generation, kind });
     }
 }
 
@@ -920,6 +948,33 @@ mod mutation_stress_tests {
     fn next(seed: &mut u64) -> u64 {
         *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         *seed
+    }
+
+    #[test]
+    fn generation_exhaustion_fails_before_mutating_dom_state() {
+        let mut document = Document::new();
+        let parent = document
+            .append_new(document.root(), element("parent"))
+            .unwrap();
+        let text = document
+            .append_new(parent, NodeKind::Text("before".into()))
+            .unwrap();
+        document.generation = u64::MAX;
+
+        let snapshot = document.snapshot();
+        let mutation_count = document.mutation_record_count();
+
+        assert_eq!(
+            document.set_text(text, "after"),
+            Err(MutationError::GenerationOverflow)
+        );
+        assert_eq!(
+            document.append_new(parent, element("child")),
+            Err(MutationError::GenerationOverflow)
+        );
+        assert_eq!(document.snapshot(), snapshot);
+        assert_eq!(document.mutation_record_count(), mutation_count);
+        assert_eq!(document.generation(), u64::MAX);
     }
 
     #[test]
