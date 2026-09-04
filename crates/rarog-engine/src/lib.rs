@@ -1288,7 +1288,7 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
 }
 
 fn flex_container_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
-    before.justify_content != after.justify_content
+    before.justify_content != after.justify_content || before.column_gap != after.column_gap
 }
 
 fn flex_factor_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
@@ -1634,6 +1634,54 @@ mod tests {
                 .origin
                 .x,
             flex_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn column_gap_change_relayouts_the_flex_container() {
+        let source = r#"<div id="flex" style="display:flex;width:100px"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:20px;height:10px;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;width:100px;column-gap:10px"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:20px;height:10px;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
+        let second = element_with_id(session.document(), "second");
+        let flex_x = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("flex container exists")
+            .boxes
+            .content_box
+            .origin
+            .x;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second flex item exists")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 20.0
+        );
+
+        session
+            .document_mut()
+            .set_attribute(flex, "style", "display:flex;width:100px;column-gap:10px")
+            .unwrap();
+        let report = session.update().expect("column-gap update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 30.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),

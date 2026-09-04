@@ -63,6 +63,41 @@ pub enum FlexMainAlignment {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlexRowOptions {
+    main_alignment: FlexMainAlignment,
+    main_gap: f32,
+}
+
+impl Default for FlexRowOptions {
+    fn default() -> Self {
+        Self {
+            main_alignment: FlexMainAlignment::Start,
+            main_gap: 0.0,
+        }
+    }
+}
+
+impl FlexRowOptions {
+    pub const fn with_main_alignment(mut self, alignment: FlexMainAlignment) -> Self {
+        self.main_alignment = alignment;
+        self
+    }
+
+    pub const fn with_main_gap(mut self, gap: f32) -> Self {
+        self.main_gap = gap;
+        self
+    }
+
+    pub const fn main_alignment(self) -> FlexMainAlignment {
+        self.main_alignment
+    }
+
+    pub const fn main_gap(self) -> f32 {
+        self.main_gap
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlexRowPlacement {
     pub node: LayoutNodeId,
     pub border_box: Rect,
@@ -80,6 +115,7 @@ pub struct FlexRowLayout {
 pub enum FlexLayoutError {
     InvalidAvailableSize,
     InvalidOrigin,
+    InvalidGap,
     InvalidItemSize { node: LayoutNodeId },
     InvalidMargin { node: LayoutNodeId },
     NegativeMarginUnsupported { node: LayoutNodeId },
@@ -97,6 +133,7 @@ impl fmt::Display for FlexLayoutError {
                 formatter.write_str("flex available size must be finite and non-negative")
             }
             Self::InvalidOrigin => formatter.write_str("flex origin must be finite"),
+            Self::InvalidGap => formatter.write_str("flex gap must be finite and non-negative"),
             Self::InvalidItemSize { node } => {
                 write!(formatter, "flex item {node:?} has an invalid base size")
             }
@@ -141,11 +178,11 @@ pub fn layout_flexible_single_line_flex_row(
     available_size: Size,
     items: &[FlexibleFlexRowItem],
 ) -> Result<FlexRowLayout, FlexLayoutError> {
-    layout_flexible_single_line_flex_row_with_alignment(
+    layout_flexible_single_line_flex_row_with_options(
         origin,
         available_size,
         items,
-        FlexMainAlignment::Start,
+        FlexRowOptions::default(),
     )
 }
 
@@ -155,10 +192,25 @@ pub fn layout_flexible_single_line_flex_row_with_alignment(
     items: &[FlexibleFlexRowItem],
     alignment: FlexMainAlignment,
 ) -> Result<FlexRowLayout, FlexLayoutError> {
+    layout_flexible_single_line_flex_row_with_options(
+        origin,
+        available_size,
+        items,
+        FlexRowOptions::default().with_main_alignment(alignment),
+    )
+}
+
+pub fn layout_flexible_single_line_flex_row_with_options(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexibleFlexRowItem],
+    options: FlexRowOptions,
+) -> Result<FlexRowLayout, FlexLayoutError> {
     validate_origin(origin)?;
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
+    validate_options(options)?;
 
-    let mut outer_base_width = 0.0_f32;
+    let mut outer_base_width = main_gap_extent(items.len(), options.main_gap())?;
     let mut total_grow = 0.0_f32;
     let mut total_shrink = 0.0_f32;
     for flexible in items {
@@ -226,7 +278,7 @@ pub fn layout_flexible_single_line_flex_row_with_alignment(
         }
     }
 
-    layout_single_line_flex_row_with_alignment(origin, available_size, &resolved, alignment)
+    layout_single_line_flex_row_with_options(origin, available_size, &resolved, options)
 }
 
 pub fn layout_single_line_flex_row(
@@ -234,11 +286,11 @@ pub fn layout_single_line_flex_row(
     available_size: Size,
     items: &[FlexRowItem],
 ) -> Result<FlexRowLayout, FlexLayoutError> {
-    layout_single_line_flex_row_with_alignment(
+    layout_single_line_flex_row_with_options(
         origin,
         available_size,
         items,
-        FlexMainAlignment::Start,
+        FlexRowOptions::default(),
     )
 }
 
@@ -248,14 +300,29 @@ pub fn layout_single_line_flex_row_with_alignment(
     items: &[FlexRowItem],
     alignment: FlexMainAlignment,
 ) -> Result<FlexRowLayout, FlexLayoutError> {
+    layout_single_line_flex_row_with_options(
+        origin,
+        available_size,
+        items,
+        FlexRowOptions::default().with_main_alignment(alignment),
+    )
+}
+
+pub fn layout_single_line_flex_row_with_options(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexRowItem],
+    options: FlexRowOptions,
+) -> Result<FlexRowLayout, FlexLayoutError> {
     validate_origin(origin)?;
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
+    validate_options(options)?;
 
     let mut cursor_x = origin.x;
     let mut max_cross_size = 0.0_f32;
     let mut placements = Vec::with_capacity(items.len());
 
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
         validate_item(*item)?;
 
         cursor_x = finite_add(cursor_x, item.margin.left)?;
@@ -274,6 +341,9 @@ pub fn layout_single_line_flex_row_with_alignment(
 
         cursor_x = finite_add(cursor_x, item.base_size.width)?;
         cursor_x = finite_add(cursor_x, item.margin.right)?;
+        if index + 1 < items.len() {
+            cursor_x = finite_add(cursor_x, options.main_gap())?;
+        }
         let cross_size = finite_add(item.margin.top, item.base_size.height)?;
         let cross_size = finite_add(cross_size, item.margin.bottom)?;
         max_cross_size = max_cross_size.max(cross_size);
@@ -293,7 +363,7 @@ pub fn layout_single_line_flex_row_with_alignment(
         overflows_main_axis: used_main_size > available_size.width,
         overflows_cross_axis: max_cross_size > available_size.height,
     };
-    apply_main_alignment(&mut layout, available_size.width, alignment)?;
+    apply_main_alignment(&mut layout, available_size.width, options.main_alignment())?;
     Ok(layout)
 }
 
@@ -345,6 +415,21 @@ fn apply_main_alignment(
         }
     }
     Ok(())
+}
+
+fn validate_options(options: FlexRowOptions) -> Result<(), FlexLayoutError> {
+    if options.main_gap().is_finite() && options.main_gap() >= 0.0 {
+        Ok(())
+    } else {
+        Err(FlexLayoutError::InvalidGap)
+    }
+}
+
+fn main_gap_extent(count: usize, gap: f32) -> Result<f32, FlexLayoutError> {
+    if count <= 1 {
+        return Ok(0.0);
+    }
+    finite_mul(gap, (count - 1) as f32)
 }
 
 fn finite_mul(left: f32, right: f32) -> Result<f32, FlexLayoutError> {
@@ -518,6 +603,98 @@ mod tests {
         assert_eq!(layout.items[1].border_box.size.width, 25.0);
         assert!(layout.overflows_main_axis);
         assert!(layout.overflows_cross_axis);
+    }
+
+    #[test]
+    fn main_gap_participates_in_placement_and_content_extent() {
+        let items = [item(1, 20.0, 10.0), item(2, 30.0, 10.0)];
+        let layout = layout_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default().with_main_gap(10.0),
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.x, 0.0);
+        assert_eq!(layout.items[1].border_box.origin.x, 30.0);
+        assert_eq!(layout.content_size.width, 60.0);
+    }
+
+    #[test]
+    fn flexible_sizing_reserves_fixed_gap_before_grow_distribution() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 1.0, 1.0),
+            FlexibleFlexRowItem::new(item(2, 20.0, 10.0), 1.0, 1.0),
+        ];
+        let layout = layout_flexible_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default().with_main_gap(10.0),
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 45.0);
+        assert_eq!(layout.items[1].border_box.size.width, 45.0);
+        assert_eq!(layout.items[1].border_box.origin.x, 55.0);
+        assert_eq!(layout.content_size.width, 100.0);
+    }
+
+    #[test]
+    fn fixed_gap_and_distributed_alignment_compose_after_sizing() {
+        let items = [item(1, 20.0, 10.0), item(2, 20.0, 10.0)];
+        let layout = layout_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_main_gap(10.0)
+                .with_main_alignment(FlexMainAlignment::Center),
+        )
+        .unwrap();
+
+        assert_eq!(layout.content_size.width, 50.0);
+        assert_eq!(layout.items[0].border_box.origin.x, 25.0);
+        assert_eq!(layout.items[1].border_box.origin.x, 55.0);
+    }
+
+    #[test]
+    fn invalid_main_gap_is_rejected_explicitly() {
+        let items = [item(1, 20.0, 10.0)];
+        assert_eq!(
+            layout_single_line_flex_row_with_options(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 20.0,
+                },
+                &items,
+                FlexRowOptions::default().with_main_gap(f32::NAN),
+            ),
+            Err(FlexLayoutError::InvalidGap)
+        );
+        assert_eq!(
+            layout_single_line_flex_row_with_options(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 20.0,
+                },
+                &items,
+                FlexRowOptions::default().with_main_gap(-1.0),
+            ),
+            Err(FlexLayoutError::InvalidGap)
+        );
     }
 
     #[test]

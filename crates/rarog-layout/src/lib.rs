@@ -1,10 +1,11 @@
 mod flex;
 
 pub use flex::{
-    FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout, FlexRowPlacement,
-    FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
-    layout_flexible_single_line_flex_row_with_alignment, layout_single_line_flex_row,
-    layout_single_line_flex_row_with_alignment,
+    FlexLayoutError, FlexMainAlignment, FlexRowItem, FlexRowLayout, FlexRowOptions,
+    FlexRowPlacement, FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
+    layout_flexible_single_line_flex_row_with_alignment,
+    layout_flexible_single_line_flex_row_with_options, layout_single_line_flex_row,
+    layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_options,
 };
 
 use rarog_css::{
@@ -2967,11 +2968,13 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(row) = layout_flexible_single_line_flex_row_with_alignment(
+        let Ok(row) = layout_flexible_single_line_flex_row_with_options(
             containing_block.origin,
             containing_block.available,
             &items,
-            flex_main_alignment(container.style.justify_content),
+            FlexRowOptions::default()
+                .with_main_alignment(flex_main_alignment(container.style.justify_content))
+                .with_main_gap(container.style.column_gap),
         ) else {
             return (Vec::new(), 0.0);
         };
@@ -3459,6 +3462,92 @@ mod tests {
             Rect::new(20.0, 0.0, 30.0, 15.0)
         );
         assert_eq!(container.boxes.content_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn column_gap_and_gap_shorthand_space_single_row_flex_items() {
+        let mut column_doc = Document::new();
+        let column = column_doc
+            .append_new(
+                column_doc.root(),
+                element("div", Some("display:flex;width:100px;column-gap:10px")),
+            )
+            .unwrap();
+        column_doc
+            .append_new(column, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        column_doc
+            .append_new(column, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+
+        let column_output = layout_document(
+            &column_doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let column = &column_output.fragments.root.children[0];
+        assert_eq!(column.children[0].boxes.border_box.origin.x, 0.0);
+        assert_eq!(column.children[1].boxes.border_box.origin.x, 30.0);
+
+        let mut shorthand_doc = Document::new();
+        let shorthand = shorthand_doc
+            .append_new(
+                shorthand_doc.root(),
+                element("div", Some("display:flex;width:100px;gap:7px 12px")),
+            )
+            .unwrap();
+        shorthand_doc
+            .append_new(shorthand, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        shorthand_doc
+            .append_new(shorthand, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+
+        let shorthand_output = layout_document(
+            &shorthand_doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let shorthand = &shorthand_output.fragments.root.children[0];
+        assert_eq!(shorthand.children[0].boxes.border_box.origin.x, 0.0);
+        assert_eq!(shorthand.children[1].boxes.border_box.origin.x, 32.0);
+        assert_eq!(shorthand.style.row_gap, 7.0);
+        assert_eq!(shorthand.style.column_gap, 12.0);
+    }
+
+    #[test]
+    fn column_gap_is_reserved_before_flex_grow() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element("div", Some("display:flex;width:100px;column-gap:10px")),
+            )
+            .unwrap();
+        for _ in 0..2 {
+            doc.append_new(
+                container,
+                element("div", Some("width:20px;height:10px;flex-grow:1")),
+            )
+            .unwrap();
+        }
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.size.width, 45.0);
+        assert_eq!(container.children[1].boxes.border_box.size.width, 45.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 55.0);
     }
 
     #[test]

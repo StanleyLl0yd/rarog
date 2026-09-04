@@ -93,6 +93,8 @@ pub struct ComputedStyle {
     pub flex_grow: f32,
     pub flex_shrink: f32,
     pub justify_content: JustifyContent,
+    pub row_gap: f32,
+    pub column_gap: f32,
     pub establishes_bfc: bool,
     pub vertical_align: VerticalAlign,
 }
@@ -118,6 +120,8 @@ impl Default for ComputedStyle {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             justify_content: JustifyContent::FlexStart,
+            row_gap: 0.0,
+            column_gap: 0.0,
             establishes_bfc: false,
             vertical_align: VerticalAlign::Baseline,
         }
@@ -298,6 +302,8 @@ pub enum PropertyId {
     FlexGrow,
     FlexShrink,
     JustifyContent,
+    RowGap,
+    ColumnGap,
     VerticalAlign,
 }
 
@@ -740,6 +746,8 @@ fn copy_property_from_style(
         PropertyId::FlexGrow => style.flex_grow = source.flex_grow,
         PropertyId::FlexShrink => style.flex_shrink = source.flex_shrink,
         PropertyId::JustifyContent => style.justify_content = source.justify_content,
+        PropertyId::RowGap => style.row_gap = source.row_gap,
+        PropertyId::ColumnGap => style.column_gap = source.column_gap,
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
     }
 }
@@ -808,6 +816,8 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         (PropertyId::JustifyContent, PropertyValue::JustifyContent(value)) => {
             style.justify_content = value
         }
+        (PropertyId::RowGap, PropertyValue::Length(value)) => style.row_gap = value,
+        (PropertyId::ColumnGap, PropertyValue::Length(value)) => style.column_gap = value,
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
             style.vertical_align = value
         }
@@ -992,6 +1002,9 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         }
         "flex-grow" => push_non_negative_number(output, PropertyId::FlexGrow, value, important),
         "flex-shrink" => push_non_negative_number(output, PropertyId::FlexShrink, value, important),
+        "row-gap" => push_gap_value(output, PropertyId::RowGap, value, important),
+        "column-gap" => push_gap_value(output, PropertyId::ColumnGap, value, important),
+        "gap" => push_gap_shorthand(output, value, important),
         "justify-content" => {
             let value = value.trim();
             let value = if value.eq_ignore_ascii_case("flex-start")
@@ -1131,6 +1144,9 @@ fn push_css_wide(
         "flex-grow" => &[PropertyId::FlexGrow],
         "flex-shrink" => &[PropertyId::FlexShrink],
         "justify-content" => &[PropertyId::JustifyContent],
+        "row-gap" => &[PropertyId::RowGap],
+        "column-gap" => &[PropertyId::ColumnGap],
+        "gap" => &[PropertyId::RowGap, PropertyId::ColumnGap],
         "vertical-align" => &[PropertyId::VerticalAlign],
         _ => return,
     };
@@ -1188,6 +1204,62 @@ fn push_length(
             important,
         });
     }
+}
+
+fn push_gap_shorthand(output: &mut Vec<Declaration>, value: &str, important: bool) {
+    let parts = value.split_whitespace().collect::<Vec<_>>();
+    let (row, column) = match parts.as_slice() {
+        [both] => {
+            let Some(value) = parse_gap_component(both) else {
+                return;
+            };
+            (value, value)
+        }
+        [row, column] => {
+            let (Some(row), Some(column)) = (parse_gap_component(row), parse_gap_component(column))
+            else {
+                return;
+            };
+            (row, column)
+        }
+        _ => return,
+    };
+
+    output.push(Declaration {
+        property: PropertyId::RowGap,
+        value: PropertyValue::Length(row),
+        important,
+    });
+    output.push(Declaration {
+        property: PropertyId::ColumnGap,
+        value: PropertyValue::Length(column),
+        important,
+    });
+}
+
+fn push_gap_value(
+    output: &mut Vec<Declaration>,
+    property: PropertyId,
+    value: &str,
+    important: bool,
+) {
+    let Some(value) = parse_gap_component(value) else {
+        return;
+    };
+    output.push(Declaration {
+        property,
+        value: PropertyValue::Length(value),
+        important,
+    });
+}
+
+fn parse_gap_component(value: &str) -> Option<f32> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("normal") {
+        return Some(0.0);
+    }
+    let value = parse_px(value)?;
+    (value >= 0.0).then_some(value)
 }
 
 fn push_non_negative_number(
@@ -1916,6 +1988,51 @@ mod finite_geometry_tests {
             value: PropertyValue::CssWide(CssWideKeyword::Initial),
             important: false,
         }));
+    }
+
+    #[test]
+    fn gap_shorthand_and_longhands_parse_to_non_negative_used_lengths() {
+        let declarations = parse_declarations("gap:6px 10px");
+        assert_eq!(
+            declarations,
+            vec![
+                Declaration {
+                    property: PropertyId::RowGap,
+                    value: PropertyValue::Length(6.0),
+                    important: false,
+                },
+                Declaration {
+                    property: PropertyId::ColumnGap,
+                    value: PropertyValue::Length(10.0),
+                    important: false,
+                },
+            ]
+        );
+
+        let normal = parse_declarations("row-gap:normal;column-gap:12px");
+        assert!(normal.contains(&Declaration {
+            property: PropertyId::RowGap,
+            value: PropertyValue::Length(0.0),
+            important: false,
+        }));
+        assert!(normal.contains(&Declaration {
+            property: PropertyId::ColumnGap,
+            value: PropertyValue::Length(12.0),
+            important: false,
+        }));
+
+        assert!(parse_declarations("gap:-1px").is_empty());
+        assert!(parse_declarations("gap:1px 2px 3px").is_empty());
+
+        let mut style = ComputedStyle::default();
+        assert_eq!(style.row_gap, 0.0);
+        assert_eq!(style.column_gap, 0.0);
+        apply_property_value(
+            &mut style,
+            PropertyId::ColumnGap,
+            PropertyValue::Length(14.0),
+        );
+        assert_eq!(style.column_gap, 14.0);
     }
 
     #[test]
