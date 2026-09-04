@@ -67,6 +67,7 @@ const VK_RMENU: usize = 0xa5;
 
 #[derive(Debug)]
 pub struct WindowsInputService {
+    limits: InputLimits,
     state: Mutex<WindowsInputState>,
     text_input_state: Mutex<TextInputState>,
 }
@@ -92,16 +93,14 @@ impl WindowsInputService {
 
     fn new_unchecked_with_limits(limits: InputLimits) -> Self {
         Self {
+            limits,
             state: Mutex::new(WindowsInputState::new(limits)),
             text_input_state: Mutex::new(TextInputState::disabled()),
         }
     }
 
-    pub fn limits(&self) -> Result<InputLimits, PlatformInputError> {
-        self.state
-            .lock()
-            .map(|state| state.limits)
-            .map_err(|_| PlatformInputError::BackendFailure)
+    pub const fn limits(&self) -> InputLimits {
+        self.limits
     }
 
     pub fn push_window_message(
@@ -155,13 +154,14 @@ impl WindowsInputService {
         text: &[u16],
         selection_utf16: Option<(usize, usize)>,
     ) -> Result<(), PlatformInputError> {
-        let selection = selection_utf16
-            .map(|(start, end)| utf16_range_to_text_range(text, start, end))
-            .transpose()?;
         let mut state = self
             .state
             .lock()
             .map_err(|_| PlatformInputError::BackendFailure)?;
+        state.ensure_queue_capacity(1)?;
+        let selection = selection_utf16
+            .map(|(start, end)| utf16_range_to_text_range(text, start, end))
+            .transpose()?;
         let text = decode_utf16_bounded(text, state.limits.max_text_bytes)?;
         state.push_text_event(TextInputEvent::CompositionUpdate { text, selection })
     }
@@ -171,6 +171,7 @@ impl WindowsInputService {
             .state
             .lock()
             .map_err(|_| PlatformInputError::BackendFailure)?;
+        state.ensure_queue_capacity(1)?;
         let text = decode_utf16_bounded(text, state.limits.max_text_bytes)?;
         state.push_text_event(TextInputEvent::CompositionEnd { text })
     }
@@ -180,6 +181,7 @@ impl WindowsInputService {
             .state
             .lock()
             .map_err(|_| PlatformInputError::BackendFailure)?;
+        state.ensure_queue_capacity(1)?;
         let text = decode_utf16_bounded(text, state.limits.max_text_bytes)?;
         state.push_text_event(TextInputEvent::Commit { text })
     }
@@ -195,10 +197,7 @@ impl WindowsInputService {
 
 impl PlatformInputService for WindowsInputService {
     fn limits(&self) -> InputLimits {
-        self.state
-            .lock()
-            .map(|state| state.limits)
-            .unwrap_or_default()
+        self.limits
     }
 
     fn poll_event(&self) -> Result<Option<PlatformInputEvent>, PlatformInputError> {
@@ -692,6 +691,83 @@ mod tests {
 
     fn pop(state: &mut WindowsInputState) -> PlatformInputEvent {
         state.queue.pop_front().expect("expected normalized event")
+    }
+
+    #[test]
+    fn invalid_input_limits_are_rejected_before_target_availability() {
+        assert_eq!(
+            WindowsInputService::try_with_limits(InputLimits {
+                max_queued_events: 0,
+                max_text_bytes: 1,
+            })
+            .unwrap_err(),
+            PlatformInputError::InvalidLimits
+        );
+    }
+
+    #[test]
+    fn input_queue_limit_rejects_new_events_without_mutating_modifier_state() {
+        let limits = InputLimits {
+            max_queued_events: 1,
+            max_text_bytes: 1024,
+        };
+        let mut state = WindowsInputState::new(limits);
+        state
+            .push_window_message(
+                WM_KEYDOWN,
+                usize::from(b'A'),
+                key_lparam(0x1e, false, false),
+            )
+            .unwrap();
+
+        assert_eq!(
+            state
+                .push_window_message(WM_KEYDOWN, VK_SHIFT, key_lparam(0x2a, false, false))
+                .unwrap_err(),
+            PlatformInputError::QueueLimitExceeded {
+                events: 2,
+                limit: 1,
+            }
+        );
+        assert!(!state.modifiers.shift);
+        assert_eq!(state.queue.len(), 1);
+    }
+
+    #[test]
+    fn surrogate_replacement_is_atomic_when_queue_capacity_is_insufficient() {
+        let limits = InputLimits {
+            max_queued_events: 1,
+            max_text_bytes: 1024,
+        };
+        let mut state = WindowsInputState::new(limits);
+        state.push_window_message(WM_CHAR, 0xd83d, 0).unwrap();
+
+        assert_eq!(
+            state
+                .push_window_message(WM_CHAR, usize::from(b'A'), 0)
+                .unwrap_err(),
+            PlatformInputError::QueueLimitExceeded {
+                events: 2,
+                limit: 1,
+            }
+        );
+        assert_eq!(state.pending_high_surrogate, Some(0xd83d));
+        assert!(state.queue.is_empty());
+    }
+
+    #[test]
+    fn ime_text_limit_is_checked_before_queueing_decoded_text() {
+        let service = WindowsInputService::new_unchecked_with_limits(InputLimits {
+            max_queued_events: 4,
+            max_text_bytes: 4,
+        });
+        let text = "入力".encode_utf16().collect::<Vec<_>>();
+
+        assert_eq!(
+            service.push_ime_commit_utf16(&text),
+            Err(PlatformInputError::TextLimitExceeded { bytes: 6, limit: 4 })
+        );
+        assert_eq!(service.poll_event().unwrap(), None);
     }
 
     #[test]
