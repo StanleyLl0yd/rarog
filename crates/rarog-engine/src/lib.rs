@@ -1586,8 +1586,15 @@ mod tests {
         let source = r#"<div id="flex" style="display:flex;width:100px"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:30px;height:10px;background:#445566"></div></div>"#;
         let expected_source = r#"<div id="flex" style="display:flex;width:100px"><div id="first" style="width:40px;height:10px;background:#112233"></div><div id="second" style="width:30px;height:10px;background:#445566"></div></div>"#;
         let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
         let first = element_with_id(session.document(), "first");
         let second = element_with_id(session.document(), "second");
+        let flex_x = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("flex container exists")
+            .boxes
+            .content_box
+            .origin
+            .x;
 
         assert_eq!(
             fragment_for_dom(&session.layout().fragments, second)
@@ -1596,7 +1603,7 @@ mod tests {
                 .border_box
                 .origin
                 .x,
-            20.0
+            flex_x + 20.0
         );
 
         session
@@ -1617,16 +1624,14 @@ mod tests {
                 .border_box
                 .origin
                 .x,
-            40.0
+            flex_x + 40.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
             expected.framebuffer.stable_hash64()
         );
-        assert!(matches!(
-            report.mode,
-            IncrementalMode::FlowRelayout | IncrementalMode::FullRebuild
-        ));
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
     }
 
     #[test]
