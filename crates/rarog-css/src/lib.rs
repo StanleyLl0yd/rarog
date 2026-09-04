@@ -957,12 +957,16 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
             }
         }
         "display" => {
-            let display = match value.to_ascii_lowercase().as_str() {
-                "none" => Some(DisplayValue::None),
-                "block" => Some(DisplayValue::Block),
-                "inline" => Some(DisplayValue::Inline),
-                "flow-root" => Some(DisplayValue::FlowRoot),
-                _ => None,
+            let display = if value.eq_ignore_ascii_case("none") {
+                Some(DisplayValue::None)
+            } else if value.eq_ignore_ascii_case("block") {
+                Some(DisplayValue::Block)
+            } else if value.eq_ignore_ascii_case("inline") {
+                Some(DisplayValue::Inline)
+            } else if value.eq_ignore_ascii_case("flow-root") {
+                Some(DisplayValue::FlowRoot)
+            } else {
+                None
             };
             if let Some(display) = display {
                 output.push(Declaration {
@@ -973,11 +977,15 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
             }
         }
         "vertical-align" => {
-            let value = match value.trim().to_ascii_lowercase().as_str() {
-                "baseline" => Some(VerticalAlign::Baseline),
-                "top" => Some(VerticalAlign::Top),
-                "bottom" => Some(VerticalAlign::Bottom),
-                _ => None,
+            let value = value.trim();
+            let value = if value.eq_ignore_ascii_case("baseline") {
+                Some(VerticalAlign::Baseline)
+            } else if value.eq_ignore_ascii_case("top") {
+                Some(VerticalAlign::Top)
+            } else if value.eq_ignore_ascii_case("bottom") {
+                Some(VerticalAlign::Bottom)
+            } else {
+                None
             };
             if let Some(value) = value {
                 output.push(Declaration {
@@ -992,13 +1000,19 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
 }
 
 fn parse_css_wide(value: &str) -> Option<CssWideKeyword> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "initial" => Some(CssWideKeyword::Initial),
-        "inherit" => Some(CssWideKeyword::Inherit),
-        "unset" => Some(CssWideKeyword::Unset),
-        "revert" => Some(CssWideKeyword::Revert),
-        "revert-layer" => Some(CssWideKeyword::RevertLayer),
-        _ => None,
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("initial") {
+        Some(CssWideKeyword::Initial)
+    } else if value.eq_ignore_ascii_case("inherit") {
+        Some(CssWideKeyword::Inherit)
+    } else if value.eq_ignore_ascii_case("unset") {
+        Some(CssWideKeyword::Unset)
+    } else if value.eq_ignore_ascii_case("revert") {
+        Some(CssWideKeyword::Revert)
+    } else if value.eq_ignore_ascii_case("revert-layer") {
+        Some(CssWideKeyword::RevertLayer)
+    } else {
+        None
     }
 }
 
@@ -1069,8 +1083,8 @@ fn push_sizing_value(
     allow_none: bool,
     important: bool,
 ) {
-    let normalized = value.trim().to_ascii_lowercase();
-    if allow_auto && normalized == "auto" {
+    let value = value.trim();
+    if allow_auto && value.eq_ignore_ascii_case("auto") {
         output.push(Declaration {
             property,
             value: PropertyValue::Auto,
@@ -1078,7 +1092,7 @@ fn push_sizing_value(
         });
         return;
     }
-    if allow_none && normalized == "none" {
+    if allow_none && value.eq_ignore_ascii_case("none") {
         output.push(Declaration {
             property,
             value: PropertyValue::NoneKeyword,
@@ -1163,22 +1177,25 @@ fn parse_edge_sizes(value: &str) -> Option<EdgeSizes> {
 
 fn parse_color(value: &str) -> Option<Color> {
     let value = value.trim();
-    match value.to_ascii_lowercase().as_str() {
-        "transparent" => Some(Color::TRANSPARENT),
-        "white" => Some(Color::WHITE),
-        "black" => Some(Color::BLACK),
-        _ => {
-            let hex = value.strip_prefix('#')?;
-            if hex.len() != 6 {
-                return None;
-            }
-            Some(Color::rgb(
-                u8::from_str_radix(hex.get(0..2)?, 16).ok()?,
-                u8::from_str_radix(hex.get(2..4)?, 16).ok()?,
-                u8::from_str_radix(hex.get(4..6)?, 16).ok()?,
-            ))
-        }
+    if value.eq_ignore_ascii_case("transparent") {
+        return Some(Color::TRANSPARENT);
     }
+    if value.eq_ignore_ascii_case("white") {
+        return Some(Color::WHITE);
+    }
+    if value.eq_ignore_ascii_case("black") {
+        return Some(Color::BLACK);
+    }
+
+    let hex = value.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    Some(Color::rgb(
+        u8::from_str_radix(hex.get(0..2)?, 16).ok()?,
+        u8::from_str_radix(hex.get(2..4)?, 16).ok()?,
+        u8::from_str_radix(hex.get(4..6)?, 16).ok()?,
+    ))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1774,6 +1791,44 @@ mod finite_geometry_tests {
         document.append_child(document.root(), detached).unwrap();
         let invalidation = InvalidationSet::from_document_since(&document, generation);
         assert!(invalidation.entries.contains_key(&detached));
+    }
+
+    #[test]
+    fn ascii_keyword_values_remain_case_insensitive() {
+        let declarations = parse_declarations(
+            "display:FlOw-RoOt;vertical-align:TOP;color:BlAcK;width:AuTo;max-width:NoNe;margin-top:InItIaL",
+        );
+
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::Display,
+            value: PropertyValue::Display(DisplayValue::FlowRoot),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::VerticalAlign,
+            value: PropertyValue::VerticalAlign(VerticalAlign::Top),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::Color,
+            value: PropertyValue::Color(Color::BLACK),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::Width,
+            value: PropertyValue::Auto,
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::MaxWidth,
+            value: PropertyValue::NoneKeyword,
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::MarginTop,
+            value: PropertyValue::CssWide(CssWideKeyword::Initial),
+            important: false,
+        }));
     }
 
     #[test]
