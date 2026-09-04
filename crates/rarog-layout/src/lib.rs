@@ -2952,8 +2952,7 @@ impl FragmentBuilder {
                         )
                         .with_main_size_limits(
                             effective_min_width + horizontal_noncontent,
-                            effective_max_width
-                                .map(|maximum| maximum + horizontal_noncontent),
+                            effective_max_width.map(|maximum| maximum + horizontal_noncontent),
                         ),
                     );
                     nodes.push(child);
@@ -3522,10 +3521,7 @@ mod tests {
             shrink_container.children[1].boxes.border_box.size.width,
             15.0
         );
-        assert_eq!(
-            shrink_container.children[1].boxes.border_box.origin.x,
-            30.0
-        );
+        assert_eq!(shrink_container.children[1].boxes.border_box.origin.x, 30.0);
     }
 
     #[test]
