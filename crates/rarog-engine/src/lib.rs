@@ -483,7 +483,6 @@ impl RenderSession {
 
         let mut layout = self.layout.clone();
         let mut display_list = self.display_list.clone();
-        let mut damage = DamageRegion::default();
 
         let mut style_candidates = dirty
             .entries()
@@ -559,7 +558,7 @@ impl RenderSession {
             }
         }
 
-        let mut rebuilt_styles =
+        let rebuilt_styles =
             stylesheet_sources_changed.then(|| StyleSet::for_document(&self.document));
         let new_styles = rebuilt_styles.as_ref().unwrap_or(&self.styles);
         validate_style_limits(new_styles, self.limits)?;
@@ -747,6 +746,7 @@ impl RenderSession {
         let mode;
         let patched_nodes;
         let retained_display_list;
+        let damage;
         if requires_full_rebuild {
             let styles = rebuilt_styles.as_ref().unwrap_or(&self.styles);
             layout = layout_document_with_styles(&self.document, styles, self.options.viewport);
