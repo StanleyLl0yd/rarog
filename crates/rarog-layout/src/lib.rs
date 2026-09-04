@@ -3098,7 +3098,10 @@ mod tests {
     fn text_run_reuses_segmentation_without_changing_cluster_or_intrinsic_results() {
         let run = TextRun::new("a e\u{301} bc 😀".into());
         assert_eq!(run.shaped.clusters.len(), 8);
-        assert_eq!(run.font_runs, font_runs(&run.text, &FontFallbackChain::default()));
+        assert_eq!(
+            run.font_runs,
+            font_runs(&run.text, &FontFallbackChain::default())
+        );
         assert_eq!(run.intrinsic_sizes().min_content, 16.0);
         assert_eq!(run.intrinsic_sizes().max_content, run.advance);
     }
