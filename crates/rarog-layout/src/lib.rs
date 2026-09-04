@@ -2859,8 +2859,8 @@ impl FragmentBuilder {
                 .height
                 .map(|height| clamp_used_dimension(height, style.min_height, style.max_height))
         });
-        let available_content_height = definite_content_height
-            .unwrap_or_else(|| containing_block.available.height.max(0.0));
+        let available_content_height =
+            definite_content_height.unwrap_or_else(|| containing_block.available.height.max(0.0));
 
         let child_containing_block = ContainingBlock {
             origin: Point {
@@ -3177,9 +3177,8 @@ impl FragmentBuilder {
 }
 
 fn stretched_flex_item_content_height(style: ComputedStyle, line_cross_size: f32) -> f32 {
-    let outer_noncontent = style.margin.vertical()
-        + style.border_width.vertical()
-        + style.padding.vertical();
+    let outer_noncontent =
+        style.margin.vertical() + style.border_width.vertical() + style.padding.vertical();
     clamp_used_dimension(
         (line_cross_size - outer_noncontent).max(0.0),
         style.min_height,
