@@ -2929,22 +2929,33 @@ impl FragmentBuilder {
                         clamp_used_dimension(width, style.min_width, style.max_width);
                     let content_height =
                         clamp_used_dimension(height, style.min_height, style.max_height);
-                    items.push(FlexibleFlexRowItem::new(
-                        FlexRowItem::new(
-                            child.id,
-                            Size {
-                                width: content_width
-                                    + style.padding.horizontal()
-                                    + style.border_width.horizontal(),
-                                height: content_height
-                                    + style.padding.vertical()
-                                    + style.border_width.vertical(),
-                            },
-                            style.margin,
+                    let horizontal_noncontent =
+                        style.padding.horizontal() + style.border_width.horizontal();
+                    let effective_min_width = style.min_width.unwrap_or(0.0);
+                    let effective_max_width = style
+                        .max_width
+                        .map(|maximum| maximum.max(effective_min_width));
+                    items.push(
+                        FlexibleFlexRowItem::new(
+                            FlexRowItem::new(
+                                child.id,
+                                Size {
+                                    width: content_width + horizontal_noncontent,
+                                    height: content_height
+                                        + style.padding.vertical()
+                                        + style.border_width.vertical(),
+                                },
+                                style.margin,
+                            ),
+                            style.flex_grow,
+                            style.flex_shrink,
+                        )
+                        .with_main_size_limits(
+                            effective_min_width + horizontal_noncontent,
+                            effective_max_width
+                                .map(|maximum| maximum + horizontal_noncontent),
                         ),
-                        style.flex_grow,
-                        style.flex_shrink,
-                    ));
+                    );
                     nodes.push(child);
                 }
                 LayoutNodeKind::Text(_) | LayoutNodeKind::Root => {
@@ -3515,6 +3526,34 @@ mod tests {
             shrink_container.children[1].boxes.border_box.origin.x,
             30.0
         );
+    }
+
+    #[test]
+    fn flex_sizing_fails_closed_when_post_flex_limits_need_redistribution() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(doc.root(), element("div", Some("display:flex;width:100px")))
+            .unwrap();
+        doc.append_new(
+            container,
+            element(
+                "div",
+                Some("width:20px;max-width:30px;height:10px;flex-grow:1"),
+            ),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert!(container.children.is_empty());
+        assert_eq!(container.boxes.content_box.size.height, 0.0);
     }
 
     #[test]
