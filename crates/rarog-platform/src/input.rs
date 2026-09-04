@@ -331,9 +331,7 @@ impl fmt::Display for PlatformInputError {
                 formatter.write_str("pointer pressure must be finite and within 0..=1")
             }
             Self::InvalidWheelDelta => formatter.write_str("wheel deltas must be finite"),
-            Self::InvalidTextRange => {
-                formatter.write_str("text range start must not exceed end")
-            }
+            Self::InvalidTextRange => formatter.write_str("text range start must not exceed end"),
             Self::BackendFailure => formatter.write_str("platform input backend failed"),
         }
     }
