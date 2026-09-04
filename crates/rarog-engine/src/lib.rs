@@ -459,13 +459,15 @@ impl RenderSession {
                 ),
                 Err(_) => (Vec::new(), true),
             };
-        self.dirty.capture(&self.document, &self.styles);
-        let through_generation = self.dirty.through_generation();
-        let dirty_nodes = self.dirty.entries().len();
+        let mut dirty = self.dirty.clone();
+        dirty.capture(&self.document, &self.styles);
+        let through_generation = dirty.through_generation();
+        let dirty_nodes = dirty.entries().len();
 
         if !mutation_history_lost && (mutations.is_empty() || dirty_nodes == 0) {
             self.damage = DamageRegion::default();
-            self.dirty.clear();
+            dirty.clear();
+            self.dirty = dirty;
             self.document.prune_mutations_through(through_generation);
             return Ok(IncrementalReport {
                 mode: IncrementalMode::Unchanged,
@@ -479,8 +481,11 @@ impl RenderSession {
             });
         }
 
-        let mut style_candidates = self
-            .dirty
+        let mut layout = self.layout.clone();
+        let mut display_list = self.display_list.clone();
+        let mut damage = DamageRegion::default();
+
+        let mut style_candidates = dirty
             .entries()
             .iter()
             .filter_map(|(node, flags)| flags.style.then_some(*node))
@@ -571,7 +576,7 @@ impl RenderSession {
                 .copied()
                 .collect::<Vec<_>>();
             if !refresh_layout_subtrees(
-                &mut self.layout.tree,
+                &mut layout.tree,
                 &self.document,
                 new_styles,
                 &structural_roots,
@@ -599,7 +604,7 @@ impl RenderSession {
                 &self.document,
                 &self.styles,
                 new_styles,
-                &self.layout.tree.root,
+                &layout.tree.root,
                 &structural_relayout_nodes,
                 &mut formatting_relayout_nodes,
             ) {
@@ -607,7 +612,7 @@ impl RenderSession {
             } else {
                 style_candidates
                     .retain(|candidate| !node_is_within_style_element(&self.document, *candidate));
-                collect_layout_dom_nodes(&self.layout.tree.root, &mut style_candidates);
+                collect_layout_dom_nodes(&layout.tree.root, &mut style_candidates);
             }
         }
 
@@ -618,7 +623,7 @@ impl RenderSession {
                     continue;
                 }
                 let new_style = computed_style(&self.document, node, new_styles);
-                let Some(old_style) = layout_style_for_dom(&self.layout.tree.root, node) else {
+                let Some(old_style) = layout_style_for_dom(&layout.tree.root, node) else {
                     let Some(current) = self.document.node(node) else {
                         requires_full_rebuild = true;
                         break;
@@ -632,7 +637,7 @@ impl RenderSession {
                         }
                         let Some(root) = retained_structural_parent(
                             &self.document,
-                            &self.layout.tree.root,
+                            &layout.tree.root,
                             node,
                         ) else {
                             requires_full_rebuild = true;
@@ -646,7 +651,7 @@ impl RenderSession {
                 };
                 if formatting_boundary_changed(old_style, new_style) {
                     let Some(root) =
-                        retained_structural_parent(&self.document, &self.layout.tree.root, node)
+                        retained_structural_parent(&self.document, &layout.tree.root, node)
                     else {
                         requires_full_rebuild = true;
                         break;
@@ -655,10 +660,10 @@ impl RenderSession {
                     continue;
                 }
                 if old_style != new_style {
-                    if fragments_for_dom(&self.layout.fragments, node).len() > 1 {
+                    if fragments_for_dom(&layout.fragments, node).len() > 1 {
                         let Some(root) = retained_structural_parent(
                             &self.document,
-                            &self.layout.tree.root,
+                            &layout.tree.root,
                             node,
                         ) else {
                             requires_full_rebuild = true;
@@ -669,7 +674,7 @@ impl RenderSession {
                     }
                     if old_style.color != new_style.color {
                         collect_layout_descendant_dom_nodes(
-                            &self.layout.tree.root,
+                            &layout.tree.root,
                             node,
                             &mut style_candidates,
                         );
@@ -682,7 +687,7 @@ impl RenderSession {
                     {
                         let Some(root) = retained_structural_parent(
                             &self.document,
-                            &self.layout.tree.root,
+                            &layout.tree.root,
                             node,
                         ) else {
                             requires_full_rebuild = true;
@@ -709,7 +714,7 @@ impl RenderSession {
                 .copied()
                 .collect::<Vec<_>>();
             if !refresh_layout_subtrees(
-                &mut self.layout.tree,
+                &mut layout.tree,
                 &self.document,
                 new_styles,
                 &formatting_roots,
@@ -735,7 +740,7 @@ impl RenderSession {
 
         if !requires_full_rebuild {
             for node in &text_relayout_nodes {
-                if !refresh_text_node(&mut self.layout.tree, &self.document, *node) {
+                if !refresh_text_node(&mut layout.tree, &self.document, *node) {
                     requires_full_rebuild = true;
                     break;
                 }
@@ -749,8 +754,10 @@ impl RenderSession {
         let patched_nodes;
         let retained_display_list;
         if requires_full_rebuild {
-            let styles = rebuilt_styles.take().unwrap_or_else(|| self.styles.clone());
-            self.full_rebuild(styles);
+            let styles = rebuilt_styles.as_ref().unwrap_or(&self.styles);
+            layout = layout_document_with_styles(&self.document, styles, self.options.viewport);
+            display_list = build_display_list(&layout.fragments);
+            damage = DamageRegion::between(Some(&self.display_list), &display_list);
             mode = IncrementalMode::FullRebuild;
             patched_nodes = 0;
             retained_display_list = false;
@@ -758,38 +765,31 @@ impl RenderSession {
             && text_relayout_nodes.is_empty()
             && structural_relayout_nodes.is_empty()
         {
-            if let Some(styles) = rebuilt_styles.take() {
-                self.styles = styles;
-            }
-            self.damage = DamageRegion::default();
+            damage = DamageRegion::default();
             mode = IncrementalMode::Unchanged;
             patched_nodes = 0;
             retained_display_list = true;
         } else if geometry_changed && subtree_relayout_safe {
-            let previous_display_list = self.display_list.clone();
             patched_nodes = style_updates.len();
             for &(node, style) in &style_updates {
-                patch_layout_style(&mut self.layout.tree.root, node, style);
-            }
-            if let Some(styles) = rebuilt_styles.take() {
-                self.styles = styles;
+                patch_layout_style(&mut layout.tree.root, node, style);
             }
 
             let mut subtree_applied = true;
             let mut retained_display = true;
             for &(node, _) in &style_updates {
-                let previous_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
+                let previous_fragment = fragment_for_dom(&layout.fragments, node).cloned();
                 if previous_fragment.is_none()
                     || !relayout_fragment_subtree(
-                        &self.layout.tree,
-                        &mut self.layout.fragments,
+                        &layout.tree,
+                        &mut layout.fragments,
                         node,
                     )
                 {
                     subtree_applied = false;
                     break;
                 }
-                let current_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
+                let current_fragment = fragment_for_dom(&layout.fragments, node).cloned();
                 let (Some(previous_fragment), Some(current_fragment)) =
                     (previous_fragment, current_fragment)
                 else {
@@ -797,7 +797,7 @@ impl RenderSession {
                     break;
                 };
                 retained_display &= replace_display_items_for_fragment(
-                    &mut self.display_list,
+                    &mut display_list,
                     &previous_fragment,
                     &current_fragment,
                 );
@@ -805,76 +805,61 @@ impl RenderSession {
 
             if subtree_applied {
                 if !retained_display {
-                    self.display_list = build_display_list(&self.layout.fragments);
+                    display_list = build_display_list(&layout.fragments);
                 }
                 mode = IncrementalMode::SubtreeRelayout;
                 retained_display_list = retained_display;
             } else {
-                self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
-                self.display_list = build_display_list(&self.layout.fragments);
+                layout.fragments = relayout_tree(&layout.tree, self.options.viewport);
+                display_list = build_display_list(&layout.fragments);
                 mode = IncrementalMode::GeometryRelayout;
                 retained_display_list = false;
             }
-            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
-            self.framebuffer.rasterize_damage(
-                &self.display_list,
-                &self.damage,
-                self.options.background,
-            );
+            damage = DamageRegion::between(Some(&self.display_list), &display_list);
         } else if geometry_changed {
-            let previous_display_list = self.display_list.clone();
             patched_nodes =
                 style_updates.len() + text_relayout_nodes.len() + structural_relayout_nodes.len();
             for &(node, style) in &style_updates {
-                patch_layout_style(&mut self.layout.tree.root, node, style);
-            }
-            if let Some(styles) = rebuilt_styles.take() {
-                self.styles = styles;
+                patch_layout_style(&mut layout.tree.root, node, style);
             }
             let flow_nodes = flow_relayout_nodes.into_iter().collect::<Vec<_>>();
             let flow_start =
-                fragment_flow_start_index(&self.layout.tree, &self.layout.fragments, &flow_nodes);
+                fragment_flow_start_index(&layout.tree, &layout.fragments, &flow_nodes);
             let previous_flow_fragments =
-                flow_start.map(|start| self.layout.fragments.root.children[start..].to_vec());
-            if relayout_fragment_flow(&self.layout.tree, &mut self.layout.fragments, &flow_nodes) {
+                flow_start.map(|start| layout.fragments.root.children[start..].to_vec());
+            if relayout_fragment_flow(&layout.tree, &mut layout.fragments, &flow_nodes) {
                 mode = IncrementalMode::FlowRelayout;
                 let retained_display = match (flow_start, previous_flow_fragments.as_deref()) {
                     (Some(start), Some(previous)) => replace_display_items_for_fragments(
-                        &mut self.display_list,
+                        &mut display_list,
                         previous,
-                        &self.layout.fragments.root.children[start..],
+                        &layout.fragments.root.children[start..],
                     ),
                     _ => false,
                 };
                 if !retained_display {
-                    self.display_list = build_display_list(&self.layout.fragments);
+                    display_list = build_display_list(&layout.fragments);
                 }
                 retained_display_list = retained_display;
             } else {
-                self.layout.fragments = relayout_tree(&self.layout.tree, self.options.viewport);
-                self.display_list = build_display_list(&self.layout.fragments);
+                layout.fragments = relayout_tree(&layout.tree, self.options.viewport);
+                display_list = build_display_list(&layout.fragments);
                 mode = IncrementalMode::GeometryRelayout;
                 retained_display_list = false;
             }
-            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
-            self.framebuffer.rasterize_damage(
-                &self.display_list,
-                &self.damage,
-                self.options.background,
-            );
+            damage = DamageRegion::between(Some(&self.display_list), &display_list);
         } else {
-            let previous_display_list = self.display_list.clone();
             patched_nodes = style_updates.len();
             let mut retained_display = true;
             for &(node, style) in &style_updates {
-                let previous_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
-                patch_layout_style(&mut self.layout.tree.root, node, style);
-                patch_fragment_style(&mut self.layout.fragments.root, node, style);
-                let current_fragment = fragment_for_dom(&self.layout.fragments, node).cloned();
+                let previous_fragment = fragment_for_dom(&layout.fragments, node).cloned();
+                patch_layout_style(&mut layout.tree.root, node, style);
+                patch_fragment_style(&mut layout.fragments.root, node, style);
+                let current_fragment = fragment_for_dom(&layout.fragments, node).cloned();
                 match (previous_fragment, current_fragment) {
                     (Some(previous_fragment), Some(current_fragment)) => {
                         retained_display &= replace_display_items_for_fragment(
-                            &mut self.display_list,
+                            &mut display_list,
                             &previous_fragment,
                             &current_fragment,
                         );
@@ -882,25 +867,29 @@ impl RenderSession {
                     _ => retained_display = false,
                 }
             }
-            if let Some(styles) = rebuilt_styles.take() {
-                self.styles = styles;
-            }
             if !retained_display {
-                self.display_list = build_display_list(&self.layout.fragments);
+                display_list = build_display_list(&layout.fragments);
             }
-            self.damage = DamageRegion::between(Some(&previous_display_list), &self.display_list);
-            self.framebuffer.rasterize_damage(
-                &self.display_list,
-                &self.damage,
-                self.options.background,
-            );
+            damage = DamageRegion::between(Some(&self.display_list), &display_list);
             mode = IncrementalMode::PaintOnlyReuse;
             retained_display_list = retained_display;
         }
 
-        self.dirty.clear();
+        let styles = rebuilt_styles.as_ref().unwrap_or(&self.styles);
+        validate_render_state_limits(styles, &layout, &display_list, self.limits)?;
+
+        self.framebuffer
+            .rasterize_damage(&display_list, &damage, self.options.background);
+        if let Some(styles) = rebuilt_styles {
+            self.styles = styles;
+        }
+        self.layout = layout;
+        self.display_list = display_list;
+        self.damage = damage;
+        dirty.clear();
+        self.dirty = dirty;
         self.document.prune_mutations_through(through_generation);
-        validate_render_state_limits(&self.styles, &self.layout, &self.display_list, self.limits)?;
+
         Ok(IncrementalReport {
             mode,
             from_generation,
@@ -913,19 +902,6 @@ impl RenderSession {
         })
     }
 
-    fn full_rebuild(&mut self, styles: StyleSet) {
-        let previous_display_list = self.display_list.clone();
-        let layout = layout_document_with_styles(&self.document, &styles, self.options.viewport);
-        let display_list = build_display_list(&layout.fragments);
-        let damage = DamageRegion::between(Some(&previous_display_list), &display_list);
-        self.framebuffer
-            .rasterize_damage(&display_list, &damage, self.options.background);
-
-        self.styles = styles;
-        self.layout = layout;
-        self.display_list = display_list;
-        self.damage = damage;
-    }
 }
 
 pub fn render_html(source: &str, options: RenderOptions) -> Result<RenderOutput, RenderError> {
@@ -2387,5 +2363,101 @@ mod render_boundary_hardening_tests {
             },
         );
         assert!(matches!(result, Err(RenderError::InvalidViewportSize)));
+    }
+
+    fn body_node(session: &RenderSession) -> NodeId {
+        let mut stack = vec![session.document().root()];
+        while let Some(node) = stack.pop() {
+            let current = session.document().node(node).expect("live DOM node");
+            if matches!(
+                &current.kind,
+                NodeKind::Element(element) if element.tag_name.as_str() == "body"
+            ) {
+                return node;
+            }
+            if let Some(children) = session.document().children(node) {
+                stack.extend(children.iter().rev().copied());
+            }
+        }
+        panic!("parsed document must contain a body element");
+    }
+
+    fn append_painted_block(session: &mut RenderSession, parent: NodeId) {
+        let child = session
+            .document_mut()
+            .append_new(
+                parent,
+                NodeKind::Element(rarog_dom::ElementData::html("div")),
+            )
+            .unwrap();
+        session
+            .document_mut()
+            .set_attribute(child, "style", "height:10px;background:#112233")
+            .unwrap();
+    }
+
+    #[test]
+    fn incremental_fragment_limit_failure_preserves_retained_state_and_mutations() {
+        let mut session =
+            RenderSession::new("<div style=\"height:10px\"></div>", RenderOptions::default())
+                .unwrap();
+        let body = body_node(&session);
+        let tree_before = session.layout().tree.snapshot();
+        let fragments_before = session.layout().fragments.snapshot();
+        let display_before = session.display_list().snapshot();
+        let framebuffer_before = session.framebuffer().stable_hash64();
+        let generation_before = session.dirty_state().through_generation();
+        let retained_fragments = session.layout().fragments.fragment_count();
+
+        session.limits.max_fragments = retained_fragments;
+        append_painted_block(&mut session, body);
+
+        let error = session.update().unwrap_err();
+        assert!(matches!(error, RenderError::FragmentLimitExceeded { .. }));
+        assert_eq!(session.layout().tree.snapshot(), tree_before);
+        assert_eq!(session.layout().fragments.snapshot(), fragments_before);
+        assert_eq!(session.display_list().snapshot(), display_before);
+        assert_eq!(session.framebuffer().stable_hash64(), framebuffer_before);
+        assert_eq!(session.dirty_state().through_generation(), generation_before);
+        assert!(session.dirty_state().is_clean());
+
+        session.limits.max_fragments = DEFAULT_MAX_FRAGMENTS;
+        let report = session.update().expect("retained mutation remains retryable");
+        assert_ne!(report.mode, IncrementalMode::Unchanged);
+        assert!(session.layout().fragments.fragment_count() > retained_fragments);
+    }
+
+    #[test]
+    fn incremental_display_limit_failure_preserves_retained_state_and_mutations() {
+        let mut session =
+            RenderSession::new("<div style=\"height:10px\"></div>", RenderOptions::default())
+                .unwrap();
+        let body = body_node(&session);
+        let tree_before = session.layout().tree.snapshot();
+        let fragments_before = session.layout().fragments.snapshot();
+        let display_before = session.display_list().snapshot();
+        let framebuffer_before = session.framebuffer().stable_hash64();
+        let generation_before = session.dirty_state().through_generation();
+        let retained_commands = session.display_list().len();
+
+        session.limits.max_display_commands = retained_commands;
+        append_painted_block(&mut session, body);
+
+        let error = session.update().unwrap_err();
+        assert!(matches!(
+            error,
+            RenderError::DisplayCommandLimitExceeded { .. }
+        ));
+        assert_eq!(session.layout().tree.snapshot(), tree_before);
+        assert_eq!(session.layout().fragments.snapshot(), fragments_before);
+        assert_eq!(session.display_list().snapshot(), display_before);
+        assert_eq!(session.framebuffer().stable_hash64(), framebuffer_before);
+        assert_eq!(session.dirty_state().through_generation(), generation_before);
+        assert!(session.dirty_state().is_clean());
+
+        session.limits.max_display_commands = DEFAULT_MAX_DISPLAY_COMMANDS;
+        let report = session.update().expect("retained mutation remains retryable");
+        assert_ne!(report.mode, IncrementalMode::Unchanged);
+        assert!(session.display_list().len() > retained_commands);
     }
 }
