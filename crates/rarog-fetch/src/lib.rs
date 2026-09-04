@@ -95,19 +95,20 @@ impl FetchMethod {
                 "fetch method must be a non-empty HTTP token",
             ));
         }
-        let normalized = match value.to_ascii_uppercase().as_str() {
-            "DELETE" => String::from("DELETE"),
-            "GET" => String::from("GET"),
-            "HEAD" => String::from("HEAD"),
-            "OPTIONS" => String::from("OPTIONS"),
-            "POST" => String::from("POST"),
-            "PUT" => String::from("PUT"),
-            "CONNECT" | "TRACE" | "TRACK" => {
-                return Err(FetchError::new(
-                    FetchErrorKind::ForbiddenMethod,
-                    "fetch forbids CONNECT, TRACE and TRACK methods",
-                ));
-            }
+        if ["CONNECT", "TRACE", "TRACK"]
+            .into_iter()
+            .any(|method| value.eq_ignore_ascii_case(method))
+        {
+            return Err(FetchError::new(
+                FetchErrorKind::ForbiddenMethod,
+                "fetch forbids CONNECT, TRACE and TRACK methods",
+            ));
+        }
+        let canonical = ["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"]
+            .into_iter()
+            .find(|method| value.eq_ignore_ascii_case(method));
+        let normalized = match canonical {
+            Some(method) if value != method => method.to_owned(),
             _ => value,
         };
         Ok(Self(normalized))
@@ -254,11 +255,19 @@ impl HeaderList {
     }
 
     pub fn remove(&mut self, name: &str) -> usize {
-        let before = self.entries.len();
-        self.entries
-            .retain(|header| !header.name.eq_ignore_ascii_case(name));
-        self.bytes = self.entries.iter().map(Header::byte_len).sum();
-        before - self.entries.len()
+        let mut removed = 0usize;
+        let mut removed_bytes = 0usize;
+        self.entries.retain(|header| {
+            if header.name.eq_ignore_ascii_case(name) {
+                removed = removed.saturating_add(1);
+                removed_bytes = removed_bytes.saturating_add(header.byte_len());
+                false
+            } else {
+                true
+            }
+        });
+        self.bytes = self.bytes.saturating_sub(removed_bytes);
+        removed
     }
 }
 
@@ -640,9 +649,11 @@ mod tests {
     #[test]
     fn methods_are_normalized_and_forbidden_methods_are_rejected() {
         assert_eq!(FetchMethod::try_new("post").unwrap().as_str(), "POST");
+        assert_eq!(FetchMethod::try_new("gEt").unwrap().as_str(), "GET");
         assert_eq!(FetchMethod::try_new("PATCH").unwrap().as_str(), "PATCH");
+        assert_eq!(FetchMethod::try_new("pAtCh").unwrap().as_str(), "pAtCh");
         assert_eq!(
-            FetchMethod::try_new("TRACE").unwrap_err().kind,
+            FetchMethod::try_new("TrAcE").unwrap_err().kind,
             FetchErrorKind::ForbiddenMethod
         );
         assert_eq!(
@@ -691,6 +702,20 @@ mod tests {
             Header::try_new("x-test", "line\r\nbreak").unwrap_err().kind,
             FetchErrorKind::InvalidHeaderValue
         );
+    }
+
+    #[test]
+    fn header_removal_updates_byte_accounting_without_rescanning_survivors() {
+        let mut headers = HeaderList::try_new(4, 64).unwrap();
+        headers.append("X-Test", "one").unwrap();
+        headers.append("Keep", "value").unwrap();
+        headers.append("x-test", "two").unwrap();
+        let expected = "keep".len() + "value".len();
+
+        assert_eq!(headers.remove("X-TEST"), 2);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers.get_first("keep"), Some("value"));
+        assert_eq!(headers.byte_len(), expected);
     }
 
     #[test]
