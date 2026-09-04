@@ -375,6 +375,14 @@ fn is_common_font_character(character: char) -> bool {
 pub fn font_runs(text: &str, chain: &FontFallbackChain) -> Vec<FontRun> {
     let characters = text.chars().collect::<Vec<_>>();
     let boundaries = grapheme_boundaries(text);
+    font_runs_for_segments(&characters, &boundaries, chain)
+}
+
+fn font_runs_for_segments(
+    characters: &[char],
+    boundaries: &[usize],
+    chain: &FontFallbackChain,
+) -> Vec<FontRun> {
     if boundaries.len() < 2 {
         return Vec::new();
     }
@@ -390,7 +398,7 @@ pub fn font_runs(text: &str, chain: &FontFallbackChain) -> Vec<FontRun> {
         let face = if inherited {
             runs.last().map(|run| run.face)
         } else {
-            chain.select_face_for_characters(&characters, range)
+            chain.select_face_for_characters(characters, range)
         }
         .or_else(|| chain.faces.last().map(|face| face.id));
         let Some(face) = face else {
@@ -474,26 +482,35 @@ impl TextShaper for FixedTextShaper {
     fn shape(&self, text: &str) -> ShapedText {
         let characters = text.chars().collect::<Vec<_>>();
         let boundaries = grapheme_boundaries(text);
-        let clusters = boundaries
-            .windows(2)
-            .map(|window| {
-                let start = window[0];
-                let end = window[1];
-                let mandatory = characters[start..end]
-                    .iter()
-                    .copied()
-                    .any(is_mandatory_break);
-                GlyphCluster {
-                    source: TextRange::new(start, end),
-                    advance: if mandatory { 0.0 } else { self.advance },
-                }
-            })
-            .collect::<Vec<_>>();
-        ShapedText {
-            advance: clusters.iter().map(|cluster| cluster.advance).sum(),
-            clusters,
-            metrics: self.metrics,
-        }
+        shape_fixed_text(&characters, &boundaries, self.advance, self.metrics)
+    }
+}
+
+fn shape_fixed_text(
+    characters: &[char],
+    boundaries: &[usize],
+    advance: f32,
+    metrics: FontMetrics,
+) -> ShapedText {
+    let clusters = boundaries
+        .windows(2)
+        .map(|window| {
+            let start = window[0];
+            let end = window[1];
+            let mandatory = characters[start..end]
+                .iter()
+                .copied()
+                .any(is_mandatory_break);
+            GlyphCluster {
+                source: TextRange::new(start, end),
+                advance: if mandatory { 0.0 } else { advance },
+            }
+        })
+        .collect::<Vec<_>>();
+    ShapedText {
+        advance: clusters.iter().map(|cluster| cluster.advance).sum(),
+        clusters,
+        metrics,
     }
 }
 
@@ -519,8 +536,10 @@ impl TextRun {
 
     pub fn with_fallback(text: String, fallback: &FontFallbackChain) -> Self {
         let shaper = FixedTextShaper::default();
-        let shaped = shaper.shape(&text);
-        let font_runs = font_runs(&text, fallback);
+        let characters = text.chars().collect::<Vec<_>>();
+        let boundaries = grapheme_boundaries(&text);
+        let shaped = shape_fixed_text(&characters, &boundaries, shaper.advance, shaper.metrics);
+        let font_runs = font_runs_for_segments(&characters, &boundaries, fallback);
         Self {
             text,
             advance: shaped.advance,
@@ -569,11 +588,11 @@ impl TextRun {
     }
 
     pub fn intrinsic_sizes(&self) -> IntrinsicSizes {
-        let shaper = FixedTextShaper::default();
+        let advance = FixedTextShaper::default().advance;
         let longest_word = self
             .text
             .split_whitespace()
-            .map(|word| shaper.shape(word).advance)
+            .map(|word| UnicodeSegmentation::graphemes(word, true).count() as f32 * advance)
             .fold(0.0, f32::max);
         IntrinsicSizes {
             min_content: longest_word,
@@ -3073,6 +3092,15 @@ mod tests {
         }
 
         NodeKind::Element(ElementData::html(name).with_attributes(attributes))
+    }
+
+    #[test]
+    fn text_run_reuses_segmentation_without_changing_cluster_or_intrinsic_results() {
+        let run = TextRun::new("a e\u{301} bc 😀".into());
+        assert_eq!(run.shaped.clusters.len(), 9);
+        assert_eq!(run.font_runs, font_runs(&run.text, &FontFallbackChain::default()));
+        assert_eq!(run.intrinsic_sizes().min_content, 16.0);
+        assert_eq!(run.intrinsic_sizes().max_content, run.advance);
     }
 
     #[test]
