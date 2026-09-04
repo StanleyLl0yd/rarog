@@ -730,10 +730,11 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
 impl DamageRegion {
     pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
         let current_items = effective_indexed_paint(current);
+        let mut damage = Self::default();
+        let mut seen = BTreeSet::new();
         let Some(previous) = previous else {
-            let mut damage = Self::default();
             for bounds in current_items.values().filter_map(|item| item.bounds) {
-                damage.push(bounds);
+                damage.push_unique(bounds, &mut seen);
             }
             return damage;
         };
@@ -744,7 +745,6 @@ impl DamageRegion {
             .chain(current_items.keys())
             .copied()
             .collect::<BTreeSet<_>>();
-        let mut damage = Self::default();
 
         for id in ids {
             let before = previous_items.get(&id).copied();
@@ -753,24 +753,34 @@ impl DamageRegion {
                 continue;
             }
             if let Some(bounds) = before.and_then(|item| item.bounds) {
-                damage.push(bounds);
+                damage.push_unique(bounds, &mut seen);
             }
             if let Some(bounds) = after.and_then(|item| item.bounds) {
-                damage.push(bounds);
+                damage.push_unique(bounds, &mut seen);
             }
         }
 
         damage
     }
 
-    fn push(&mut self, rect: Rect) {
+    fn push_unique(&mut self, rect: Rect, seen: &mut BTreeSet<(u32, u32, u32, u32)>) {
         if rect.size.width <= 0.0 || rect.size.height <= 0.0 {
             return;
         }
-        if !self.rects.contains(&rect) {
+        let key = (
+            canonical_float_bits(rect.origin.x),
+            canonical_float_bits(rect.origin.y),
+            canonical_float_bits(rect.size.width),
+            canonical_float_bits(rect.size.height),
+        );
+        if seen.insert(key) {
             self.rects.push(rect);
         }
     }
+}
+
+fn canonical_float_bits(value: f32) -> u32 {
+    if value == 0.0 { 0 } else { value.to_bits() }
 }
 
 fn transform_rect(rect: Rect, transforms: &[Transform2D]) -> Rect {
@@ -1381,6 +1391,26 @@ mod tests {
         let damage = DamageRegion::between(Some(&make(0.25)), &make(0.75));
 
         assert_eq!(damage.rects, vec![Rect::new(3.0, 2.0, 4.0, 5.0)]);
+    }
+
+    #[test]
+    fn damage_dedup_preserves_first_seen_order_and_zero_equivalence() {
+        let first = DisplayCommand::FillRect {
+            rect: Rect::new(-0.0, 1.0, 2.0, 2.0),
+            color: Color::BLACK,
+        };
+        let second = DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 1.0, 2.0, 2.0),
+            color: Color::BLACK,
+        };
+        let current = DisplayList::try_from_parts(
+            vec![DisplayItemId::test(1), DisplayItemId::test(2)],
+            vec![first, second],
+        )
+        .unwrap();
+
+        let damage = DamageRegion::between(None, &current);
+        assert_eq!(damage.rects, vec![Rect::new(-0.0, 1.0, 2.0, 2.0)]);
     }
 
     #[test]
