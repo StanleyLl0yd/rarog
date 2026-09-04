@@ -3506,10 +3506,7 @@ mod tests {
             .unwrap();
         doc.append_new(
             container,
-            element(
-                "div",
-                Some("width:20px;height:10px;align-self:flex-end"),
-            ),
+            element("div", Some("width:20px;height:10px;align-self:flex-end")),
         )
         .unwrap();
         doc.append_new(container, element("div", Some("width:20px;height:20px")))
