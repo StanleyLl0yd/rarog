@@ -1216,8 +1216,7 @@ fn push_gap_shorthand(output: &mut Vec<Declaration>, value: &str, important: boo
             (value, value)
         }
         [row, column] => {
-            let (Some(row), Some(column)) =
-                (parse_gap_component(row), parse_gap_component(column))
+            let (Some(row), Some(column)) = (parse_gap_component(row), parse_gap_component(column))
             else {
                 return;
             };
