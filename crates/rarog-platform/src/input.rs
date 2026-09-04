@@ -1,5 +1,29 @@
 use std::fmt;
 
+pub const DEFAULT_MAX_INPUT_EVENTS: usize = 4_096;
+pub const DEFAULT_MAX_INPUT_TEXT_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InputLimits {
+    pub max_queued_events: usize,
+    pub max_text_bytes: usize,
+}
+
+impl InputLimits {
+    pub const fn is_valid(self) -> bool {
+        self.max_queued_events > 0 && self.max_text_bytes > 0
+    }
+}
+
+impl Default for InputLimits {
+    fn default() -> Self {
+        Self {
+            max_queued_events: DEFAULT_MAX_INPUT_EVENTS,
+            max_text_bytes: DEFAULT_MAX_INPUT_TEXT_BYTES,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModifierState {
     pub shift: bool,
@@ -265,6 +289,9 @@ impl TextInputState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlatformInputError {
     UnsupportedTarget,
+    InvalidLimits,
+    QueueLimitExceeded { events: usize, limit: usize },
+    TextLimitExceeded { bytes: usize, limit: usize },
     EmptyKeyCode,
     EmptyKeyValue,
     InvalidCoordinate,
@@ -277,23 +304,46 @@ pub enum PlatformInputError {
 
 impl fmt::Display for PlatformInputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::UnsupportedTarget => "platform input is unavailable on this target",
-            Self::EmptyKeyCode => "physical key code must not be empty",
-            Self::EmptyKeyValue => "key value must not be empty",
-            Self::InvalidCoordinate => "input coordinates must be finite",
-            Self::InvalidRectangle => "input rectangle must be finite and non-negative",
-            Self::InvalidPressure => "pointer pressure must be finite and within 0..=1",
-            Self::InvalidWheelDelta => "wheel deltas must be finite",
-            Self::InvalidTextRange => "text range start must not exceed end",
-            Self::BackendFailure => "platform input backend failed",
-        })
+        match self {
+            Self::UnsupportedTarget => {
+                formatter.write_str("platform input is unavailable on this target")
+            }
+            Self::InvalidLimits => formatter.write_str("platform input limits must be non-zero"),
+            Self::QueueLimitExceeded { events, limit } => {
+                write!(
+                    formatter,
+                    "platform input queue would contain {events} events; limit is {limit}"
+                )
+            }
+            Self::TextLimitExceeded { bytes, limit } => {
+                write!(
+                    formatter,
+                    "platform input text requires {bytes} bytes; limit is {limit}"
+                )
+            }
+            Self::EmptyKeyCode => formatter.write_str("physical key code must not be empty"),
+            Self::EmptyKeyValue => formatter.write_str("key value must not be empty"),
+            Self::InvalidCoordinate => formatter.write_str("input coordinates must be finite"),
+            Self::InvalidRectangle => {
+                formatter.write_str("input rectangle must be finite and non-negative")
+            }
+            Self::InvalidPressure => {
+                formatter.write_str("pointer pressure must be finite and within 0..=1")
+            }
+            Self::InvalidWheelDelta => formatter.write_str("wheel deltas must be finite"),
+            Self::InvalidTextRange => formatter.write_str("text range start must not exceed end"),
+            Self::BackendFailure => formatter.write_str("platform input backend failed"),
+        }
     }
 }
 
 impl std::error::Error for PlatformInputError {}
 
 pub trait PlatformInputService: Send + Sync {
+    fn limits(&self) -> InputLimits {
+        InputLimits::default()
+    }
+
     fn poll_event(&self) -> Result<Option<PlatformInputEvent>, PlatformInputError>;
 }
 
@@ -304,6 +354,25 @@ pub trait PlatformTextInputService: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_limits_require_non_zero_queue_and_text_budgets() {
+        assert!(InputLimits::default().is_valid());
+        assert!(
+            !InputLimits {
+                max_queued_events: 0,
+                max_text_bytes: 1,
+            }
+            .is_valid()
+        );
+        assert!(
+            !InputLimits {
+                max_queued_events: 1,
+                max_text_bytes: 0,
+            }
+            .is_valid()
+        );
+    }
 
     #[test]
     fn key_values_and_codes_reject_empty_inputs() {

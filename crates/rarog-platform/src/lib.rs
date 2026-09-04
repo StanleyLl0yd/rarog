@@ -6,10 +6,11 @@ pub use clipboard::{
     PlatformClipboardService,
 };
 pub use input::{
-    KeyState, KeyValue, KeyboardInputEvent, ModifierState, PhysicalKey, PlatformInputError,
-    PlatformInputEvent, PlatformInputService, PlatformPoint, PlatformRect,
-    PlatformTextInputService, PointerAction, PointerButton, PointerButtons, PointerInputEvent,
-    PointerKind, TextInputEvent, TextInputState, TextRange, WheelDeltaMode, WheelInputEvent,
+    DEFAULT_MAX_INPUT_EVENTS, DEFAULT_MAX_INPUT_TEXT_BYTES, InputLimits, KeyState, KeyValue,
+    KeyboardInputEvent, ModifierState, PhysicalKey, PlatformInputError, PlatformInputEvent,
+    PlatformInputService, PlatformPoint, PlatformRect, PlatformTextInputService, PointerAction,
+    PointerButton, PointerButtons, PointerInputEvent, PointerKind, TextInputEvent, TextInputState,
+    TextRange, WheelDeltaMode, WheelInputEvent,
 };
 
 use std::fmt;
