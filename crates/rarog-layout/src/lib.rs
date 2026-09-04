@@ -2936,9 +2936,11 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(row) =
-            layout_single_line_flex_row(containing_block.origin, containing_block.available, &items)
-        else {
+        let Ok(row) = layout_single_line_flex_row(
+            containing_block.origin,
+            containing_block.available,
+            &items,
+        ) else {
             return (Vec::new(), 0.0);
         };
 
@@ -3361,21 +3363,12 @@ mod tests {
     fn display_flex_places_fixed_items_in_one_source_order_row() {
         let mut doc = Document::new();
         let container = doc
-            .append_new(
-                doc.root(),
-                element("div", Some("display:flex;width:120px")),
-            )
+            .append_new(doc.root(), element("div", Some("display:flex;width:120px")))
             .unwrap();
-        doc.append_new(
-            container,
-            element("div", Some("width:20px;height:10px")),
-        )
-        .unwrap();
-        doc.append_new(
-            container,
-            element("div", Some("width:30px;height:15px")),
-        )
-        .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:30px;height:15px")))
+            .unwrap();
 
         let output = layout_document(
             &doc,
@@ -3388,8 +3381,14 @@ mod tests {
 
         assert!(output.tree.root.children[0].style.display_flex);
         assert_eq!(container.children.len(), 2);
-        assert_eq!(container.children[0].boxes.border_box, Rect::new(0.0, 0.0, 20.0, 10.0));
-        assert_eq!(container.children[1].boxes.border_box, Rect::new(20.0, 0.0, 30.0, 15.0));
+        assert_eq!(
+            container.children[0].boxes.border_box,
+            Rect::new(0.0, 0.0, 20.0, 10.0)
+        );
+        assert_eq!(
+            container.children[1].boxes.border_box,
+            Rect::new(20.0, 0.0, 30.0, 15.0)
+        );
         assert_eq!(container.boxes.content_box.size.height, 15.0);
     }
 
@@ -3397,22 +3396,14 @@ mod tests {
     fn flex_ignores_whitespace_between_fixed_items() {
         let mut doc = Document::new();
         let container = doc
-            .append_new(
-                doc.root(),
-                element("div", Some("display:flex;width:120px")),
-            )
+            .append_new(doc.root(), element("div", Some("display:flex;width:120px")))
             .unwrap();
-        doc.append_new(
-            container,
-            element("div", Some("width:20px;height:10px")),
-        )
-        .unwrap();
-        doc.append_new(container, NodeKind::Text(" \n ".into())).unwrap();
-        doc.append_new(
-            container,
-            element("div", Some("width:30px;height:15px")),
-        )
-        .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        doc.append_new(container, NodeKind::Text(" \n ".into()))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:30px;height:15px")))
+            .unwrap();
 
         let output = layout_document(
             &doc,
@@ -3431,10 +3422,7 @@ mod tests {
     fn unsupported_auto_sized_flex_items_do_not_fall_back_to_block_flow() {
         let mut doc = Document::new();
         let container = doc
-            .append_new(
-                doc.root(),
-                element("div", Some("display:flex;width:120px")),
-            )
+            .append_new(doc.root(), element("div", Some("display:flex;width:120px")))
             .unwrap();
         doc.append_new(container, element("div", Some("width:20px")))
             .unwrap();
