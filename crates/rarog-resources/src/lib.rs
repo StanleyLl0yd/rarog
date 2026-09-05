@@ -187,6 +187,340 @@ impl fmt::Display for ImageResourceError {
 
 impl std::error::Error for ImageResourceError {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageDecodeLimits {
+    pub max_pending_requests: usize,
+    pub max_pending_encoded_bytes: usize,
+}
+
+impl ImageDecodeLimits {
+    pub const fn is_valid(self) -> bool {
+        self.max_pending_requests > 0 && self.max_pending_encoded_bytes > 0
+    }
+}
+
+impl Default for ImageDecodeLimits {
+    fn default() -> Self {
+        Self {
+            max_pending_requests: DEFAULT_MAX_PENDING_IMAGE_DECODES,
+            max_pending_encoded_bytes: DEFAULT_MAX_PENDING_IMAGE_DECODE_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImageDecodeRequestId(u64);
+
+impl ImageDecodeRequestId {
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageDecodeReservation {
+    request: ImageDecodeRequestId,
+    resource: ImageResourceId,
+}
+
+impl ImageDecodeReservation {
+    pub const fn request(self) -> ImageDecodeRequestId {
+        self.request
+    }
+
+    pub const fn resource(self) -> ImageResourceId {
+        self.resource
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ImageDecodeWork {
+    request: ImageDecodeRequestId,
+    resource: ImageResourceId,
+    encoded: Arc<[u8]>,
+}
+
+impl ImageDecodeWork {
+    pub const fn request(&self) -> ImageDecodeRequestId {
+        self.request
+    }
+
+    pub const fn resource(&self) -> ImageResourceId {
+        self.resource
+    }
+
+    pub fn encoded(&self) -> &[u8] {
+        &self.encoded
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImageDecodeOutcome {
+    Ready(DecodedImage),
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageDecodeQueueError {
+    InvalidLimits,
+    QueueFull {
+        requests: usize,
+        limit: usize,
+    },
+    EncodedByteLimitExceeded {
+        bytes: usize,
+        limit: usize,
+    },
+    RequestIdExhausted,
+    RequestInProgress(ImageDecodeRequestId),
+    NoActiveRequest,
+    WrongCompletion {
+        expected: ImageDecodeRequestId,
+        actual: ImageDecodeRequestId,
+    },
+    Resource(ImageResourceError),
+}
+
+impl fmt::Display for ImageDecodeQueueError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidLimits => formatter.write_str("image decode limits must be non-zero"),
+            Self::QueueFull { requests, limit } => write!(
+                formatter,
+                "image decode queue would contain {requests} requests; limit is {limit}"
+            ),
+            Self::EncodedByteLimitExceeded { bytes, limit } => write!(
+                formatter,
+                "image decode queue would retain {bytes} encoded bytes; limit is {limit}"
+            ),
+            Self::RequestIdExhausted => {
+                formatter.write_str("image decode request identifier space is exhausted")
+            }
+            Self::RequestInProgress(request) => {
+                write!(formatter, "image decode request {request:?} is still in progress")
+            }
+            Self::NoActiveRequest => formatter.write_str("image decode queue has no active request"),
+            Self::WrongCompletion { expected, actual } => write!(
+                formatter,
+                "image decode queue expected completion for {expected:?}, got {actual:?}"
+            ),
+            Self::Resource(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ImageDecodeQueueError {}
+
+impl From<ImageResourceError> for ImageDecodeQueueError {
+    fn from(error: ImageResourceError) -> Self {
+        Self::Resource(error)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingImageDecode {
+    request: ImageDecodeRequestId,
+    resource: ImageResourceId,
+    encoded: Arc<[u8]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImageDecodeQueue {
+    limits: ImageDecodeLimits,
+    next_request: u64,
+    retained_encoded_bytes: usize,
+    pending: VecDeque<PendingImageDecode>,
+    active: Option<PendingImageDecode>,
+}
+
+impl Default for ImageDecodeQueue {
+    fn default() -> Self {
+        Self {
+            limits: ImageDecodeLimits::default(),
+            next_request: 1,
+            retained_encoded_bytes: 0,
+            pending: VecDeque::new(),
+            active: None,
+        }
+    }
+}
+
+impl ImageDecodeQueue {
+    pub fn try_new(limits: ImageDecodeLimits) -> Result<Self, ImageDecodeQueueError> {
+        if !limits.is_valid() {
+            return Err(ImageDecodeQueueError::InvalidLimits);
+        }
+        Ok(Self {
+            limits,
+            next_request: 1,
+            retained_encoded_bytes: 0,
+            pending: VecDeque::new(),
+            active: None,
+        })
+    }
+
+    pub const fn limits(&self) -> ImageDecodeLimits {
+        self.limits
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn outstanding_count(&self) -> usize {
+        self.pending.len() + usize::from(self.active.is_some())
+    }
+
+    pub const fn retained_encoded_bytes(&self) -> usize {
+        self.retained_encoded_bytes
+    }
+
+    pub fn active_request(&self) -> Option<ImageDecodeRequestId> {
+        self.active.as_ref().map(|active| active.request)
+    }
+
+    pub fn enqueue(
+        &mut self,
+        store: &mut ImageResourceStore,
+        encoded: Vec<u8>,
+    ) -> Result<ImageDecodeReservation, ImageDecodeQueueError> {
+        let requests = self.outstanding_count().saturating_add(1);
+        if requests > self.limits.max_pending_requests {
+            return Err(ImageDecodeQueueError::QueueFull {
+                requests,
+                limit: self.limits.max_pending_requests,
+            });
+        }
+
+        let retained_encoded_bytes = self
+            .retained_encoded_bytes
+            .checked_add(encoded.len())
+            .ok_or(ImageDecodeQueueError::EncodedByteLimitExceeded {
+                bytes: usize::MAX,
+                limit: self.limits.max_pending_encoded_bytes,
+            })?;
+        if retained_encoded_bytes > self.limits.max_pending_encoded_bytes {
+            return Err(ImageDecodeQueueError::EncodedByteLimitExceeded {
+                bytes: retained_encoded_bytes,
+                limit: self.limits.max_pending_encoded_bytes,
+            });
+        }
+
+        if self.next_request == 0 {
+            return Err(ImageDecodeQueueError::RequestIdExhausted);
+        }
+        let request = ImageDecodeRequestId(self.next_request);
+        let next_request = self
+            .next_request
+            .checked_add(1)
+            .ok_or(ImageDecodeQueueError::RequestIdExhausted)?;
+        let resource = store.reserve()?;
+        self.next_request = next_request;
+        self.retained_encoded_bytes = retained_encoded_bytes;
+        self.pending.push_back(PendingImageDecode {
+            request,
+            resource,
+            encoded: encoded.into(),
+        });
+        Ok(ImageDecodeReservation { request, resource })
+    }
+
+    pub fn begin_next(&mut self) -> Result<Option<ImageDecodeWork>, ImageDecodeQueueError> {
+        if let Some(active) = &self.active {
+            return Err(ImageDecodeQueueError::RequestInProgress(active.request));
+        }
+        let Some(next) = self.pending.pop_front() else {
+            return Ok(None);
+        };
+        let work = ImageDecodeWork {
+            request: next.request,
+            resource: next.resource,
+            encoded: Arc::clone(&next.encoded),
+        };
+        self.active = Some(next);
+        Ok(Some(work))
+    }
+
+    pub fn complete(
+        &mut self,
+        store: &mut ImageResourceStore,
+        request: ImageDecodeRequestId,
+        outcome: ImageDecodeOutcome,
+    ) -> Result<Option<ImageResourceRef>, ImageDecodeQueueError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(ImageDecodeQueueError::NoActiveRequest)?;
+        if active.request != request {
+            return Err(ImageDecodeQueueError::WrongCompletion {
+                expected: active.request,
+                actual: request,
+            });
+        }
+
+        let result = match outcome {
+            ImageDecodeOutcome::Ready(image) => Some(store.resolve(active.resource, image)?),
+            ImageDecodeOutcome::Failed => {
+                store.fail(active.resource)?;
+                None
+            }
+        };
+        let active = self
+            .active
+            .take()
+            .expect("active request is retained until completion succeeds");
+        self.retained_encoded_bytes = self
+            .retained_encoded_bytes
+            .saturating_sub(active.encoded.len());
+        Ok(result)
+    }
+
+    pub fn cancel_pending(
+        &mut self,
+        store: &mut ImageResourceStore,
+        request: ImageDecodeRequestId,
+    ) -> bool {
+        let Some(position) = self.pending.iter().position(|pending| pending.request == request) else {
+            return false;
+        };
+        let pending = self
+            .pending
+            .remove(position)
+            .expect("position comes from the same queue");
+        self.retained_encoded_bytes = self
+            .retained_encoded_bytes
+            .saturating_sub(pending.encoded.len());
+        store.remove(pending.resource);
+        true
+    }
+
+    pub fn discard_active(
+        &mut self,
+        store: &mut ImageResourceStore,
+        request: ImageDecodeRequestId,
+    ) -> Result<(), ImageDecodeQueueError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(ImageDecodeQueueError::NoActiveRequest)?;
+        if active.request != request {
+            return Err(ImageDecodeQueueError::WrongCompletion {
+                expected: active.request,
+                actual: request,
+            });
+        }
+        let active = self
+            .active
+            .take()
+            .expect("active request exists after identity validation");
+        self.retained_encoded_bytes = self
+            .retained_encoded_bytes
+            .saturating_sub(active.encoded.len());
+        store.remove(active.resource);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 enum StoredImageState {
     Pending,
