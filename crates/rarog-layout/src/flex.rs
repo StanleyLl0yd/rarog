@@ -691,8 +691,7 @@ pub fn layout_single_line_flex_row_with_item_alignments(
 
         let border_x = if options.main_reverse() {
             let from_end = finite_add(logical_main_offset, item.margin.right)?;
-            let physical_main_end =
-                physical_main_end.ok_or(FlexLayoutError::GeometryOverflow)?;
+            let physical_main_end = physical_main_end.ok_or(FlexLayoutError::GeometryOverflow)?;
             let border_end = finite_add(physical_main_end, -from_end)?;
             finite_add(border_end, -item.base_size.width)?
         } else {
@@ -947,8 +946,7 @@ fn apply_main_alignment(
         } else {
             accumulated_gap
         };
-        placement.border_box.origin.x =
-            finite_add(placement.border_box.origin.x, signed_offset)?;
+        placement.border_box.origin.x = finite_add(placement.border_box.origin.x, signed_offset)?;
         if index + 1 < count {
             accumulated_gap = finite_add(accumulated_gap, gap)?;
         }
