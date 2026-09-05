@@ -14,8 +14,8 @@ pub use flex::{
 };
 
 pub use grid::{
-    GridAxis, GridItem, GridLayout, GridLayoutError, GridPlacement, GridPlacementRequest, GridTrack,
-    layout_fixed_grid, layout_fixed_grid_with_auto_placement,
+    GridAxis, GridItem, GridLayout, GridLayoutError, GridPlacement, GridPlacementRequest,
+    GridTrack, layout_fixed_grid, layout_fixed_grid_with_auto_placement,
 };
 
 use rarog_css::{
@@ -4112,9 +4112,18 @@ mod tests {
         );
         let container = &output.fragments.root.children[0];
 
-        assert_eq!(container.children[0].boxes.border_box, Rect::new(0.0, 0.0, 40.0, 20.0));
-        assert_eq!(container.children[1].boxes.border_box, Rect::new(40.0, 0.0, 60.0, 20.0));
-        assert_eq!(container.children[2].boxes.border_box, Rect::new(0.0, 20.0, 40.0, 30.0));
+        assert_eq!(
+            container.children[0].boxes.border_box,
+            Rect::new(0.0, 0.0, 40.0, 20.0)
+        );
+        assert_eq!(
+            container.children[1].boxes.border_box,
+            Rect::new(40.0, 0.0, 60.0, 20.0)
+        );
+        assert_eq!(
+            container.children[2].boxes.border_box,
+            Rect::new(0.0, 20.0, 40.0, 30.0)
+        );
     }
 
     #[test]
@@ -4148,9 +4157,18 @@ mod tests {
         );
         let container = &output.fragments.root.children[0];
 
-        assert_eq!(container.children[0].boxes.border_box, Rect::new(40.0, 0.0, 60.0, 20.0));
-        assert_eq!(container.children[1].boxes.border_box, Rect::new(0.0, 0.0, 40.0, 20.0));
-        assert_eq!(container.children[2].boxes.border_box, Rect::new(0.0, 20.0, 40.0, 30.0));
+        assert_eq!(
+            container.children[0].boxes.border_box,
+            Rect::new(40.0, 0.0, 60.0, 20.0)
+        );
+        assert_eq!(
+            container.children[1].boxes.border_box,
+            Rect::new(0.0, 0.0, 40.0, 20.0)
+        );
+        assert_eq!(
+            container.children[2].boxes.border_box,
+            Rect::new(0.0, 20.0, 40.0, 30.0)
+        );
     }
 
     #[test]
@@ -4172,21 +4190,12 @@ mod tests {
             element("div", Some("grid-row-start:1;grid-column-start:1")),
         )
         .unwrap();
-        doc.append_new(
-            container,
-            element("div", Some("grid-column-end:span 2")),
-        )
-        .unwrap();
-        doc.append_new(
-            container,
-            element("div", Some("grid-row-start:2")),
-        )
-        .unwrap();
-        doc.append_new(
-            container,
-            element("div", Some("grid-column-start:3")),
-        )
-        .unwrap();
+        doc.append_new(container, element("div", Some("grid-column-end:span 2")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("grid-row-start:2")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("grid-column-start:3")))
+            .unwrap();
 
         let output = layout_document(
             &doc,
@@ -4197,9 +4206,18 @@ mod tests {
         );
         let container = &output.fragments.root.children[0];
 
-        assert_eq!(container.children[1].boxes.border_box, Rect::new(20.0, 0.0, 70.0, 10.0));
-        assert_eq!(container.children[2].boxes.border_box, Rect::new(0.0, 10.0, 20.0, 15.0));
-        assert_eq!(container.children[3].boxes.border_box, Rect::new(50.0, 10.0, 40.0, 15.0));
+        assert_eq!(
+            container.children[1].boxes.border_box,
+            Rect::new(20.0, 0.0, 70.0, 10.0)
+        );
+        assert_eq!(
+            container.children[2].boxes.border_box,
+            Rect::new(0.0, 10.0, 20.0, 15.0)
+        );
+        assert_eq!(
+            container.children[3].boxes.border_box,
+            Rect::new(50.0, 10.0, 40.0, 15.0)
+        );
     }
 
     #[test]
@@ -4233,7 +4251,6 @@ mod tests {
         assert!(container.children.is_empty());
         assert_eq!(container.boxes.content_box.size.height, 20.0);
     }
-
 
     #[test]
     fn flex_direction_row_reverse_places_source_order_items_from_the_right() {
