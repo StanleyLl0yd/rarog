@@ -1661,11 +1661,7 @@ mod tests {
 
         session
             .document_mut()
-            .set_attribute(
-                first,
-                "style",
-                "width:60px;height:auto;background:#112233",
-            )
+            .set_attribute(first, "style", "width:60px;height:auto;background:#112233")
             .unwrap();
         let report = session
             .update()
