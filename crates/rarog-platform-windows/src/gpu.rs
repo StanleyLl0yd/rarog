@@ -16,7 +16,9 @@ impl fmt::Display for WindowsGpuError {
                 formatter.write_str("Windows GPU service is unavailable on this target")
             }
             #[cfg(target_os = "windows")]
-            Self::RequestAdapter(error) => write!(formatter, "DX12 adapter request failed: {error}"),
+            Self::RequestAdapter(error) => {
+                write!(formatter, "DX12 adapter request failed: {error}")
+            }
             #[cfg(target_os = "windows")]
             Self::RequestDevice(error) => write!(formatter, "DX12 device request failed: {error}"),
         }
