@@ -553,7 +553,7 @@ pub struct ViewFrame<'a> {
 }
 
 impl ViewFrame<'_> {
-    pub const fn compositor_cause(&self) -> FrameCause {
+    pub fn compositor_cause(&self) -> FrameCause {
         match self.status {
             FrameStatus::Initial => FrameCause::Initial,
             FrameStatus::ViewportRebuild => FrameCause::Resize,
@@ -723,6 +723,7 @@ mod tests {
 
         let initial = view.render(viewport).unwrap();
         assert_eq!(initial.display_list_revision, DisplayListRevision::new(1));
+        let initial_revision = initial.display_list_revision;
         let FrameDecision::Submit(initial_plan) = initial
             .plan_compositor_frame(&mut planner, surface_size)
             .unwrap()
@@ -735,18 +736,17 @@ mod tests {
             rarog_compositor::FrameUpdateKind::Full
         );
         planner.complete(initial_plan.id()).unwrap();
+        let _ = initial;
 
         let unchanged = view.render(viewport).unwrap();
-        assert_eq!(
-            unchanged.display_list_revision,
-            initial.display_list_revision
-        );
+        assert_eq!(unchanged.display_list_revision, initial_revision);
         assert_eq!(
             unchanged
                 .plan_compositor_frame(&mut planner, surface_size)
                 .unwrap(),
             FrameDecision::Noop
         );
+        let _ = unchanged;
 
         let resized = view
             .render(Size {
