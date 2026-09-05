@@ -47,6 +47,37 @@ impl fmt::Display for WindowsGpuError {
 
 impl std::error::Error for WindowsGpuError {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowsSurfaceRecovery {
+    Retry,
+    Reconfigure,
+    Recreate,
+    Fatal,
+}
+
+impl WindowsGpuError {
+    pub fn surface_recovery(&self) -> Option<WindowsSurfaceRecovery> {
+        #[cfg(target_os = "windows")]
+        {
+            match self {
+                Self::Surface(wgpu::SurfaceError::Timeout) => Some(WindowsSurfaceRecovery::Retry),
+                Self::Surface(wgpu::SurfaceError::Outdated) => {
+                    Some(WindowsSurfaceRecovery::Reconfigure)
+                }
+                Self::Surface(wgpu::SurfaceError::Lost) => Some(WindowsSurfaceRecovery::Recreate),
+                Self::Surface(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
+                    Some(WindowsSurfaceRecovery::Fatal)
+                }
+                _ => None,
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub struct WindowsGpuDevice {
     instance: wgpu::Instance,
@@ -229,7 +260,7 @@ impl WindowsGpuSurface {
         Ok(())
     }
 
-    fn reconfigure(&mut self, gpu: &WindowsGpuDevice) -> Result<(), WindowsGpuError> {
+    pub fn reconfigure(&mut self, gpu: &WindowsGpuDevice) -> Result<(), WindowsGpuError> {
         if self.is_suspended() {
             self.config = None;
             return Ok(());
@@ -269,6 +300,31 @@ mod tests {
         assert_eq!(
             WindowsGpuError::UnsupportedTarget.to_string(),
             "Windows GPU service is unavailable on this target"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn surface_errors_map_to_explicit_recovery_actions() {
+        assert_eq!(
+            WindowsGpuError::Surface(wgpu::SurfaceError::Timeout).surface_recovery(),
+            Some(WindowsSurfaceRecovery::Retry)
+        );
+        assert_eq!(
+            WindowsGpuError::Surface(wgpu::SurfaceError::Outdated).surface_recovery(),
+            Some(WindowsSurfaceRecovery::Reconfigure)
+        );
+        assert_eq!(
+            WindowsGpuError::Surface(wgpu::SurfaceError::Lost).surface_recovery(),
+            Some(WindowsSurfaceRecovery::Recreate)
+        );
+        assert_eq!(
+            WindowsGpuError::Surface(wgpu::SurfaceError::OutOfMemory).surface_recovery(),
+            Some(WindowsSurfaceRecovery::Fatal)
+        );
+        assert_eq!(
+            WindowsGpuError::Surface(wgpu::SurfaceError::Other).surface_recovery(),
+            Some(WindowsSurfaceRecovery::Fatal)
         );
     }
 
