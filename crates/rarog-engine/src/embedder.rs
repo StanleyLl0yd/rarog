@@ -721,32 +721,34 @@ mod tests {
         let surface_size = SurfaceSize::new(160, 90);
         let mut planner = FramePlanner::new(surface);
 
-        let initial = view.render(viewport).unwrap();
-        assert_eq!(initial.display_list_revision, DisplayListRevision::new(1));
-        let initial_revision = initial.display_list_revision;
-        let FrameDecision::Submit(initial_plan) = initial
-            .plan_compositor_frame(&mut planner, surface_size)
-            .unwrap()
-        else {
-            panic!("initial view frame must submit");
-        };
-        assert_eq!(initial_plan.cause(), FrameCause::Initial);
-        assert_eq!(
-            initial_plan.update_kind(),
-            rarog_compositor::FrameUpdateKind::Full
-        );
-        planner.complete(initial_plan.id()).unwrap();
-        let _ = initial;
-
-        let unchanged = view.render(viewport).unwrap();
-        assert_eq!(unchanged.display_list_revision, initial_revision);
-        assert_eq!(
-            unchanged
+        let initial_revision = {
+            let initial = view.render(viewport).unwrap();
+            assert_eq!(initial.display_list_revision, DisplayListRevision::new(1));
+            let FrameDecision::Submit(initial_plan) = initial
                 .plan_compositor_frame(&mut planner, surface_size)
-                .unwrap(),
-            FrameDecision::Noop
-        );
-        let _ = unchanged;
+                .unwrap()
+            else {
+                panic!("initial view frame must submit");
+            };
+            assert_eq!(initial_plan.cause(), FrameCause::Initial);
+            assert_eq!(
+                initial_plan.update_kind(),
+                rarog_compositor::FrameUpdateKind::Full
+            );
+            planner.complete(initial_plan.id()).unwrap();
+            initial.display_list_revision
+        };
+
+        {
+            let unchanged = view.render(viewport).unwrap();
+            assert_eq!(unchanged.display_list_revision, initial_revision);
+            assert_eq!(
+                unchanged
+                    .plan_compositor_frame(&mut planner, surface_size)
+                    .unwrap(),
+                FrameDecision::Noop
+            );
+        }
 
         let resized = view
             .render(Size {
