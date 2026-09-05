@@ -1290,6 +1290,7 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
 fn flex_container_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
     before.justify_content != after.justify_content
         || before.align_items != after.align_items
+        || before.align_content != after.align_content
         || before.flex_wrap != after.flex_wrap
         || before.row_gap != after.row_gap
         || before.column_gap != after.column_gap
@@ -1640,6 +1641,48 @@ mod tests {
                 .origin
                 .x,
             flex_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn align_content_change_relayouts_wrapped_lines_in_definite_height() {
+        let source = r#"<div id="flex" style="display:flex;flex-wrap:wrap;width:100px;height:60px;align-content:flex-start"><div id="a" style="width:60px;height:10px;background:#112233"></div><div id="b" style="width:60px;height:20px;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;flex-wrap:wrap;width:100px;height:60px;align-content:flex-end"><div id="a" style="width:60px;height:10px;background:#112233"></div><div id="b" style="width:60px;height:20px;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
+        let second = element_with_id(session.document(), "b");
+
+        session
+            .document_mut()
+            .set_attribute(
+                flex,
+                "style",
+                "display:flex;flex-wrap:wrap;width:100px;height:60px;align-content:flex-end",
+            )
+            .unwrap();
+        let report = session.update().expect("align-content update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+        let flex_y = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("wrapped flex container remains")
+            .boxes
+            .content_box
+            .origin
+            .y;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second wrapped item remains")
+                .boxes
+                .border_box
+                .origin
+                .y,
+            flex_y + 40.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),

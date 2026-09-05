@@ -71,10 +71,23 @@ pub enum FlexCrossAlignment {
     Stretch,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FlexContentAlignment {
+    #[default]
+    Stretch,
+    Start,
+    End,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlexRowOptions {
     main_alignment: FlexMainAlignment,
     cross_alignment: FlexCrossAlignment,
+    content_alignment: FlexContentAlignment,
     main_gap: f32,
     cross_gap: f32,
     cross_size: Option<f32>,
@@ -87,6 +100,7 @@ impl Default for FlexRowOptions {
         Self {
             main_alignment: FlexMainAlignment::Start,
             cross_alignment: FlexCrossAlignment::Start,
+            content_alignment: FlexContentAlignment::Stretch,
             main_gap: 0.0,
             cross_gap: 0.0,
             cross_size: None,
@@ -104,6 +118,11 @@ impl FlexRowOptions {
 
     pub const fn with_cross_alignment(mut self, alignment: FlexCrossAlignment) -> Self {
         self.cross_alignment = alignment;
+        self
+    }
+
+    pub const fn with_content_alignment(mut self, alignment: FlexContentAlignment) -> Self {
+        self.content_alignment = alignment;
         self
     }
 
@@ -138,6 +157,10 @@ impl FlexRowOptions {
 
     pub const fn cross_alignment(self) -> FlexCrossAlignment {
         self.cross_alignment
+    }
+
+    pub const fn content_alignment(self) -> FlexContentAlignment {
+        self.content_alignment
     }
 
     pub const fn main_gap(self) -> f32 {
@@ -190,7 +213,6 @@ pub enum FlexLayoutError {
     InvalidOrigin,
     InvalidGap,
     InvalidCrossSize,
-    WrappedCrossSizeUnsupported,
     InvalidItemAlignmentCount { expected: usize, actual: usize },
     InvalidItemSize { node: LayoutNodeId },
     InvalidMargin { node: LayoutNodeId },
@@ -213,9 +235,6 @@ impl fmt::Display for FlexLayoutError {
             Self::InvalidCrossSize => {
                 formatter.write_str("flex cross size constraints must be finite and non-negative")
             }
-            Self::WrappedCrossSizeUnsupported => formatter.write_str(
-                "wrapped flex rows with definite or constrained cross size require align-content",
-            ),
             Self::InvalidItemAlignmentCount { expected, actual } => write!(
                 formatter,
                 "flex item alignment count mismatch: expected {expected}, got {actual}"
@@ -401,20 +420,18 @@ pub fn layout_wrapped_flexible_rows_with_item_alignments(
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
     validate_options(options)?;
     validate_item_alignment_count(items.len(), item_cross_alignments)?;
-    if options.cross_size().is_some()
-        || options.min_cross_size().is_some()
-        || options.max_cross_size().is_some()
-    {
-        return Err(FlexLayoutError::WrappedCrossSizeUnsupported);
-    }
 
     if items.is_empty() {
+        let used_cross_size = resolve_cross_size(0.0, options)?;
         return Ok(FlexMultiLineLayout {
             items: Vec::new(),
-            content_size: Size::default(),
+            content_size: Size {
+                width: 0.0,
+                height: used_cross_size,
+            },
             line_count: 0,
             overflows_main_axis: false,
-            overflows_cross_axis: false,
+            overflows_cross_axis: used_cross_size > available_size.height,
         });
     }
 
@@ -443,55 +460,80 @@ pub fn layout_wrapped_flexible_rows_with_item_alignments(
     }
     ranges.push((line_start, items.len()));
 
-    let line_options = FlexRowOptions {
+    let natural_line_options = FlexRowOptions {
         cross_gap: 0.0,
         cross_size: None,
         min_cross_size: None,
         max_cross_size: None,
         ..options
     };
-    let mut placements = Vec::with_capacity(items.len());
-    let mut y = origin.y;
+    let mut line_cross_sizes = Vec::with_capacity(ranges.len());
     let mut max_main_size = 0.0_f32;
     let mut overflows_main_axis = false;
-
-    for (line_index, (start, end)) in ranges.iter().copied().enumerate() {
+    for (start, end) in ranges.iter().copied() {
         let alignments = if item_cross_alignments.is_empty() {
             &[][..]
         } else {
             &item_cross_alignments[start..end]
         };
         let row = layout_flexible_single_line_flex_row_with_item_alignments(
+            origin,
+            available_size,
+            &items[start..end],
+            natural_line_options,
+            alignments,
+        )?;
+        line_cross_sizes.push(row.content_size.height);
+        max_main_size = max_main_size.max(row.content_size.width);
+        overflows_main_axis |= row.overflows_main_axis;
+    }
+
+    let mut natural_cross_size = main_gap_extent(ranges.len(), options.cross_gap())?;
+    for line_cross_size in &line_cross_sizes {
+        natural_cross_size = finite_add(natural_cross_size, *line_cross_size)?;
+    }
+    let used_cross_size = resolve_cross_size(natural_cross_size, options)?;
+    let remaining = used_cross_size - natural_cross_size;
+    if !remaining.is_finite() {
+        return Err(FlexLayoutError::GeometryOverflow);
+    }
+    let (leading, distributed_gap, stretch) =
+        resolve_content_distribution(remaining, ranges.len(), options.content_alignment());
+
+    let mut placements = Vec::with_capacity(items.len());
+    let mut y = finite_add(origin.y, leading)?;
+    for (line_index, (start, end)) in ranges.iter().copied().enumerate() {
+        let alignments = if item_cross_alignments.is_empty() {
+            &[][..]
+        } else {
+            &item_cross_alignments[start..end]
+        };
+        let line_cross_size = finite_add(line_cross_sizes[line_index], stretch)?;
+        let row = layout_flexible_single_line_flex_row_with_item_alignments(
             Point { x: origin.x, y },
             available_size,
             &items[start..end],
-            line_options,
+            natural_line_options.with_cross_size(Some(line_cross_size)),
             alignments,
         )?;
-        max_main_size = max_main_size.max(row.content_size.width);
-        overflows_main_axis |= row.overflows_main_axis;
-        y = finite_add(y, row.content_size.height)?;
         placements.extend(row.items);
+        y = finite_add(y, line_cross_size)?;
         if line_index + 1 < ranges.len() {
             y = finite_add(y, options.cross_gap())?;
+            y = finite_add(y, distributed_gap)?;
         }
     }
-
-    let content_height = y - origin.y;
-    if !content_height.is_finite() {
-        return Err(FlexLayoutError::GeometryOverflow);
-    }
-    let content_height = content_height.max(0.0);
 
     Ok(FlexMultiLineLayout {
         items: placements,
         content_size: Size {
             width: max_main_size,
-            height: content_height,
+            height: used_cross_size,
         },
         line_count: ranges.len(),
         overflows_main_axis,
-        overflows_cross_axis: content_height > available_size.height,
+        overflows_cross_axis: natural_cross_size > used_cross_size
+            || used_cross_size > available_size.height,
     })
 }
 
@@ -646,6 +688,45 @@ fn resolve_cross_size(
     used.is_finite()
         .then_some(used)
         .ok_or(FlexLayoutError::GeometryOverflow)
+}
+
+fn resolve_content_distribution(
+    remaining: f32,
+    count: usize,
+    alignment: FlexContentAlignment,
+) -> (f32, f32, f32) {
+    if remaining >= 0.0 {
+        match alignment {
+            FlexContentAlignment::Stretch if count > 0 => (0.0, 0.0, remaining / count as f32),
+            FlexContentAlignment::Stretch | FlexContentAlignment::Start => (0.0, 0.0, 0.0),
+            FlexContentAlignment::End => (remaining, 0.0, 0.0),
+            FlexContentAlignment::Center => (remaining / 2.0, 0.0, 0.0),
+            FlexContentAlignment::SpaceBetween if count > 1 => {
+                (0.0, remaining / (count - 1) as f32, 0.0)
+            }
+            FlexContentAlignment::SpaceBetween => (0.0, 0.0, 0.0),
+            FlexContentAlignment::SpaceAround if count > 0 => {
+                let gap = remaining / count as f32;
+                (gap / 2.0, gap, 0.0)
+            }
+            FlexContentAlignment::SpaceAround => (0.0, 0.0, 0.0),
+            FlexContentAlignment::SpaceEvenly if count > 0 => {
+                let gap = remaining / (count + 1) as f32;
+                (gap, gap, 0.0)
+            }
+            FlexContentAlignment::SpaceEvenly => (0.0, 0.0, 0.0),
+        }
+    } else {
+        match alignment {
+            FlexContentAlignment::End => (remaining, 0.0, 0.0),
+            FlexContentAlignment::Center => (remaining / 2.0, 0.0, 0.0),
+            FlexContentAlignment::Stretch
+            | FlexContentAlignment::Start
+            | FlexContentAlignment::SpaceBetween
+            | FlexContentAlignment::SpaceAround
+            | FlexContentAlignment::SpaceEvenly => (0.0, 0.0, 0.0),
+        }
+    }
 }
 
 fn apply_main_alignment(
@@ -1007,27 +1088,102 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_rows_reject_definite_or_constrained_cross_size_until_align_content() {
-        let items = [FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 0.0, 0.0)];
-        for options in [
-            FlexRowOptions::default().with_cross_size(Some(40.0)),
-            FlexRowOptions::default().with_cross_size_limits(Some(40.0), None),
-            FlexRowOptions::default().with_cross_size_limits(None, Some(40.0)),
-        ] {
-            assert_eq!(
-                layout_wrapped_flexible_rows_with_item_alignments(
-                    Point::default(),
-                    Size {
-                        width: 100.0,
-                        height: 100.0,
-                    },
-                    &items,
-                    options,
-                    &[],
-                ),
-                Err(FlexLayoutError::WrappedCrossSizeUnsupported)
-            );
-        }
+    fn wrapped_rows_stretch_lines_into_definite_cross_size() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default().with_cross_size(Some(60.0)),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(layout.line_count, 2);
+        assert_eq!(layout.content_size.height, 60.0);
+        assert_eq!(layout.items[0].border_box.origin.y, 0.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 25.0);
+    }
+
+    #[test]
+    fn wrapped_rows_center_lines_in_definite_cross_size() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_content_alignment(FlexContentAlignment::Center)
+                .with_cross_size(Some(60.0)),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.y, 15.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 25.0);
+    }
+
+    #[test]
+    fn wrapped_rows_space_between_adds_to_fixed_cross_gap() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_content_alignment(FlexContentAlignment::SpaceBetween)
+                .with_cross_gap(5.0)
+                .with_cross_size(Some(60.0)),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.y, 0.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 40.0);
+        assert_eq!(layout.content_size.height, 60.0);
+    }
+
+    #[test]
+    fn wrapped_rows_use_cross_size_limits_for_content_distribution() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_content_alignment(FlexContentAlignment::End)
+                .with_cross_size_limits(Some(50.0), None),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(layout.content_size.height, 50.0);
+        assert_eq!(layout.items[0].border_box.origin.y, 20.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 30.0);
     }
 
     #[test]
