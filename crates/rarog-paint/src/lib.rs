@@ -1282,10 +1282,7 @@ mod tests {
         let blank_hash = framebuffer.stable_hash64();
 
         let ready = images
-            .resolve(
-                id,
-                DecodedImage::try_new(1, 1, vec![Color::WHITE]).unwrap(),
-            )
+            .resolve(id, DecodedImage::try_new(1, 1, vec![Color::WHITE]).unwrap())
             .unwrap();
         let refresh = list.refresh_image_resource(ready);
         assert_eq!(refresh.updated_commands, 1);
@@ -1298,10 +1295,12 @@ mod tests {
             &images,
         );
         assert_ne!(framebuffer.stable_hash64(), blank_hash);
-        assert!(framebuffer
-            .pixels
-            .iter()
-            .all(|pixel| *pixel == Color::WHITE));
+        assert!(
+            framebuffer
+                .pixels
+                .iter()
+                .all(|pixel| *pixel == Color::WHITE)
+        );
     }
 
     #[test]
