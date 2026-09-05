@@ -128,17 +128,16 @@ pub enum FramePlannerError {
     FrameIdExhausted,
     FramePending(FrameId),
     NoPendingFrame,
-    WrongFrameCompletion {
-        expected: FrameId,
-        actual: FrameId,
-    },
+    WrongFrameCompletion { expected: FrameId, actual: FrameId },
 }
 
 impl fmt::Display for FramePlannerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidDamage => formatter.write_str("frame damage must contain finite geometry"),
-            Self::FrameIdExhausted => formatter.write_str("compositor frame identity space exhausted"),
+            Self::FrameIdExhausted => {
+                formatter.write_str("compositor frame identity space exhausted")
+            }
             Self::FramePending(frame) => {
                 write!(formatter, "compositor frame {frame:?} is still pending")
             }
@@ -223,10 +222,16 @@ impl FramePlanner {
 
         let surface_rect = size.rect();
         let (update_kind, frame_cause, frame_damage) = match self.presented {
-            None => (FrameUpdateKind::Full, FrameCause::Initial, vec![surface_rect]),
-            Some(presented) if presented.size != size => {
-                (FrameUpdateKind::Full, FrameCause::Resize, vec![surface_rect])
-            }
+            None => (
+                FrameUpdateKind::Full,
+                FrameCause::Initial,
+                vec![surface_rect],
+            ),
+            Some(presented) if presented.size != size => (
+                FrameUpdateKind::Full,
+                FrameCause::Resize,
+                vec![surface_rect],
+            )
             Some(_) if normalized_damage.is_empty() => return Ok(FrameDecision::Noop),
             Some(_) if normalized_damage.len() == 1 && normalized_damage[0] == surface_rect => {
                 (FrameUpdateKind::Full, cause, normalized_damage)
