@@ -11,14 +11,16 @@ R1 needs an image resource abstraction before later URL/Fetch and asynchronous d
 Add a platform-neutral `rarog-resources` crate. It owns:
 
 - monotonic typed `ImageResourceId` values within one store;
-- revisioned `ImageResourceRef` snapshots for ready decoded content;
+- revisioned `ImageResourceRef` snapshots for resource state, including pending revision 0;
 - pending, ready and failed lifecycle states;
 - RGBA8 `DecodedImage` buffers with exact dimension/pixel-count validation;
 - explicit limits for resource count, pixels per resource and total retained decoded pixels.
 
-Ready pixel replacement advances the resource revision. Old references become stale and do not resolve. Removal releases retained pixel budget and IDs are not reused.
+Ready resolution and pixel replacement advance the resource revision. Old references become stale and do not resolve. Removal releases retained pixel budget and IDs are not reused.
 
-`rarog-paint` adds a backend-neutral `DrawImage` display command containing destination geometry and an `ImageResourceRef`. Rasterization receives an image store explicitly. Missing or stale references paint no content. The resource revision is part of display-command equality/snapshots, so content changes are visible to normal damage comparison rather than hidden behind mutable cache state.
+The store may expose the current revision snapshot for a pending resource before decoded pixels exist. Such a reference resolves to no image and therefore paints nothing. This lets retained display state name the resource while asynchronous decode is pending; when completion advances the revision, the display command must be refreshed to the newer reference so normal damage comparison observes the transition.
+
+`rarog-paint` adds a backend-neutral `DrawImage` display command containing destination geometry and an `ImageResourceRef`. Rasterization receives an image store explicitly. Pending, missing or stale references paint no content. The resource revision is part of display-command equality/snapshots, so content changes are visible to normal damage comparison rather than hidden behind mutable cache state.
 
 ## Consequences
 
