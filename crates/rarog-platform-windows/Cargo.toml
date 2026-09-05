@@ -13,6 +13,8 @@ clipboard-win = { version = "5.4.1", default-features = false, features = ["std"
 font-kit = { version = "0.14.3", default-features = false, features = ["source"] }
 rarog-compositor-wgpu = { path = "../rarog-compositor-wgpu" }
 wgpu = { version = "=26.0.1", default-features = false, features = ["std", "dx12"] }
+rarog-compositor-wgpu = { path = "../rarog-compositor-wgpu" }
+wgpu = { version = "=26.0.1", default-features = false, features = ["std", "dx12"] }
 
 [dev-dependencies]
 rarog-layout = { path = "../rarog-layout" }
