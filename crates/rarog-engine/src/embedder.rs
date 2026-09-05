@@ -5,7 +5,9 @@ use super::{
     validate_viewport_size,
 };
 use rarog_compositor::{
-    DisplayListRevision, FrameCause, FrameDecision, FramePlanner, FramePlannerError, SurfaceSize,
+    DisplayListRevision, FrameCause, FrameDecision, FramePlanner, FramePlannerError,
+    FrameRequestId, FrameRequestReasons, FrameScheduler, FrameSchedulerError,
+    ScheduledFrameRequest, SurfaceSize,
 };
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
@@ -206,6 +208,7 @@ pub enum EngineError {
     ViewportPixelLimitExceeded { pixels: u64, limit: u64 },
     NoDocumentLoaded,
     ViewIdExhausted,
+    FrameSchedule(FrameSchedulerError),
     Render(RenderError),
 }
 
@@ -229,6 +232,7 @@ impl fmt::Display for EngineError {
             Self::ViewIdExhausted => {
                 formatter.write_str("engine view identifier space is exhausted")
             }
+            Self::FrameSchedule(error) => write!(formatter, "{error}"),
             Self::Render(error) => write!(formatter, "{error}"),
         }
     }
@@ -239,6 +243,12 @@ impl std::error::Error for EngineError {}
 impl From<RenderError> for EngineError {
     fn from(error: RenderError) -> Self {
         Self::Render(error)
+    }
+}
+
+impl From<FrameSchedulerError> for EngineError {
+    fn from(error: FrameSchedulerError) -> Self {
+        Self::FrameSchedule(error)
     }
 }
 
@@ -362,6 +372,7 @@ impl Engine {
             loaded: None,
             viewport: None,
             session: None,
+            frame_scheduler: FrameScheduler::new(),
         })
     }
 }
@@ -391,6 +402,7 @@ pub struct View {
     loaded: Option<LoadedDocument>,
     viewport: Option<Size>,
     session: Option<RenderSession>,
+    frame_scheduler: FrameScheduler,
 }
 
 impl View {
@@ -400,6 +412,32 @@ impl View {
 
     pub fn base_url(&self) -> Option<&BaseUrl> {
         self.loaded.as_ref().map(|loaded| &loaded.base_url)
+    }
+
+    pub fn request_frame(&mut self, cause: FrameCause) {
+        self.frame_scheduler.request(cause);
+    }
+
+    pub const fn pending_frame_reasons(&self) -> FrameRequestReasons {
+        self.frame_scheduler.pending_reasons()
+    }
+
+    pub const fn active_frame_request(&self) -> Option<FrameRequestId> {
+        self.frame_scheduler.active_request()
+    }
+
+    pub fn begin_frame_request(&mut self) -> Result<Option<ScheduledFrameRequest>, EngineError> {
+        Ok(self.frame_scheduler.begin()?)
+    }
+
+    pub fn complete_frame_request(&mut self, request: FrameRequestId) -> Result<(), EngineError> {
+        self.frame_scheduler.complete(request)?;
+        Ok(())
+    }
+
+    pub fn discard_frame_request(&mut self, request: FrameRequestId) -> Result<(), EngineError> {
+        self.frame_scheduler.discard(request)?;
+        Ok(())
     }
 
     pub fn load_html(
@@ -425,6 +463,8 @@ impl View {
         self.loaded = Some(LoadedDocument { source, base_url });
         self.viewport = None;
         self.session = None;
+        self.frame_scheduler = FrameScheduler::new();
+        self.frame_scheduler.request(FrameCause::Initial);
         Ok(())
     }
 
@@ -665,6 +705,51 @@ mod tests {
                 .platform_capabilities()
                 .supports(rarog_platform::PlatformService::GpuCompositor)
         );
+    }
+
+    #[test]
+    fn loading_a_document_schedules_an_initial_frame() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        assert!(view.pending_frame_reasons().is_empty());
+
+        view.load_html("<div>Rarog</div>", BaseUrl::about_blank())
+            .unwrap();
+        assert!(view.pending_frame_reasons().contains(FrameCause::Initial));
+
+        let request = view.begin_frame_request().unwrap().unwrap();
+        assert_eq!(request.primary_cause(), FrameCause::Initial);
+        assert_eq!(view.active_frame_request(), Some(request.id()));
+        view.complete_frame_request(request.id()).unwrap();
+        assert_eq!(view.active_frame_request(), None);
+        assert!(view.begin_frame_request().unwrap().is_none());
+    }
+
+    #[test]
+    fn view_frame_requests_coalesce_and_preserve_work_queued_during_a_frame() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div>Rarog</div>", BaseUrl::about_blank())
+            .unwrap();
+
+        let initial = view.begin_frame_request().unwrap().unwrap();
+        view.request_frame(FrameCause::SceneChange);
+        view.request_frame(FrameCause::ResourceReady);
+        view.request_frame(FrameCause::SceneChange);
+        assert!(
+            view.pending_frame_reasons()
+                .contains(FrameCause::SceneChange)
+        );
+        assert!(
+            view.pending_frame_reasons()
+                .contains(FrameCause::ResourceReady)
+        );
+
+        view.complete_frame_request(initial.id()).unwrap();
+        let follow_up = view.begin_frame_request().unwrap().unwrap();
+        assert_eq!(follow_up.primary_cause(), FrameCause::ResourceReady);
+        assert!(follow_up.reasons().contains(FrameCause::SceneChange));
+        view.discard_frame_request(follow_up.id()).unwrap();
     }
 
     #[test]
