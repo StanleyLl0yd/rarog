@@ -2316,6 +2316,13 @@ name = "rarog-scheduler"
 version = "0.1.0"
 
 [[package]]
+name = "rarog-scroll"
+version = "0.1.0"
+dependencies = [
+ "rarog-types",
+]
+
+[[package]]
 name = "rarog-script"
 version = "0.1.0"
 
