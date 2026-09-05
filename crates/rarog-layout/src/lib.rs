@@ -1,7 +1,8 @@
 mod flex;
 
 pub use flex::{
-    FlexCrossAlignment, FlexLayoutError, FlexMainAlignment, FlexMultiLineLayout, FlexRowItem,
+    FlexContentAlignment, FlexCrossAlignment, FlexLayoutError, FlexMainAlignment,
+    FlexMultiLineLayout, FlexRowItem,
     FlexRowLayout, FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem,
     layout_flexible_single_line_flex_row, layout_flexible_single_line_flex_row_with_alignment,
     layout_flexible_single_line_flex_row_with_item_alignments,
@@ -11,8 +12,8 @@ pub use flex::{
 };
 
 use rarog_css::{
-    AlignItems, AlignSelf, ComputedStyle, FlexWrap, JustifyContent, StyleSet, VerticalAlign,
-    computed_style_with_parent,
+    AlignContent, AlignItems, AlignSelf, ComputedStyle, FlexWrap, JustifyContent, StyleSet,
+    VerticalAlign, computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
@@ -2951,6 +2952,9 @@ impl FragmentBuilder {
                     let content_height = if let Some(height) = style.height {
                         clamp_used_dimension(height, style.min_height, style.max_height)
                     } else {
+                        if container.style.flex_wrap == FlexWrap::Wrap {
+                            return (Vec::new(), 0.0);
+                        }
                         if effective_cross_alignment != FlexCrossAlignment::Stretch {
                             return (Vec::new(), 0.0);
                         }
@@ -2998,6 +3002,7 @@ impl FragmentBuilder {
         let options = FlexRowOptions::default()
             .with_main_alignment(flex_main_alignment(container.style.justify_content))
             .with_cross_alignment(container_cross_alignment)
+            .with_content_alignment(flex_content_alignment(container.style.align_content))
             .with_main_gap(container.style.column_gap)
             .with_cross_gap(container.style.row_gap)
             .with_cross_size(definite_cross_size)
@@ -3212,6 +3217,18 @@ fn flex_item_cross_alignment(align_self: AlignSelf) -> Option<FlexCrossAlignment
         AlignSelf::FlexStart => Some(FlexCrossAlignment::Start),
         AlignSelf::FlexEnd => Some(FlexCrossAlignment::End),
         AlignSelf::Center => Some(FlexCrossAlignment::Center),
+    }
+}
+
+fn flex_content_alignment(align_content: AlignContent) -> FlexContentAlignment {
+    match align_content {
+        AlignContent::Stretch => FlexContentAlignment::Stretch,
+        AlignContent::FlexStart => FlexContentAlignment::Start,
+        AlignContent::FlexEnd => FlexContentAlignment::End,
+        AlignContent::Center => FlexContentAlignment::Center,
+        AlignContent::SpaceBetween => FlexContentAlignment::SpaceBetween,
+        AlignContent::SpaceAround => FlexContentAlignment::SpaceAround,
+        AlignContent::SpaceEvenly => FlexContentAlignment::SpaceEvenly,
     }
 }
 
@@ -3633,7 +3650,7 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_definite_height_container_remains_fail_closed_until_align_content() {
+    fn wrapped_definite_height_container_stretches_flex_lines_by_default() {
         let mut doc = Document::new();
         let container = doc
             .append_new(
@@ -3646,7 +3663,100 @@ mod tests {
             .unwrap();
         doc.append_new(container, element("div", Some("width:60px;height:10px")))
             .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.boxes.content_box.size.height, 60.0);
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 0.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 25.0);
+    }
+
+    #[test]
+    fn align_content_center_positions_wrapped_lines_in_definite_height() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-wrap:wrap;width:100px;height:60px;align-content:center",
+                    ),
+                ),
+            )
+            .unwrap();
         doc.append_new(container, element("div", Some("width:60px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 15.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 25.0);
+    }
+
+    #[test]
+    fn align_content_space_between_adds_to_row_gap() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-wrap:wrap;width:100px;height:60px;row-gap:5px;align-content:space-between",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 0.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 40.0);
+    }
+
+    #[test]
+    fn wrapped_auto_height_items_remain_fail_closed_until_per_line_stretch_sizing() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;flex-wrap:wrap;width:100px;height:60px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px")))
             .unwrap();
 
         let output = layout_document(
@@ -3659,6 +3769,7 @@ mod tests {
 
         assert!(output.fragments.root.children[0].children.is_empty());
     }
+
 
     #[test]
     fn definite_height_flex_container_stretches_auto_height_item() {
