@@ -1663,6 +1663,12 @@ mod tests {
             .unwrap();
         let report = session.update().expect("flex-wrap update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
+        let flex_y = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("wrapped flex container remains")
+            .boxes
+            .content_box
+            .origin
+            .y;
 
         assert_eq!(
             fragment_for_dom(&session.layout().fragments, second)
@@ -1671,7 +1677,7 @@ mod tests {
                 .border_box
                 .origin
                 .y,
-            10.0
+            flex_y + 10.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
@@ -1699,6 +1705,12 @@ mod tests {
             .unwrap();
         let report = session.update().expect("row-gap update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
+        let flex_y = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("wrapped flex container remains")
+            .boxes
+            .content_box
+            .origin
+            .y;
 
         assert_eq!(
             fragment_for_dom(&session.layout().fragments, second)
@@ -1707,7 +1719,7 @@ mod tests {
                 .border_box
                 .origin
                 .y,
-            17.0
+            flex_y + 17.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
