@@ -1717,6 +1717,50 @@ mod tests {
     }
 
     #[test]
+    fn grid_item_explicit_to_auto_relayouts_parent_and_matches_fresh_render() {
+        let source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:40px 60px;grid-template-rows:20px"><div id="fixed" style="grid-row-start:1;grid-column-start:1;background:#112233"></div><div id="item" style="grid-row-start:1;grid-column-start:2;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:40px 60px;grid-template-rows:20px"><div id="fixed" style="grid-row-start:1;grid-column-start:1;background:#112233"></div><div id="item" style="grid-row-start:auto;grid-column-start:auto;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let grid = element_with_id(session.document(), "grid");
+        let item = element_with_id(session.document(), "item");
+
+        session
+            .document_mut()
+            .set_attribute(
+                item,
+                "style",
+                "grid-row-start:auto;grid-column-start:auto;background:#445566",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("grid explicit-to-auto update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+        let grid_x = fragment_for_dom(&session.layout().fragments, grid)
+            .expect("grid container remains")
+            .boxes
+            .content_box
+            .origin
+            .x;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, item)
+                .expect("auto-placed grid item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            grid_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
     fn grid_item_placement_change_relayouts_parent_grid_and_matches_fresh_render() {
         let source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:40px 60px;grid-template-rows:20px"><div id="item" style="grid-row-start:1;grid-column-start:1;background:#112233"></div></div>"#;
         let expected_source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:40px 60px;grid-template-rows:20px"><div id="item" style="grid-row-start:1;grid-column-start:2;background:#112233"></div></div>"#;
