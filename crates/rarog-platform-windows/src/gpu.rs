@@ -150,7 +150,7 @@ impl WindowsGpuDevice {
         height: u32,
     ) -> Result<WindowsGpuSurface, WindowsGpuError>
     where
-        T: wgpu::DisplayAndWindowHandle + 'static,
+        T: Into<wgpu::SurfaceTarget<'static>>,
     {
         let surface: wgpu::Surface<'static> = self
             .instance
