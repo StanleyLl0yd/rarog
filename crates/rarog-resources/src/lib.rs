@@ -297,9 +297,14 @@ impl fmt::Display for ImageDecodeQueueError {
                 formatter.write_str("image decode request identifier space is exhausted")
             }
             Self::RequestInProgress(request) => {
-                write!(formatter, "image decode request {request:?} is still in progress")
+                write!(
+                    formatter,
+                    "image decode request {request:?} is still in progress"
+                )
             }
-            Self::NoActiveRequest => formatter.write_str("image decode queue has no active request"),
+            Self::NoActiveRequest => {
+                formatter.write_str("image decode queue has no active request")
+            }
             Self::WrongCompletion { expected, actual } => write!(
                 formatter,
                 "image decode queue expected completion for {expected:?}, got {actual:?}"
@@ -480,7 +485,11 @@ impl ImageDecodeQueue {
         store: &mut ImageResourceStore,
         request: ImageDecodeRequestId,
     ) -> bool {
-        let Some(position) = self.pending.iter().position(|pending| pending.request == request) else {
+        let Some(position) = self
+            .pending
+            .iter()
+            .position(|pending| pending.request == request)
+        else {
             return false;
         };
         let pending = self
@@ -784,7 +793,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(ready.id(), first.resource());
-        assert_eq!(store.status(first.resource()), Some(ImageResourceStatus::Ready));
+        assert_eq!(
+            store.status(first.resource()),
+            Some(ImageResourceStatus::Ready)
+        );
         assert_eq!(queue.retained_encoded_bytes(), 2);
 
         let work = queue.begin_next().unwrap().unwrap();
