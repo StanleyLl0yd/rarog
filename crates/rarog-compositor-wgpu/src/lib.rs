@@ -194,10 +194,12 @@ impl WgpuCompositorBackend {
             return;
         }
 
-        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rarog-compositor-present-shader"),
-            source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
-        });
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("rarog-compositor-present-shader"),
+                source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
+            });
         let bind_group_layout =
             self.device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -221,13 +223,13 @@ impl WgpuCompositorBackend {
                         },
                     ],
                 });
-        let pipeline_layout =
-            self.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("rarog-compositor-present-pipeline-layout"),
-                    bind_group_layouts: &[&bind_group_layout],
-                    push_constant_ranges: &[],
-                });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("rarog-compositor-present-pipeline-layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
         let targets = [Some(wgpu::ColorTargetState {
             format: target_format,
             blend: None,
