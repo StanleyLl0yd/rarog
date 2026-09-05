@@ -2,9 +2,9 @@ mod flex;
 
 pub use flex::{
     FlexContentAlignment, FlexCrossAlignment, FlexLayoutError, FlexMainAlignment,
-    FlexMultiLineLayout, FlexRowItem,
-    FlexRowLayout, FlexRowOptions, FlexRowPlacement, FlexibleFlexRowItem,
-    layout_flexible_single_line_flex_row, layout_flexible_single_line_flex_row_with_alignment,
+    FlexMultiLineLayout, FlexRowItem, FlexRowLayout, FlexRowOptions, FlexRowPlacement,
+    FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
+    layout_flexible_single_line_flex_row_with_alignment,
     layout_flexible_single_line_flex_row_with_item_alignments,
     layout_flexible_single_line_flex_row_with_options, layout_single_line_flex_row,
     layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_item_alignments,
