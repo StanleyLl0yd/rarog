@@ -256,7 +256,6 @@ impl FrameScheduler {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct FramePlan {
     id: FrameId,
