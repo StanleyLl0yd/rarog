@@ -3,6 +3,9 @@ mod event_loop;
 pub use embedder::*;
 pub use event_loop::*;
 
+use rarog_compositor::{
+    DisplayListRevision, FrameCause, FrameDecision, FramePlanner, FramePlannerError, SurfaceSize,
+};
 use rarog_css::{ComputedStyle, DirtyFlags, InvalidationSet, StyleSet, computed_style};
 use rarog_dom::{Document, MutationError, MutationKind, NodeId, NodeKind};
 use rarog_layout::{
@@ -80,6 +83,7 @@ pub enum RenderError {
     CssRuleLimitExceeded { rules: usize, limit: usize },
     FragmentLimitExceeded { fragments: usize, limit: usize },
     DisplayCommandLimitExceeded { commands: usize, limit: usize },
+    DisplayListRevisionExhausted,
     DisplayList(DisplayListError),
     Framebuffer(FramebufferError),
 }
@@ -118,6 +122,9 @@ impl std::fmt::Display for RenderError {
                 formatter,
                 "paint produced {commands} display commands; limit is {limit}"
             ),
+            Self::DisplayListRevisionExhausted => {
+                formatter.write_str("display-list revision space exhausted")
+            }
             Self::DisplayList(error) => write!(formatter, "{error}"),
             Self::Framebuffer(error) => write!(formatter, "{error}"),
         }
@@ -321,6 +328,7 @@ pub struct RenderSession {
     styles: StyleSet,
     layout: LayoutOutput,
     display_list: DisplayList,
+    display_list_revision: DisplayListRevision,
     damage: DamageRegion,
     framebuffer: Framebuffer,
     dirty: DirtyState,
@@ -347,6 +355,7 @@ impl RenderSession {
             styles: output.styles,
             layout: output.layout,
             display_list: output.display_list,
+            display_list_revision: DisplayListRevision::new(1),
             damage: output.damage,
             framebuffer: output.framebuffer,
             dirty: DirtyState::clean_at(generation),
@@ -378,6 +387,24 @@ impl RenderSession {
 
     pub fn damage(&self) -> &DamageRegion {
         &self.damage
+    }
+
+    pub const fn display_list_revision(&self) -> DisplayListRevision {
+        self.display_list_revision
+    }
+
+    pub fn plan_compositor_frame(
+        &self,
+        planner: &mut FramePlanner,
+        surface_size: SurfaceSize,
+        cause: FrameCause,
+    ) -> Result<FrameDecision, FramePlannerError> {
+        planner.plan(
+            surface_size,
+            self.display_list_revision,
+            &self.damage,
+            cause,
+        )
     }
 
     pub fn framebuffer(&self) -> &Framebuffer {
@@ -416,6 +443,11 @@ impl RenderSession {
         let display_list = build_display_list(&layout.fragments);
         validate_display_list_limits(&display_list, self.limits)?;
         let damage = DamageRegion::between(Some(&self.display_list), &display_list);
+        let display_list_revision = next_display_list_revision(
+            self.display_list_revision,
+            &self.display_list,
+            &display_list,
+        )?;
         let paint_list = stage_started.elapsed();
 
         let stage_started = Instant::now();
@@ -429,6 +461,7 @@ impl RenderSession {
         self.styles = styles;
         self.layout = layout;
         self.display_list = display_list;
+        self.display_list_revision = display_list_revision;
         self.damage = damage;
         self.framebuffer = framebuffer;
         self.dirty = DirtyState::clean_at(generation);
@@ -894,6 +927,11 @@ impl RenderSession {
 
         let styles = rebuilt_styles.as_ref().unwrap_or(&self.styles);
         validate_render_state_limits(styles, &layout, &display_list, self.limits)?;
+        let display_list_revision = next_display_list_revision(
+            self.display_list_revision,
+            &self.display_list,
+            &display_list,
+        )?;
 
         self.framebuffer
             .rasterize_damage(&display_list, &damage, self.options.background);
@@ -902,6 +940,7 @@ impl RenderSession {
         }
         self.layout = layout;
         self.display_list = display_list;
+        self.display_list_revision = display_list_revision;
         self.damage = damage;
         dirty.clear();
         self.dirty = dirty;
@@ -918,6 +957,21 @@ impl RenderSession {
             elapsed: update_started.elapsed(),
         })
     }
+}
+
+fn next_display_list_revision(
+    revision: DisplayListRevision,
+    previous: &DisplayList,
+    current: &DisplayList,
+) -> Result<DisplayListRevision, RenderError> {
+    if previous == current {
+        return Ok(revision);
+    }
+    let next = revision
+        .get()
+        .checked_add(1)
+        .ok_or(RenderError::DisplayListRevisionExhausted)?;
+    Ok(DisplayListRevision::new(next))
 }
 
 pub fn render_html(source: &str, options: RenderOptions) -> Result<RenderOutput, RenderError> {
