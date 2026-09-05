@@ -3770,7 +3770,6 @@ mod tests {
         assert!(output.fragments.root.children[0].children.is_empty());
     }
 
-
     #[test]
     fn definite_height_flex_container_stretches_auto_height_item() {
         let mut doc = Document::new();
