@@ -1924,10 +1924,7 @@ mod tests {
         );
         framebuffer.rasterize(&list);
 
-        assert_eq!(
-            framebuffer.to_rgba8(),
-            vec![1, 2, 3, 4, 255, 255, 255, 255]
-        );
+        assert_eq!(framebuffer.to_rgba8(), vec![1, 2, 3, 4, 255, 255, 255, 255]);
     }
 
     #[test]
