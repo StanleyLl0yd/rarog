@@ -24,7 +24,7 @@ The first boundary defines:
 - `FrameUpdateKind`: full or partial redraw;
 - `FramePlan`: validated surface/revision/cause/damage metadata;
 - `FrameDecision`: no-op, suspended or submit;
-- `FrameSubmission`: a borrowed validated plan plus Rarog `DisplayList`;
+- `FrameSubmission`: a borrowed validated plan plus Rarog `DisplayList` and backend-neutral clear color;
 - `CompositorBackend`: backend-neutral submission trait.
 
 `FramePlanner` is per-surface and permits one pending frame.
@@ -55,6 +55,8 @@ CPU/headless and deterministic test backends can implement the same submission c
 Engine frame scheduling can reason about pending/presented work independently from graphics-library lifetime rules.
 
 Damage is normalized once at the compositor boundary before reaching backend-specific code.
+
+The submission carries the clear/background `Color` required to reproduce CPU full/partial raster semantics without importing engine options into a graphics backend. A future mutable background-color API must invalidate the surface appropriately; the current render background is immutable within a session.
 
 ## Deferred
 
