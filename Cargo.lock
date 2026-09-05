@@ -1434,6 +1434,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-compositor"
+version = "0.1.0"
+dependencies = [
+ "rarog-paint",
+ "rarog-types",
+]
+
+[[package]]
 name = "rarog-css"
 version = "0.1.0"
 dependencies = [
