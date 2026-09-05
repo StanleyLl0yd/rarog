@@ -156,7 +156,6 @@ impl WgpuCompositorBackend {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
-                multiview_mask: None,
             });
             pass.set_pipeline(&presenter.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
@@ -254,14 +253,14 @@ impl WgpuCompositorBackend {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &targets,
                 }),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             });
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rarog-compositor-present-sampler"),
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
         self.presenter = Some(Presenter {
