@@ -3000,7 +3000,7 @@ impl FragmentBuilder {
                         item_cross_alignment.unwrap_or(container_cross_alignment);
                     let content_height = if let Some(height) = style.height {
                         clamp_used_dimension(height, style.min_height, style.max_height)
-                    } else if container.style.flex_wrap == FlexWrap::Wrap {
+                    } else if container.style.flex_wrap != FlexWrap::NoWrap {
                         clamp_used_dimension(0.0, style.min_height, style.max_height)
                     } else {
                         if effective_cross_alignment != FlexCrossAlignment::Stretch {
@@ -3062,12 +3062,13 @@ impl FragmentBuilder {
             .with_main_alignment(flex_main_alignment(container.style.justify_content))
             .with_cross_alignment(container_cross_alignment)
             .with_content_alignment(flex_content_alignment(container.style.align_content))
+            .with_cross_reverse(container.style.flex_wrap == FlexWrap::WrapReverse)
             .with_main_gap(container.style.column_gap)
             .with_cross_gap(container.style.row_gap)
             .with_cross_size(definite_cross_size)
             .with_cross_size_limits(container.style.min_height, container.style.max_height);
 
-        if container.style.flex_wrap == FlexWrap::Wrap
+        if container.style.flex_wrap != FlexWrap::NoWrap
             && item_cross_metadata.iter().any(|metadata| metadata.auto)
         {
             let Ok(provisional) = layout_wrapped_flexible_rows_with_item_alignments(
@@ -3107,7 +3108,7 @@ impl FragmentBuilder {
                 };
                 (row.items, row.content_size.height)
             }
-            FlexWrap::Wrap => {
+            FlexWrap::Wrap | FlexWrap::WrapReverse => {
                 let Ok(layout) = layout_wrapped_flexible_rows_with_cross_metadata(
                     containing_block.origin,
                     containing_block.available,
@@ -3701,6 +3702,113 @@ mod tests {
             Point { x: 0.0, y: 25.0 }
         );
         assert_eq!(container.boxes.content_box.size.height, 40.0);
+    }
+
+    #[test]
+    fn flex_wrap_reverse_stacks_lines_from_the_container_cross_end() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-wrap:wrap-reverse;width:100px;height:60px;align-content:flex-start",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 50.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 30.0);
+    }
+
+    #[test]
+    fn flex_wrap_reverse_flips_item_cross_start_without_swapping_physical_margins() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-wrap:wrap-reverse;width:100px;height:60px;align-items:flex-start",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element(
+                "div",
+                Some("width:60px;height:10px;margin-top:2px;margin-bottom:3px"),
+            ),
+        )
+        .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let first = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(first.boxes.border_box.origin.y, 47.0);
+        assert_eq!(first.boxes.margin_box.origin.y, 45.0);
+        assert_eq!(first.boxes.margin_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn flex_wrap_reverse_supports_measured_auto_height_items() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-wrap:wrap-reverse;width:100px;height:60px;align-content:flex-start",
+                    ),
+                ),
+            )
+            .unwrap();
+        let first = doc
+            .append_new(container, element("div", Some("width:60px")))
+            .unwrap();
+        doc.append_new(first, element("div", Some("height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.size.height, 10.0);
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 50.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 30.0);
     }
 
     #[test]
