@@ -3877,9 +3877,7 @@ mod tests {
                 doc.root(),
                 element(
                     "div",
-                    Some(
-                        "display:flex;flex-wrap:wrap;width:100px;height:60px;align-items:center",
-                    ),
+                    Some("display:flex;flex-wrap:wrap;width:100px;height:60px;align-items:center"),
                 ),
             )
             .unwrap();
@@ -3975,7 +3973,6 @@ mod tests {
         assert_eq!(container.children[1].boxes.border_box.origin.y, 10.0);
         assert_eq!(container.children[1].boxes.border_box.size.height, 20.0);
     }
-
 
     #[test]
     fn definite_height_flex_container_stretches_auto_height_item() {
