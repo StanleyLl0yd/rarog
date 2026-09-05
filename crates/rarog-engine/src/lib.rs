@@ -1533,6 +1533,30 @@ mod tests {
     }
 
     #[test]
+    fn render_session_retains_image_resources_across_render_updates() {
+        let mut session = session("<div>Rarog</div>", deterministic_options());
+        let id = session.image_resources.reserve().unwrap();
+        let reference = session
+            .image_resources
+            .resolve(
+                id,
+                rarog_resources::DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap(),
+            )
+            .unwrap();
+
+        assert!(session.image_resources().image(reference).is_some());
+        session
+            .resize(Size {
+                width: 200.0,
+                height: 100.0,
+            })
+            .unwrap();
+        assert!(session.image_resources().image(reference).is_some());
+        session.update().unwrap();
+        assert!(session.image_resources().image(reference).is_some());
+    }
+
+    #[test]
     fn bootstrap_pipeline_produces_commands_and_fragments() {
         let output = render_ok(
             "<html><body><div style=\"background:#ffffff;height:32px\">x</div></body></html>",
