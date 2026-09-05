@@ -751,6 +751,135 @@ mod tests {
     }
 
     #[test]
+    fn decode_queue_reserves_resources_and_completes_fifo_work() {
+        let mut store = ImageResourceStore::default();
+        let mut queue = ImageDecodeQueue::default();
+        let first = queue.enqueue(&mut store, vec![1, 2, 3]).unwrap();
+        let second = queue.enqueue(&mut store, vec![4, 5]).unwrap();
+
+        assert_eq!(queue.pending_count(), 2);
+        assert_eq!(queue.outstanding_count(), 2);
+        assert_eq!(queue.retained_encoded_bytes(), 5);
+        assert_eq!(
+            store.status(first.resource()),
+            Some(ImageResourceStatus::Pending)
+        );
+
+        let work = queue.begin_next().unwrap().unwrap();
+        assert_eq!(work.request(), first.request());
+        assert_eq!(work.resource(), first.resource());
+        assert_eq!(work.encoded(), &[1, 2, 3]);
+        assert_eq!(queue.active_request(), Some(first.request()));
+        assert_eq!(
+            queue.begin_next().unwrap_err(),
+            ImageDecodeQueueError::RequestInProgress(first.request())
+        );
+
+        let ready = queue
+            .complete(
+                &mut store,
+                first.request(),
+                ImageDecodeOutcome::Ready(image(1, 1, Color::BLACK)),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready.id(), first.resource());
+        assert_eq!(store.status(first.resource()), Some(ImageResourceStatus::Ready));
+        assert_eq!(queue.retained_encoded_bytes(), 2);
+
+        let work = queue.begin_next().unwrap().unwrap();
+        assert_eq!(work.request(), second.request());
+        queue
+            .complete(&mut store, second.request(), ImageDecodeOutcome::Failed)
+            .unwrap();
+        assert_eq!(
+            store.status(second.resource()),
+            Some(ImageResourceStatus::Failed)
+        );
+        assert_eq!(queue.retained_encoded_bytes(), 0);
+        assert!(queue.begin_next().unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_queue_enforces_request_and_encoded_byte_limits_before_reserving() {
+        let limits = ImageDecodeLimits {
+            max_pending_requests: 1,
+            max_pending_encoded_bytes: 3,
+        };
+        let mut queue = ImageDecodeQueue::try_new(limits).unwrap();
+        let mut store = ImageResourceStore::default();
+
+        let first = queue.enqueue(&mut store, vec![1, 2, 3]).unwrap();
+        assert_eq!(
+            queue.enqueue(&mut store, vec![4]).unwrap_err(),
+            ImageDecodeQueueError::QueueFull {
+                requests: 2,
+                limit: 1,
+            }
+        );
+        assert_eq!(store.len(), 1);
+        assert!(queue.cancel_pending(&mut store, first.request()));
+        assert_eq!(store.len(), 0);
+
+        assert_eq!(
+            queue.enqueue(&mut store, vec![1, 2, 3, 4]).unwrap_err(),
+            ImageDecodeQueueError::EncodedByteLimitExceeded { bytes: 4, limit: 3 }
+        );
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn decode_queue_wrong_completion_and_failed_store_apply_keep_active_work() {
+        let store_limits = ImageResourceLimits {
+            max_resources: 1,
+            max_pixels_per_resource: 1,
+            max_total_pixels: 1,
+        };
+        let mut store = ImageResourceStore::try_new(store_limits).unwrap();
+        let mut queue = ImageDecodeQueue::default();
+        let reservation = queue.enqueue(&mut store, vec![9]).unwrap();
+        queue.begin_next().unwrap().unwrap();
+
+        let wrong = ImageDecodeRequestId(reservation.request().get() + 1);
+        assert_eq!(
+            queue
+                .complete(&mut store, wrong, ImageDecodeOutcome::Failed)
+                .unwrap_err(),
+            ImageDecodeQueueError::WrongCompletion {
+                expected: reservation.request(),
+                actual: wrong,
+            }
+        );
+        assert_eq!(queue.active_request(), Some(reservation.request()));
+
+        assert_eq!(
+            queue
+                .complete(
+                    &mut store,
+                    reservation.request(),
+                    ImageDecodeOutcome::Ready(image(2, 1, Color::BLACK)),
+                )
+                .unwrap_err(),
+            ImageDecodeQueueError::Resource(ImageResourceError::ImagePixelLimitExceeded {
+                pixels: 2,
+                limit: 1,
+            })
+        );
+        assert_eq!(queue.active_request(), Some(reservation.request()));
+        assert_eq!(
+            store.status(reservation.resource()),
+            Some(ImageResourceStatus::Pending)
+        );
+
+        queue
+            .discard_active(&mut store, reservation.request())
+            .unwrap();
+        assert_eq!(queue.active_request(), None);
+        assert_eq!(store.status(reservation.resource()), None);
+        assert_eq!(queue.retained_encoded_bytes(), 0);
+    }
+
+    #[test]
     fn decoded_image_validates_shape_and_pixel_access() {
         let image = DecodedImage::try_new(2, 1, vec![Color::BLACK, Color::WHITE]).unwrap();
         assert_eq!(image.pixel(0, 0), Some(Color::BLACK));
