@@ -2244,6 +2244,7 @@ dependencies = [
  "rarog-layout",
  "rarog-paint",
  "rarog-platform",
+ "rarog-resources",
  "rarog-scheduler",
  "rarog-types",
 ]

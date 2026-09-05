@@ -13,6 +13,7 @@ use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
 use rarog_platform::{NullPlatformHost, PlatformCapabilities, PlatformHost};
+use rarog_resources::ImageResourceStore;
 use rarog_types::{Color, Size};
 use std::fmt;
 use std::sync::{
@@ -564,6 +565,7 @@ impl View {
         Ok(ViewFrame {
             framebuffer: session.framebuffer(),
             display_list: session.display_list(),
+            image_resources: session.image_resources(),
             display_list_revision: session.display_list_revision(),
             damage: session.damage(),
             clear_color: self.options.background,
@@ -585,6 +587,7 @@ impl View {
 pub struct ViewFrame<'a> {
     pub framebuffer: &'a Framebuffer,
     pub display_list: &'a DisplayList,
+    pub image_resources: &'a ImageResourceStore,
     pub display_list_revision: DisplayListRevision,
     pub damage: &'a DamageRegion,
     pub clear_color: Color,
@@ -785,6 +788,23 @@ mod tests {
             })
         ));
         assert_eq!(frame.full_observability, None);
+    }
+
+    #[test]
+    fn view_frame_exposes_its_render_session_image_store() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div>Rarog</div>", BaseUrl::about_blank())
+            .unwrap();
+
+        let frame = view
+            .render(Size {
+                width: 160.0,
+                height: 90.0,
+            })
+            .unwrap();
+
+        assert!(frame.image_resources.is_empty());
     }
 
     #[test]
