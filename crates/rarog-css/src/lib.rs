@@ -1544,11 +1544,13 @@ fn push_grid_span(
     let span = if value.eq_ignore_ascii_case("auto") {
         Some(1)
     } else {
-        value
-            .strip_prefix("span ")
-            .or_else(|| value.strip_prefix("SPAN "))
-            .and_then(|span| span.trim().parse::<u8>().ok())
-            .filter(|span| *span > 0)
+        let mut parts = value.split_whitespace();
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(keyword), Some(span), None) if keyword.eq_ignore_ascii_case("span") => {
+                span.parse::<u8>().ok().filter(|span| *span > 0)
+            }
+            _ => None,
+        }
     };
     if let Some(span) = span {
         output.push(Declaration {
@@ -2452,7 +2454,7 @@ mod finite_geometry_tests {
     #[test]
     fn bounded_grid_properties_parse_without_parser_owned_vectors() {
         let declarations = parse_declarations(
-            "display:grid;grid-template-columns:40px 60px;grid-template-rows:20px 30px;grid-column-start:2;grid-row-start:1;grid-column-end:span 2;grid-row-end:auto",
+            "display:grid;grid-template-columns:40px 60px;grid-template-rows:20px 30px;grid-column-start:2;grid-row-start:1;grid-column-end:SpAn 2;grid-row-end:auto",
         );
         assert!(declarations.contains(&Declaration {
             property: PropertyId::Display,
