@@ -30,7 +30,9 @@ impl fmt::Display for WindowsGpuError {
             #[cfg(target_os = "windows")]
             Self::RequestDevice(error) => write!(formatter, "DX12 device request failed: {error}"),
             #[cfg(target_os = "windows")]
-            Self::CreateSurface(error) => write!(formatter, "DX12 surface creation failed: {error}"),
+            Self::CreateSurface(error) => {
+                write!(formatter, "DX12 surface creation failed: {error}")
+            }
             #[cfg(target_os = "windows")]
             Self::Surface(error) => write!(formatter, "DX12 surface acquisition failed: {error}"),
             #[cfg(target_os = "windows")]
@@ -136,10 +138,7 @@ impl WindowsGpuDevice {
 
     #[cfg(target_os = "windows")]
     pub fn compositor_backend(&self) -> rarog_compositor_wgpu::WgpuCompositorBackend {
-        rarog_compositor_wgpu::WgpuCompositorBackend::new(
-            self.device.clone(),
-            self.queue.clone(),
-        )
+        rarog_compositor_wgpu::WgpuCompositorBackend::new(self.device.clone(), self.queue.clone())
     }
 
     #[cfg(target_os = "windows")]
