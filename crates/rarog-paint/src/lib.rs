@@ -779,6 +779,40 @@ impl DamageRegion {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ImageResourceRefresh {
+    pub updated_commands: usize,
+    pub damage: DamageRegion,
+}
+
+impl DisplayList {
+    pub fn refresh_image_resource(&mut self, reference: ImageResourceRef) -> ImageResourceRefresh {
+        let previous = self.clone();
+        let mut updated_commands = 0usize;
+
+        for command in &mut self.commands {
+            let DisplayCommand::DrawImage { image, .. } = command else {
+                continue;
+            };
+            if image.id() != reference.id() || image.revision() >= reference.revision() {
+                continue;
+            }
+            *image = reference;
+            updated_commands = updated_commands.saturating_add(1);
+        }
+
+        let damage = if updated_commands == 0 {
+            DamageRegion::default()
+        } else {
+            DamageRegion::between(Some(&previous), self)
+        };
+        ImageResourceRefresh {
+            updated_commands,
+            damage,
+        }
+    }
+}
+
 fn canonical_float_bits(value: f32) -> u32 {
     if value == 0.0 { 0 } else { value.to_bits() }
 }
@@ -1222,6 +1256,84 @@ mod tests {
         assert_eq!(framebuffer.pixels[12], blue);
         assert_eq!(framebuffer.pixels[15], Color::WHITE);
         assert!(list.snapshot().contains("|image|0.0,0.0,4.0,4.0|1:1"));
+    }
+
+    #[test]
+    fn refresh_image_resource_updates_matching_commands_and_reports_damage() {
+        let mut images = ImageResourceStore::default();
+        let id = images.reserve().unwrap();
+        let first = images
+            .resolve(id, DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap())
+            .unwrap();
+        let second = images
+            .replace_ready(id, DecodedImage::try_new(1, 1, vec![Color::WHITE]).unwrap())
+            .unwrap();
+        let mut list = DisplayList::try_from_parts(
+            vec![DisplayItemId::test(1), DisplayItemId::test(2)],
+            vec![
+                DisplayCommand::DrawImage {
+                    rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                    image: first,
+                },
+                DisplayCommand::DrawImage {
+                    rect: Rect::new(4.0, 0.0, 2.0, 2.0),
+                    image: first,
+                },
+            ],
+        )
+        .unwrap();
+
+        let refresh = list.refresh_image_resource(second);
+        assert_eq!(refresh.updated_commands, 2);
+        assert_eq!(
+            refresh.damage.rects,
+            vec![Rect::new(0.0, 0.0, 2.0, 2.0), Rect::new(4.0, 0.0, 2.0, 2.0)]
+        );
+        assert!(list.commands().iter().all(
+            |command| matches!(command, DisplayCommand::DrawImage { image, .. } if *image == second)
+        ));
+    }
+
+    #[test]
+    fn refresh_image_resource_ignores_stale_or_unrelated_revisions() {
+        let mut images = ImageResourceStore::default();
+        let first_id = images.reserve().unwrap();
+        let first = images
+            .resolve(
+                first_id,
+                DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap(),
+            )
+            .unwrap();
+        let second = images
+            .replace_ready(
+                first_id,
+                DecodedImage::try_new(1, 1, vec![Color::WHITE]).unwrap(),
+            )
+            .unwrap();
+        let other_id = images.reserve().unwrap();
+        let other = images
+            .resolve(
+                other_id,
+                DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap(),
+            )
+            .unwrap();
+        let mut list = DisplayList::try_from_parts(
+            vec![DisplayItemId::test(1)],
+            vec![DisplayCommand::DrawImage {
+                rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: second,
+            }],
+        )
+        .unwrap();
+
+        let stale = list.refresh_image_resource(first);
+        assert_eq!(stale, ImageResourceRefresh::default());
+        let unrelated = list.refresh_image_resource(other);
+        assert_eq!(unrelated, ImageResourceRefresh::default());
+        assert!(matches!(
+            list.commands()[0],
+            DisplayCommand::DrawImage { image, .. } if image == second
+        ));
     }
 
     #[test]
