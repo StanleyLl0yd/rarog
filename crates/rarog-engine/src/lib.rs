@@ -1739,19 +1739,21 @@ mod tests {
             .update()
             .expect("grid self-alignment update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
-        let grid_fragment = fragment_for_dom(&session.layout().fragments, grid)
-            .expect("grid container remains");
+        let grid_fragment =
+            fragment_for_dom(&session.layout().fragments, grid).expect("grid container remains");
 
+        let item_origin = fragment_for_dom(&session.layout().fragments, item)
+            .expect("grid item remains")
+            .boxes
+            .border_box
+            .origin;
         assert_eq!(
-            fragment_for_dom(&session.layout().fragments, item)
-                .expect("grid item remains")
-                .boxes
-                .border_box
-                .origin,
-            Point {
-                x: grid_fragment.boxes.content_box.origin.x + 40.0,
-                y: grid_fragment.boxes.content_box.origin.y + 30.0,
-            }
+            item_origin.x,
+            grid_fragment.boxes.content_box.origin.x + 40.0
+        );
+        assert_eq!(
+            item_origin.y,
+            grid_fragment.boxes.content_box.origin.y + 30.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
