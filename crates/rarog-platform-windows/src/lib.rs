@@ -3,7 +3,7 @@ mod gpu;
 mod input;
 
 pub use clipboard::WindowsClipboardService;
-pub use gpu::{WindowsGpuDevice, WindowsGpuError};
+pub use gpu::{WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface};
 pub use input::WindowsInputService;
 
 use rarog_platform::{
