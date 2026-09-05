@@ -15,10 +15,10 @@ Tracking issue: #109.
 
 ## B — Compositor and GPU
 
-- [ ] Define compositor/frame graph contracts independent of graphics backends.
-- [ ] Add a replaceable `wgpu` graphics backend.
+- [x] Define compositor/frame graph contracts independent of graphics backends (#152).
+- [x] Add a replaceable `wgpu` graphics backend (#154; staged retained raster upload).
 - [ ] Add Windows-first GPU surface/device integration.
-- [ ] Connect retained display-list damage to compositor updates.
+- [x] Connect retained display-list revision/damage lifecycle to compositor updates (#153).
 
 ## C — Async resources and scrolling
 

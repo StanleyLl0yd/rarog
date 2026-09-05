@@ -1,0 +1,15 @@
+[package]
+name = "rarog-compositor-wgpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-compositor = { path = "../rarog-compositor" }
+rarog-paint = { path = "../rarog-paint" }
+rarog-types = { path = "../rarog-types" }
+wgpu = { version = "=26.0.1", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

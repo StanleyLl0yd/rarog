@@ -39,6 +39,14 @@ The dependency is limited to the private `rarog-css` syntax adapter. Rarog conti
 
 The dependency is MPL-2.0 licensed and satisfies the workspace Rust 1.85 build gate. The adapter is covered by malformed-input regression tests and a dedicated CSS stylesheet fuzz target. Upgrading the backend must preserve these boundaries and pass the same compatibility and deterministic-render gates.
 
+### `wgpu` 26.0.1
+
+R3 pins `wgpu` 26.0.1 in the private `rarog-compositor-wgpu` adapter. The selected release remains compatible with Rarog's Rust 1.85 MSRV, while newer major releases require a newer compiler.
+
+The adapter depends only on Rarog-owned compositor, paint and geometry contracts. It receives an already-created `wgpu::Device` and `wgpu::Queue`, applies full or partial frame plans to the retained deterministic software staging framebuffer, and uploads tightly packed RGBA8 pixels into an adapter-owned GPU texture. Window handles, surface creation, adapter/device selection and presentation are intentionally outside this crate and remain platform integration responsibilities.
+
+Default `wgpu` backend features are disabled here because this crate does not choose a graphics API or create a device. Platform crates may enable the backend features they require. No `wgpu` type is exposed by DOM, CSS, layout, paint, engine or the backend-neutral compositor contract.
+
 ## Selection rules
 
 A third-party dependency must have:

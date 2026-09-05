@@ -1075,6 +1075,14 @@ impl Framebuffer {
         }
     }
 
+    pub fn to_rgba8(&self) -> Vec<u8> {
+        let mut output = Vec::with_capacity(self.pixels.len().saturating_mul(4));
+        for pixel in &self.pixels {
+            output.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+        }
+        output
+    }
+
     pub fn stable_hash64(&self) -> u64 {
         let mut hash = 0xcbf29ce484222325u64;
         hash = fnv1a(hash, &self.width.to_le_bytes());
@@ -1893,6 +1901,25 @@ mod tests {
             ],
         );
         assert_eq!(transformed, Rect::new(22.0, 3.0, 4.0, 6.0));
+    }
+
+    #[test]
+    fn framebuffer_exports_tightly_packed_rgba8() {
+        let color = Color {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 4,
+        };
+        let framebuffer = Framebuffer::new(
+            Size {
+                width: 2.0,
+                height: 1.0,
+            },
+            color,
+        );
+
+        assert_eq!(framebuffer.to_rgba8(), vec![1, 2, 3, 4, 1, 2, 3, 4]);
     }
 
     #[test]

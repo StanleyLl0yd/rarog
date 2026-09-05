@@ -17,6 +17,7 @@ members = [
   "crates/rarog-scheduler",
   "crates/rarog-paint",
   "crates/rarog-compositor",
+  "crates/rarog-compositor-wgpu",
   "crates/rarog-platform",
   "crates/rarog-platform-windows",
   "crates/rarog-engine",
