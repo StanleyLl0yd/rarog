@@ -682,23 +682,30 @@ impl RenderSession {
                             &mut style_candidates,
                         );
                     }
-                    let parent_is_flex = self
+                    let parent_style = self
                         .document
                         .node(node)
                         .and_then(|current| current.parent)
-                        .and_then(|parent| layout_style_for_dom(&layout.tree.root, parent))
-                        .is_some_and(|style| style.display_flex);
+                        .and_then(|parent| layout_style_for_dom(&layout.tree.root, parent));
+                    let parent_is_flex = parent_style.is_some_and(|style| style.display_flex);
+                    let parent_is_grid = parent_style.is_some_and(|style| style.display_grid);
                     let flex_container_changed = (old_style.display_flex || new_style.display_flex)
                         && flex_container_layout_changed(old_style, new_style);
+                    let grid_container_changed = (old_style.display_grid || new_style.display_grid)
+                        && grid_container_layout_changed(old_style, new_style);
                     let layout_changed = layout_style_changed(old_style, new_style)
                         || (parent_is_flex && flex_item_layout_changed(old_style, new_style))
-                        || flex_container_changed;
+                        || (parent_is_grid && grid_item_layout_changed(old_style, new_style))
+                        || flex_container_changed
+                        || grid_container_changed;
                     if layout_changed
                         && (!text_relayout_nodes.is_empty()
                             || old_style.display_inline
                             || new_style.display_inline
                             || parent_is_flex
-                            || flex_container_changed)
+                            || parent_is_grid
+                            || flex_container_changed
+                            || grid_container_changed)
                     {
                         let Some(root) =
                             retained_structural_parent(&self.document, &layout.tree.root, node)
@@ -1161,6 +1168,7 @@ fn formatting_boundary_changed(before: ComputedStyle, after: ComputedStyle) -> b
     before.display_none != after.display_none
         || before.display_inline != after.display_inline
         || before.display_flex != after.display_flex
+        || before.display_grid != after.display_grid
         || before.establishes_bfc != after.establishes_bfc
 }
 
@@ -1283,6 +1291,7 @@ fn layout_style_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
         || before.display_none != after.display_none
         || before.display_inline != after.display_inline
         || before.display_flex != after.display_flex
+        || before.display_grid != after.display_grid
         || before.establishes_bfc != after.establishes_bfc
         || before.vertical_align != after.vertical_align
 }
@@ -1301,6 +1310,20 @@ fn flex_item_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool
     before.flex_grow != after.flex_grow
         || before.flex_shrink != after.flex_shrink
         || before.align_self != after.align_self
+}
+
+fn grid_container_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
+    before.grid_template_columns != after.grid_template_columns
+        || before.grid_template_rows != after.grid_template_rows
+        || before.row_gap != after.row_gap
+        || before.column_gap != after.column_gap
+}
+
+fn grid_item_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
+    before.grid_column_start != after.grid_column_start
+        || before.grid_row_start != after.grid_row_start
+        || before.grid_column_span != after.grid_column_span
+        || before.grid_row_span != after.grid_row_span
 }
 
 fn vertical_footprint_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
@@ -1642,6 +1665,92 @@ mod tests {
                 .origin
                 .x,
             flex_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn grid_track_change_relayouts_explicit_grid_and_matches_fresh_render() {
+        let source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:40px 60px;grid-template-rows:20px"><div id="item" style="grid-row-start:1;grid-column-start:2;background:#112233"></div></div>"#;
+        let expected_source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:60px 40px;grid-template-rows:20px"><div id="item" style="grid-row-start:1;grid-column-start:2;background:#112233"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let grid = element_with_id(session.document(), "grid");
+        let item = element_with_id(session.document(), "item");
+
+        session
+            .document_mut()
+            .set_attribute(
+                grid,
+                "style",
+                "display:grid;width:100px;grid-template-columns:60px 40px;grid-template-rows:20px",
+            )
+            .unwrap();
+        let report = session.update().expect("grid track update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+        let grid_x = fragment_for_dom(&session.layout().fragments, grid)
+            .expect("grid container remains")
+            .boxes
+            .content_box
+            .origin
+            .x;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, item)
+                .expect("grid item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            grid_x + 60.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn grid_item_placement_change_relayouts_parent_grid_and_matches_fresh_render() {
+        let source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:40px 60px;grid-template-rows:20px"><div id="item" style="grid-row-start:1;grid-column-start:1;background:#112233"></div></div>"#;
+        let expected_source = r#"<div id="grid" style="display:grid;width:100px;grid-template-columns:40px 60px;grid-template-rows:20px"><div id="item" style="grid-row-start:1;grid-column-start:2;background:#112233"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let grid = element_with_id(session.document(), "grid");
+        let item = element_with_id(session.document(), "item");
+
+        session
+            .document_mut()
+            .set_attribute(
+                item,
+                "style",
+                "grid-row-start:1;grid-column-start:2;background:#112233",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("grid item placement update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+        let grid_x = fragment_for_dom(&session.layout().fragments, grid)
+            .expect("grid container remains")
+            .boxes
+            .content_box
+            .origin
+            .x;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, item)
+                .expect("grid item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            grid_x + 40.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
