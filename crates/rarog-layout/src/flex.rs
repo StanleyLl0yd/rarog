@@ -105,6 +105,7 @@ pub struct FlexRowOptions {
     main_alignment: FlexMainAlignment,
     cross_alignment: FlexCrossAlignment,
     content_alignment: FlexContentAlignment,
+    main_reverse: bool,
     cross_reverse: bool,
     main_gap: f32,
     cross_gap: f32,
@@ -119,6 +120,7 @@ impl Default for FlexRowOptions {
             main_alignment: FlexMainAlignment::Start,
             cross_alignment: FlexCrossAlignment::Start,
             content_alignment: FlexContentAlignment::Stretch,
+            main_reverse: false,
             cross_reverse: false,
             main_gap: 0.0,
             cross_gap: 0.0,
@@ -142,6 +144,11 @@ impl FlexRowOptions {
 
     pub const fn with_content_alignment(mut self, alignment: FlexContentAlignment) -> Self {
         self.content_alignment = alignment;
+        self
+    }
+
+    pub const fn with_main_reverse(mut self, reverse: bool) -> Self {
+        self.main_reverse = reverse;
         self
     }
 
@@ -185,6 +192,10 @@ impl FlexRowOptions {
 
     pub const fn content_alignment(self) -> FlexContentAlignment {
         self.content_alignment
+    }
+
+    pub const fn main_reverse(self) -> bool {
+        self.main_reverse
     }
 
     pub const fn cross_reverse(self) -> bool {
@@ -666,18 +677,31 @@ pub fn layout_single_line_flex_row_with_item_alignments(
     validate_options(options)?;
     validate_item_alignment_count(items.len(), item_cross_alignments)?;
 
-    let mut cursor_x = origin.x;
+    let mut logical_main_offset = 0.0_f32;
     let mut max_cross_size = 0.0_f32;
     let mut placements = Vec::with_capacity(items.len());
+    let physical_main_end = if options.main_reverse() && !items.is_empty() {
+        Some(finite_add(origin.x, available_size.width)?)
+    } else {
+        None
+    };
 
     for (index, item) in items.iter().enumerate() {
         validate_item(*item)?;
 
-        cursor_x = finite_add(cursor_x, item.margin.left)?;
+        let border_x = if options.main_reverse() {
+            let from_end = finite_add(logical_main_offset, item.margin.right)?;
+            let physical_main_end = physical_main_end.ok_or(FlexLayoutError::GeometryOverflow)?;
+            let border_end = finite_add(physical_main_end, -from_end)?;
+            finite_add(border_end, -item.base_size.width)?
+        } else {
+            let outer_start = finite_add(origin.x, logical_main_offset)?;
+            finite_add(outer_start, item.margin.left)?
+        };
         let border_y = finite_add(origin.y, item.margin.top)?;
         let border_box = Rect {
             origin: Point {
-                x: cursor_x,
+                x: border_x,
                 y: border_y,
             },
             size: item.base_size,
@@ -687,21 +711,18 @@ pub fn layout_single_line_flex_row_with_item_alignments(
             border_box,
         });
 
-        cursor_x = finite_add(cursor_x, item.base_size.width)?;
-        cursor_x = finite_add(cursor_x, item.margin.right)?;
+        logical_main_offset = finite_add(logical_main_offset, item.margin.left)?;
+        logical_main_offset = finite_add(logical_main_offset, item.base_size.width)?;
+        logical_main_offset = finite_add(logical_main_offset, item.margin.right)?;
         if index + 1 < items.len() {
-            cursor_x = finite_add(cursor_x, options.main_gap())?;
+            logical_main_offset = finite_add(logical_main_offset, options.main_gap())?;
         }
         let cross_size = finite_add(item.margin.top, item.base_size.height)?;
         let cross_size = finite_add(cross_size, item.margin.bottom)?;
         max_cross_size = max_cross_size.max(cross_size);
     }
 
-    let used_main_size = cursor_x - origin.x;
-    if !used_main_size.is_finite() {
-        return Err(FlexLayoutError::GeometryOverflow);
-    }
-    let used_main_size = used_main_size.max(0.0);
+    let used_main_size = logical_main_offset.max(0.0);
     let mut layout = FlexRowLayout {
         items: placements,
         content_size: Size {
@@ -711,7 +732,12 @@ pub fn layout_single_line_flex_row_with_item_alignments(
         overflows_main_axis: used_main_size > available_size.width,
         overflows_cross_axis: max_cross_size > available_size.height,
     };
-    apply_main_alignment(&mut layout, available_size.width, options.main_alignment())?;
+    apply_main_alignment(
+        &mut layout,
+        available_size.width,
+        options.main_alignment(),
+        options.main_reverse(),
+    )?;
     let used_cross_size = resolve_cross_size(max_cross_size, options)?;
     apply_cross_alignment(
         &mut layout,
@@ -876,6 +902,7 @@ fn apply_main_alignment(
     layout: &mut FlexRowLayout,
     available_width: f32,
     alignment: FlexMainAlignment,
+    main_reverse: bool,
 ) -> Result<(), FlexLayoutError> {
     let remaining = available_width - layout.content_size.width;
     if !remaining.is_finite() {
@@ -914,7 +941,12 @@ fn apply_main_alignment(
 
     let mut accumulated_gap = leading;
     for (index, placement) in layout.items.iter_mut().enumerate() {
-        placement.border_box.origin.x = finite_add(placement.border_box.origin.x, accumulated_gap)?;
+        let signed_offset = if main_reverse {
+            -accumulated_gap
+        } else {
+            accumulated_gap
+        };
+        placement.border_box.origin.x = finite_add(placement.border_box.origin.x, signed_offset)?;
         if index + 1 < count {
             accumulated_gap = finite_add(accumulated_gap, gap)?;
         }
@@ -1698,6 +1730,113 @@ mod tests {
             ),
             Err(FlexLayoutError::InvalidCrossSize)
         );
+    }
+
+    #[test]
+    fn main_reverse_places_source_order_items_from_the_physical_end() {
+        let items = [item(1, 20.0, 10.0), item(2, 30.0, 10.0)];
+        let layout = layout_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default().with_main_reverse(true),
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.x, 80.0);
+        assert_eq!(layout.items[1].border_box.origin.x, 50.0);
+        assert_eq!(layout.items[0].node, LayoutNodeId(1));
+        assert_eq!(layout.items[1].node, LayoutNodeId(2));
+        assert_eq!(layout.content_size.width, 50.0);
+    }
+
+    #[test]
+    fn main_reverse_preserves_physical_left_and_right_margins() {
+        let items = [FlexRowItem::new(
+            LayoutNodeId(1),
+            Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            EdgeSizes {
+                top: 0.0,
+                right: 3.0,
+                bottom: 0.0,
+                left: 2.0,
+            },
+        )];
+        let layout = layout_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 60.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default().with_main_reverse(true),
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.x, 47.0);
+    }
+
+    #[test]
+    fn main_reverse_applies_justify_content_from_logical_main_start() {
+        let items = [item(1, 10.0, 10.0), item(2, 10.0, 10.0)];
+        let end = layout_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 60.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_main_reverse(true)
+                .with_main_alignment(FlexMainAlignment::End),
+        )
+        .unwrap();
+        assert_eq!(end.items[0].border_box.origin.x, 10.0);
+        assert_eq!(end.items[1].border_box.origin.x, 0.0);
+
+        let between = layout_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 60.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_main_reverse(true)
+                .with_main_alignment(FlexMainAlignment::SpaceBetween),
+        )
+        .unwrap();
+        assert_eq!(between.items[0].border_box.origin.x, 50.0);
+        assert_eq!(between.items[1].border_box.origin.x, 0.0);
+    }
+
+    #[test]
+    fn main_reverse_uses_flexed_widths_before_reverse_placement() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 1.0, 1.0),
+            FlexibleFlexRowItem::new(item(2, 20.0, 10.0), 1.0, 1.0),
+        ];
+        let layout = layout_flexible_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default().with_main_reverse(true),
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 50.0);
+        assert_eq!(layout.items[1].border_box.size.width, 50.0);
+        assert_eq!(layout.items[0].border_box.origin.x, 50.0);
+        assert_eq!(layout.items[1].border_box.origin.x, 0.0);
     }
 
     #[test]

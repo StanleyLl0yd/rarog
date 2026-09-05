@@ -1292,6 +1292,7 @@ fn flex_container_layout_changed(before: ComputedStyle, after: ComputedStyle) ->
         || before.align_items != after.align_items
         || before.align_content != after.align_content
         || before.flex_wrap != after.flex_wrap
+        || before.flex_direction != after.flex_direction
         || before.row_gap != after.row_gap
         || before.column_gap != after.column_gap
 }
@@ -1641,6 +1642,58 @@ mod tests {
                 .origin
                 .x,
             flex_x + 40.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn row_reverse_change_relayouts_items_from_the_main_end() {
+        let source = r#"<div id="flex" style="display:flex;width:100px"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:30px;height:10px;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;flex-direction:row-reverse;width:100px"><div id="first" style="width:20px;height:10px;background:#112233"></div><div id="second" style="width:30px;height:10px;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
+        let first = element_with_id(session.document(), "first");
+        let second = element_with_id(session.document(), "second");
+
+        session
+            .document_mut()
+            .set_attribute(
+                flex,
+                "style",
+                "display:flex;flex-direction:row-reverse;width:100px",
+            )
+            .unwrap();
+        let report = session.update().expect("row-reverse update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+        let flex_x = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("flex container remains")
+            .boxes
+            .content_box
+            .origin
+            .x;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, first)
+                .expect("first flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 80.0
+        );
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second flex item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            flex_x + 50.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),

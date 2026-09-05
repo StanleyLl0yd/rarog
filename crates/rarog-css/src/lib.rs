@@ -108,6 +108,12 @@ pub enum FlexWrap {
     WrapReverse,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlexDirection {
+    Row,
+    RowReverse,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedStyle {
     pub width: Option<f32>,
@@ -132,6 +138,7 @@ pub struct ComputedStyle {
     pub align_self: AlignSelf,
     pub align_content: AlignContent,
     pub flex_wrap: FlexWrap,
+    pub flex_direction: FlexDirection,
     pub row_gap: f32,
     pub column_gap: f32,
     pub establishes_bfc: bool,
@@ -163,6 +170,7 @@ impl Default for ComputedStyle {
             align_self: AlignSelf::Auto,
             align_content: AlignContent::Stretch,
             flex_wrap: FlexWrap::NoWrap,
+            flex_direction: FlexDirection::Row,
             row_gap: 0.0,
             column_gap: 0.0,
             establishes_bfc: false,
@@ -349,6 +357,7 @@ pub enum PropertyId {
     AlignSelf,
     AlignContent,
     FlexWrap,
+    FlexDirection,
     RowGap,
     ColumnGap,
     VerticalAlign,
@@ -385,6 +394,7 @@ pub enum PropertyValue {
     AlignSelf(AlignSelf),
     AlignContent(AlignContent),
     FlexWrap(FlexWrap),
+    FlexDirection(FlexDirection),
     VerticalAlign(VerticalAlign),
     CssWide(CssWideKeyword),
 }
@@ -801,6 +811,7 @@ fn copy_property_from_style(
         PropertyId::AlignSelf => style.align_self = source.align_self,
         PropertyId::AlignContent => style.align_content = source.align_content,
         PropertyId::FlexWrap => style.flex_wrap = source.flex_wrap,
+        PropertyId::FlexDirection => style.flex_direction = source.flex_direction,
         PropertyId::RowGap => style.row_gap = source.row_gap,
         PropertyId::ColumnGap => style.column_gap = source.column_gap,
         PropertyId::VerticalAlign => style.vertical_align = source.vertical_align,
@@ -877,6 +888,9 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
             style.align_content = value
         }
         (PropertyId::FlexWrap, PropertyValue::FlexWrap(value)) => style.flex_wrap = value,
+        (PropertyId::FlexDirection, PropertyValue::FlexDirection(value)) => {
+            style.flex_direction = value
+        }
         (PropertyId::RowGap, PropertyValue::Length(value)) => style.row_gap = value,
         (PropertyId::ColumnGap, PropertyValue::Length(value)) => style.column_gap = value,
         (PropertyId::VerticalAlign, PropertyValue::VerticalAlign(value)) => {
@@ -1094,6 +1108,23 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 });
             }
         }
+        "flex-direction" => {
+            let value = value.trim();
+            let value = if value.eq_ignore_ascii_case("row") {
+                Some(FlexDirection::Row)
+            } else if value.eq_ignore_ascii_case("row-reverse") {
+                Some(FlexDirection::RowReverse)
+            } else {
+                None
+            };
+            if let Some(value) = value {
+                output.push(Declaration {
+                    property: PropertyId::FlexDirection,
+                    value: PropertyValue::FlexDirection(value),
+                    important,
+                });
+            }
+        }
         "flex-wrap" => {
             let value = value.trim();
             let value = if value.eq_ignore_ascii_case("nowrap") {
@@ -1285,6 +1316,7 @@ fn push_css_wide(
         "align-self" => &[PropertyId::AlignSelf],
         "align-content" => &[PropertyId::AlignContent],
         "flex-wrap" => &[PropertyId::FlexWrap],
+        "flex-direction" => &[PropertyId::FlexDirection],
         "row-gap" => &[PropertyId::RowGap],
         "column-gap" => &[PropertyId::ColumnGap],
         "gap" => &[PropertyId::RowGap, PropertyId::ColumnGap],
@@ -2185,6 +2217,37 @@ mod finite_geometry_tests {
             PropertyValue::AlignContent(AlignContent::SpaceBetween),
         );
         assert_eq!(style.align_content, AlignContent::SpaceBetween);
+    }
+
+    #[test]
+    fn flex_direction_parses_horizontal_directions_only() {
+        assert_eq!(
+            parse_declarations("flex-direction:row"),
+            vec![Declaration {
+                property: PropertyId::FlexDirection,
+                value: PropertyValue::FlexDirection(FlexDirection::Row),
+                important: false,
+            }]
+        );
+        assert_eq!(
+            parse_declarations("flex-direction:RoW-ReVeRsE"),
+            vec![Declaration {
+                property: PropertyId::FlexDirection,
+                value: PropertyValue::FlexDirection(FlexDirection::RowReverse),
+                important: false,
+            }]
+        );
+        assert!(parse_declarations("flex-direction:column").is_empty());
+        assert!(parse_declarations("flex-direction:column-reverse").is_empty());
+
+        let mut style = ComputedStyle::default();
+        assert_eq!(style.flex_direction, FlexDirection::Row);
+        apply_property_value(
+            &mut style,
+            PropertyId::FlexDirection,
+            PropertyValue::FlexDirection(FlexDirection::RowReverse),
+        );
+        assert_eq!(style.flex_direction, FlexDirection::RowReverse);
     }
 
     #[test]

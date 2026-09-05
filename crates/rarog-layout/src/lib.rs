@@ -13,8 +13,8 @@ pub use flex::{
 };
 
 use rarog_css::{
-    AlignContent, AlignItems, AlignSelf, ComputedStyle, FlexWrap, JustifyContent, StyleSet,
-    VerticalAlign, computed_style_with_parent,
+    AlignContent, AlignItems, AlignSelf, ComputedStyle, FlexDirection, FlexWrap, JustifyContent,
+    StyleSet, VerticalAlign, computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
@@ -3060,6 +3060,7 @@ impl FragmentBuilder {
 
         let options = FlexRowOptions::default()
             .with_main_alignment(flex_main_alignment(container.style.justify_content))
+            .with_main_reverse(container.style.flex_direction == FlexDirection::RowReverse)
             .with_cross_alignment(container_cross_alignment)
             .with_content_alignment(flex_content_alignment(container.style.align_content))
             .with_cross_reverse(container.style.flex_wrap == FlexWrap::WrapReverse)
@@ -3661,6 +3662,137 @@ mod tests {
     }
 
     #[test]
+    fn flex_direction_row_reverse_places_source_order_items_from_the_right() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;flex-direction:row-reverse;width:100px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:20px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:30px;height:10px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.x, 80.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 50.0);
+    }
+
+    #[test]
+    fn flex_direction_row_reverse_preserves_physical_horizontal_margins() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;flex-direction:row-reverse;width:60px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element(
+                "div",
+                Some("width:10px;height:10px;margin-left:2px;margin-right:3px"),
+            ),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box.origin.x, 47.0);
+        assert_eq!(item.boxes.margin_box.origin.x, 45.0);
+        assert_eq!(item.boxes.margin_box.size.width, 15.0);
+    }
+
+    #[test]
+    fn flex_direction_row_reverse_applies_justify_content_logically() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-direction:row-reverse;width:60px;justify-content:flex-end",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:10px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:10px;height:10px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.x, 10.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 0.0);
+    }
+
+    #[test]
+    fn flex_direction_row_reverse_reuses_source_order_line_collection() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-direction:row-reverse;flex-wrap:wrap;width:100px;column-gap:10px",
+                    ),
+                ),
+            )
+            .unwrap();
+        for _ in 0..3 {
+            doc.append_new(container, element("div", Some("width:40px;height:10px")))
+                .unwrap();
+        }
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.x, 60.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 10.0);
+        assert_eq!(container.children[2].boxes.border_box.origin.x, 60.0);
+        assert_eq!(container.children[2].boxes.border_box.origin.y, 10.0);
+    }
+
+    #[test]
     fn flex_wrap_creates_multiple_lines_and_uses_row_gap() {
         let mut doc = Document::new();
         let container = doc
@@ -3702,6 +3834,40 @@ mod tests {
             Point { x: 0.0, y: 25.0 }
         );
         assert_eq!(container.boxes.content_box.size.height, 40.0);
+    }
+
+    #[test]
+    fn row_reverse_and_wrap_reverse_compose_without_reordering_fragments() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-direction:row-reverse;flex-wrap:wrap-reverse;width:100px;height:60px;align-content:flex-start",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.x, 40.0);
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 50.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 40.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 30.0);
     }
 
     #[test]
