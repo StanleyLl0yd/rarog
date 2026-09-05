@@ -7,6 +7,12 @@ pub enum WindowsGpuError {
     RequestAdapter(wgpu::RequestAdapterError),
     #[cfg(target_os = "windows")]
     RequestDevice(wgpu::RequestDeviceError),
+    #[cfg(target_os = "windows")]
+    CreateSurface(wgpu::CreateSurfaceError),
+    #[cfg(target_os = "windows")]
+    Surface(wgpu::SurfaceError),
+    UnsupportedSurface,
+    SuspendedSurface,
 }
 
 impl fmt::Display for WindowsGpuError {
@@ -21,6 +27,14 @@ impl fmt::Display for WindowsGpuError {
             }
             #[cfg(target_os = "windows")]
             Self::RequestDevice(error) => write!(formatter, "DX12 device request failed: {error}"),
+            #[cfg(target_os = "windows")]
+            Self::CreateSurface(error) => write!(formatter, "DX12 surface creation failed: {error}"),
+            #[cfg(target_os = "windows")]
+            Self::Surface(error) => write!(formatter, "DX12 surface acquisition failed: {error}"),
+            Self::UnsupportedSurface => {
+                formatter.write_str("DX12 adapter does not support the requested surface")
+            }
+            Self::SuspendedSurface => formatter.write_str("DX12 surface is suspended"),
         }
     }
 }
@@ -38,6 +52,18 @@ pub struct WindowsGpuDevice {
 #[cfg(not(target_os = "windows"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WindowsGpuDevice;
+
+#[cfg(target_os = "windows")]
+pub struct WindowsGpuSurface {
+    surface: wgpu::Surface<'static>,
+    config: Option<wgpu::SurfaceConfiguration>,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WindowsGpuSurface;
 
 impl WindowsGpuDevice {
     pub const fn target_available() -> bool {
@@ -105,8 +131,108 @@ impl WindowsGpuDevice {
     }
 
     #[cfg(target_os = "windows")]
+    pub fn compositor_backend(&self) -> rarog_compositor_wgpu::WgpuCompositorBackend {
+        rarog_compositor_wgpu::WgpuCompositorBackend::new(
+            self.device.clone(),
+            self.queue.clone(),
+        )
+    }
+
+    #[cfg(target_os = "windows")]
     pub fn into_compositor_backend(self) -> rarog_compositor_wgpu::WgpuCompositorBackend {
         rarog_compositor_wgpu::WgpuCompositorBackend::new(self.device, self.queue)
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn create_surface<T>(
+        &self,
+        target: T,
+        width: u32,
+        height: u32,
+    ) -> Result<WindowsGpuSurface, WindowsGpuError>
+    where
+        T: wgpu::DisplayAndWindowHandle + 'static,
+    {
+        let surface: wgpu::Surface<'static> = self
+            .instance
+            .create_surface(target)
+            .map_err(WindowsGpuError::CreateSurface)?;
+        let mut surface = WindowsGpuSurface {
+            surface,
+            config: None,
+            width,
+            height,
+        };
+        surface.reconfigure(self)?;
+        Ok(surface)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsGpuSurface {
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub const fn is_suspended(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    pub fn format(&self) -> Option<wgpu::TextureFormat> {
+        self.config.as_ref().map(|config| config.format)
+    }
+
+    pub const fn surface(&self) -> &wgpu::Surface<'static> {
+        &self.surface
+    }
+
+    pub fn resize(
+        &mut self,
+        gpu: &WindowsGpuDevice,
+        width: u32,
+        height: u32,
+    ) -> Result<(), WindowsGpuError> {
+        if self.width == width && self.height == height {
+            return Ok(());
+        }
+        self.width = width;
+        self.height = height;
+        self.reconfigure(gpu)
+    }
+
+    pub fn acquire(&self) -> Result<wgpu::SurfaceTexture, WindowsGpuError> {
+        if self.config.is_none() {
+            return Err(WindowsGpuError::SuspendedSurface);
+        }
+        self.surface
+            .get_current_texture()
+            .map_err(WindowsGpuError::Surface)
+    }
+
+    fn reconfigure(&mut self, gpu: &WindowsGpuDevice) -> Result<(), WindowsGpuError> {
+        if self.is_suspended() {
+            self.config = None;
+            return Ok(());
+        }
+
+        let config = match self.config.take() {
+            Some(mut config) => {
+                config.width = self.width;
+                config.height = self.height;
+                config
+            }
+            None => self
+                .surface
+                .get_default_config(&gpu.adapter, self.width, self.height)
+                .ok_or(WindowsGpuError::UnsupportedSurface)?,
+        };
+        self.surface.configure(&gpu.device, &config);
+        self.config = Some(config);
+        Ok(())
     }
 }
 
@@ -127,6 +253,18 @@ mod tests {
         assert_eq!(
             WindowsGpuError::UnsupportedTarget.to_string(),
             "Windows GPU service is unavailable on this target"
+        );
+    }
+
+    #[test]
+    fn surface_state_errors_are_stable() {
+        assert_eq!(
+            WindowsGpuError::UnsupportedSurface.to_string(),
+            "DX12 adapter does not support the requested surface"
+        );
+        assert_eq!(
+            WindowsGpuError::SuspendedSurface.to_string(),
+            "DX12 surface is suspended"
         );
     }
 }
