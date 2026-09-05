@@ -1,7 +1,9 @@
 mod clipboard;
+mod gpu;
 mod input;
 
 pub use clipboard::WindowsClipboardService;
+pub use gpu::{WindowsGpuDevice, WindowsGpuError};
 pub use input::WindowsInputService;
 
 use rarog_platform::{
@@ -92,6 +94,10 @@ impl WindowsPlatformHost {
 
     pub const fn clipboard(&self) -> &WindowsClipboardService {
         &self.clipboard
+    }
+
+    pub async fn request_gpu(&self) -> Result<WindowsGpuDevice, WindowsGpuError> {
+        WindowsGpuDevice::request().await
     }
 }
 
