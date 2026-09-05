@@ -162,8 +162,7 @@ mod windows {
                 return Ok(());
             };
             let request_id = request.id();
-            let outcome =
-                self.render_scheduled(size.width, size.height, request.primary_cause());
+            let outcome = self.render_scheduled(size.width, size.height, request.primary_cause());
 
             match outcome {
                 Ok(PresentationOutcome::Presented) => {
