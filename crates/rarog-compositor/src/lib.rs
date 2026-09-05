@@ -74,6 +74,185 @@ pub enum FrameUpdateKind {
     Partial,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameRequestReasons(u8);
+
+impl FrameRequestReasons {
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub const fn contains(self, cause: FrameCause) -> bool {
+        self.0 & frame_cause_bit(cause) != 0
+    }
+
+    pub fn primary_cause(self) -> Option<FrameCause> {
+        [
+            FrameCause::Initial,
+            FrameCause::Resize,
+            FrameCause::ResourceReady,
+            FrameCause::Scroll,
+            FrameCause::SceneChange,
+            FrameCause::Explicit,
+        ]
+        .into_iter()
+        .find(|&cause| self.contains(cause))
+    }
+
+    fn insert(&mut self, cause: FrameCause) {
+        self.0 |= frame_cause_bit(cause);
+    }
+}
+
+const fn frame_cause_bit(cause: FrameCause) -> u8 {
+    match cause {
+        FrameCause::Initial => 1 << 0,
+        FrameCause::Resize => 1 << 1,
+        FrameCause::SceneChange => 1 << 2,
+        FrameCause::Scroll => 1 << 3,
+        FrameCause::ResourceReady => 1 << 4,
+        FrameCause::Explicit => 1 << 5,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FrameRequestId(u64);
+
+impl FrameRequestId {
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScheduledFrameRequest {
+    id: FrameRequestId,
+    reasons: FrameRequestReasons,
+}
+
+impl ScheduledFrameRequest {
+    pub const fn id(self) -> FrameRequestId {
+        self.id
+    }
+
+    pub const fn reasons(self) -> FrameRequestReasons {
+        self.reasons
+    }
+
+    pub fn primary_cause(self) -> FrameCause {
+        match self.reasons.primary_cause() {
+            Some(cause) => cause,
+            None => FrameCause::Explicit,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameSchedulerError {
+    RequestIdExhausted,
+    FrameInProgress(FrameRequestId),
+    NoActiveFrame,
+    WrongCompletion {
+        expected: FrameRequestId,
+        actual: FrameRequestId,
+    },
+}
+
+impl fmt::Display for FrameSchedulerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RequestIdExhausted => {
+                formatter.write_str("frame scheduler request identity space exhausted")
+            }
+            Self::FrameInProgress(request) => {
+                write!(formatter, "frame request {request:?} is still in progress")
+            }
+            Self::NoActiveFrame => formatter.write_str("frame scheduler has no active request"),
+            Self::WrongCompletion { expected, actual } => write!(
+                formatter,
+                "frame scheduler expected completion for {expected:?}, got {actual:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FrameSchedulerError {}
+
+#[derive(Debug)]
+pub struct FrameScheduler {
+    next_request: u64,
+    pending: FrameRequestReasons,
+    active: Option<FrameRequestId>,
+}
+
+impl Default for FrameScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FrameScheduler {
+    pub const fn new() -> Self {
+        Self {
+            next_request: 1,
+            pending: FrameRequestReasons(0),
+            active: None,
+        }
+    }
+
+    pub fn request(&mut self, cause: FrameCause) {
+        self.pending.insert(cause);
+    }
+
+    pub const fn pending_reasons(&self) -> FrameRequestReasons {
+        self.pending
+    }
+
+    pub const fn active_request(&self) -> Option<FrameRequestId> {
+        self.active
+    }
+
+    pub fn begin(&mut self) -> Result<Option<ScheduledFrameRequest>, FrameSchedulerError> {
+        if let Some(active) = self.active {
+            return Err(FrameSchedulerError::FrameInProgress(active));
+        }
+        if self.pending.is_empty() {
+            return Ok(None);
+        }
+        if self.next_request == 0 {
+            return Err(FrameSchedulerError::RequestIdExhausted);
+        }
+
+        let id = FrameRequestId(self.next_request);
+        self.next_request = self.next_request.checked_add(1).unwrap_or(0);
+        let reasons = std::mem::take(&mut self.pending);
+        self.active = Some(id);
+        Ok(Some(ScheduledFrameRequest { id, reasons }))
+    }
+
+    pub fn complete(&mut self, request: FrameRequestId) -> Result<(), FrameSchedulerError> {
+        self.finish(request)
+    }
+
+    pub fn discard(&mut self, request: FrameRequestId) -> Result<(), FrameSchedulerError> {
+        self.finish(request)
+    }
+
+    fn finish(&mut self, request: FrameRequestId) -> Result<(), FrameSchedulerError> {
+        let Some(active) = self.active else {
+            return Err(FrameSchedulerError::NoActiveFrame);
+        };
+        if active != request {
+            return Err(FrameSchedulerError::WrongCompletion {
+                expected: active,
+                actual: request,
+            });
+        }
+        self.active = None;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FramePlan {
     id: FrameId,
@@ -394,6 +573,79 @@ mod tests {
         let id = plan.id();
         planner.complete(id).unwrap();
         id
+    }
+
+    #[test]
+    fn frame_scheduler_coalesces_duplicate_and_mixed_causes() {
+        let mut scheduler = FrameScheduler::new();
+        scheduler.request(FrameCause::SceneChange);
+        scheduler.request(FrameCause::SceneChange);
+        scheduler.request(FrameCause::ResourceReady);
+
+        let request = scheduler.begin().unwrap().unwrap();
+        assert_eq!(request.id().get(), 1);
+        assert!(request.reasons().contains(FrameCause::SceneChange));
+        assert!(request.reasons().contains(FrameCause::ResourceReady));
+        assert_eq!(request.primary_cause(), FrameCause::ResourceReady);
+        assert!(scheduler.pending_reasons().is_empty());
+    }
+
+    #[test]
+    fn frame_scheduler_queues_requests_arriving_during_active_frame() {
+        let mut scheduler = FrameScheduler::new();
+        scheduler.request(FrameCause::Initial);
+        let first = scheduler.begin().unwrap().unwrap();
+        scheduler.request(FrameCause::Scroll);
+        scheduler.request(FrameCause::Resize);
+
+        assert_eq!(
+            scheduler.begin().unwrap_err(),
+            FrameSchedulerError::FrameInProgress(first.id())
+        );
+        scheduler.complete(first.id()).unwrap();
+
+        let second = scheduler.begin().unwrap().unwrap();
+        assert_eq!(second.id().get(), 2);
+        assert_eq!(second.primary_cause(), FrameCause::Resize);
+        assert!(second.reasons().contains(FrameCause::Scroll));
+        scheduler.complete(second.id()).unwrap();
+        assert!(scheduler.begin().unwrap().is_none());
+    }
+
+    #[test]
+    fn frame_scheduler_wrong_completion_preserves_active_request() {
+        let mut scheduler = FrameScheduler::new();
+        scheduler.request(FrameCause::Explicit);
+        let request = scheduler.begin().unwrap().unwrap();
+        let wrong = FrameRequestId(request.id().get() + 1);
+
+        assert_eq!(
+            scheduler.complete(wrong).unwrap_err(),
+            FrameSchedulerError::WrongCompletion {
+                expected: request.id(),
+                actual: wrong,
+            }
+        );
+        assert_eq!(scheduler.active_request(), Some(request.id()));
+        scheduler.discard(request.id()).unwrap();
+        assert_eq!(scheduler.active_request(), None);
+    }
+
+    #[test]
+    fn frame_scheduler_identity_exhaustion_never_reuses_requests() {
+        let mut scheduler = FrameScheduler::new();
+        scheduler.next_request = u64::MAX;
+        scheduler.request(FrameCause::Explicit);
+        let last = scheduler.begin().unwrap().unwrap();
+        assert_eq!(last.id().get(), u64::MAX);
+        scheduler.complete(last.id()).unwrap();
+
+        scheduler.request(FrameCause::Explicit);
+        assert_eq!(
+            scheduler.begin().unwrap_err(),
+            FrameSchedulerError::RequestIdExhausted
+        );
+        assert!(scheduler.pending_reasons().contains(FrameCause::Explicit));
     }
 
     #[test]
