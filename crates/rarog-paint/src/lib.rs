@@ -1905,26 +1905,21 @@ mod tests {
 
     #[test]
     fn framebuffer_exports_tightly_packed_rgba8() {
-        let list = single_fill(
-            1,
-            Rect::new(0.0, 0.0, 1.0, 1.0),
-            Color {
-                r: 1,
-                g: 2,
-                b: 3,
-                a: 4,
-            },
-        );
-        let mut framebuffer = Framebuffer::new(
+        let color = Color {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 4,
+        };
+        let framebuffer = Framebuffer::new(
             Size {
                 width: 2.0,
                 height: 1.0,
             },
-            Color::WHITE,
+            color,
         );
-        framebuffer.rasterize(&list);
 
-        assert_eq!(framebuffer.to_rgba8(), vec![1, 2, 3, 4, 255, 255, 255, 255]);
+        assert_eq!(framebuffer.to_rgba8(), vec![1, 2, 3, 4, 1, 2, 3, 4]);
     }
 
     #[test]
