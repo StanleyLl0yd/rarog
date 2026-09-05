@@ -114,6 +114,51 @@ pub enum FlexDirection {
     RowReverse,
 }
 
+pub const MAX_EXPLICIT_GRID_TRACKS: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GridTrackList {
+    sizes: [f32; MAX_EXPLICIT_GRID_TRACKS],
+    len: u8,
+}
+
+impl Default for GridTrackList {
+    fn default() -> Self {
+        Self {
+            sizes: [0.0; MAX_EXPLICIT_GRID_TRACKS],
+            len: 0,
+        }
+    }
+}
+
+impl GridTrackList {
+    pub fn from_sizes(sizes: &[f32]) -> Option<Self> {
+        if sizes.len() > MAX_EXPLICIT_GRID_TRACKS
+            || sizes
+                .iter()
+                .any(|size| !size.is_finite() || *size < 0.0)
+        {
+            return None;
+        }
+        let mut result = Self::default();
+        result.sizes[..sizes.len()].copy_from_slice(sizes);
+        result.len = sizes.len() as u8;
+        Some(result)
+    }
+
+    pub const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    pub fn as_slice(&self) -> &[f32] {
+        &self.sizes[..self.len as usize]
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedStyle {
     pub width: Option<f32>,
@@ -131,6 +176,13 @@ pub struct ComputedStyle {
     pub display_none: bool,
     pub display_inline: bool,
     pub display_flex: bool,
+    pub display_grid: bool,
+    pub grid_template_columns: GridTrackList,
+    pub grid_template_rows: GridTrackList,
+    pub grid_column_start: Option<u8>,
+    pub grid_row_start: Option<u8>,
+    pub grid_column_span: u8,
+    pub grid_row_span: u8,
     pub flex_grow: f32,
     pub flex_shrink: f32,
     pub justify_content: JustifyContent,
@@ -163,6 +215,13 @@ impl Default for ComputedStyle {
             display_none: false,
             display_inline: false,
             display_flex: false,
+            display_grid: false,
+            grid_template_columns: GridTrackList::default(),
+            grid_template_rows: GridTrackList::default(),
+            grid_column_start: None,
+            grid_row_start: None,
+            grid_column_span: 1,
+            grid_row_span: 1,
             flex_grow: 0.0,
             flex_shrink: 1.0,
             justify_content: JustifyContent::FlexStart,
@@ -350,6 +409,12 @@ pub enum PropertyId {
     BackgroundColor,
     BorderColor,
     Display,
+    GridTemplateColumns,
+    GridTemplateRows,
+    GridColumnStart,
+    GridRowStart,
+    GridColumnSpan,
+    GridRowSpan,
     FlexGrow,
     FlexShrink,
     JustifyContent,
@@ -368,6 +433,7 @@ pub enum DisplayValue {
     Block,
     Inline,
     Flex,
+    Grid,
     FlowRoot,
     None,
 }
@@ -388,6 +454,9 @@ pub enum PropertyValue {
     NoneKeyword,
     Color(Color),
     Display(DisplayValue),
+    GridTracks(GridTrackList),
+    GridLineStart(Option<u8>),
+    GridSpan(u8),
     Number(f32),
     JustifyContent(JustifyContent),
     AlignItems(AlignItems),
@@ -802,8 +871,17 @@ fn copy_property_from_style(
             style.display_none = source.display_none;
             style.display_inline = source.display_inline;
             style.display_flex = source.display_flex;
+            style.display_grid = source.display_grid;
             style.establishes_bfc = source.establishes_bfc;
         }
+        PropertyId::GridTemplateColumns => {
+            style.grid_template_columns = source.grid_template_columns
+        }
+        PropertyId::GridTemplateRows => style.grid_template_rows = source.grid_template_rows,
+        PropertyId::GridColumnStart => style.grid_column_start = source.grid_column_start,
+        PropertyId::GridRowStart => style.grid_row_start = source.grid_row_start,
+        PropertyId::GridColumnSpan => style.grid_column_span = source.grid_column_span,
+        PropertyId::GridRowSpan => style.grid_row_span = source.grid_row_span,
         PropertyId::FlexGrow => style.flex_grow = source.flex_grow,
         PropertyId::FlexShrink => style.flex_shrink = source.flex_shrink,
         PropertyId::JustifyContent => style.justify_content = source.justify_content,
@@ -875,8 +953,25 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
             style.display_none = display == DisplayValue::None;
             style.display_inline = display == DisplayValue::Inline;
             style.display_flex = display == DisplayValue::Flex;
+            style.display_grid = display == DisplayValue::Grid;
             style.establishes_bfc = display == DisplayValue::FlowRoot;
         }
+        (PropertyId::GridTemplateColumns, PropertyValue::GridTracks(value)) => {
+            style.grid_template_columns = value
+        }
+        (PropertyId::GridTemplateRows, PropertyValue::GridTracks(value)) => {
+            style.grid_template_rows = value
+        }
+        (PropertyId::GridColumnStart, PropertyValue::GridLineStart(value)) => {
+            style.grid_column_start = value
+        }
+        (PropertyId::GridRowStart, PropertyValue::GridLineStart(value)) => {
+            style.grid_row_start = value
+        }
+        (PropertyId::GridColumnSpan, PropertyValue::GridSpan(value)) => {
+            style.grid_column_span = value
+        }
+        (PropertyId::GridRowSpan, PropertyValue::GridSpan(value)) => style.grid_row_span = value,
         (PropertyId::FlexGrow, PropertyValue::Number(value)) => style.flex_grow = value,
         (PropertyId::FlexShrink, PropertyValue::Number(value)) => style.flex_shrink = value,
         (PropertyId::JustifyContent, PropertyValue::JustifyContent(value)) => {
@@ -1075,6 +1170,37 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 });
             }
         }
+        "grid-template-columns" => {
+            if let Some(value) = parse_grid_track_list(value) {
+                output.push(Declaration {
+                    property: PropertyId::GridTemplateColumns,
+                    value: PropertyValue::GridTracks(value),
+                    important,
+                });
+            }
+        }
+        "grid-template-rows" => {
+            if let Some(value) = parse_grid_track_list(value) {
+                output.push(Declaration {
+                    property: PropertyId::GridTemplateRows,
+                    value: PropertyValue::GridTracks(value),
+                    important,
+                });
+            }
+        }
+        "grid-column-start" => push_grid_line_start(
+            output,
+            PropertyId::GridColumnStart,
+            value,
+            important,
+        ),
+        "grid-row-start" => {
+            push_grid_line_start(output, PropertyId::GridRowStart, value, important)
+        }
+        "grid-column-end" => {
+            push_grid_span(output, PropertyId::GridColumnSpan, value, important)
+        }
+        "grid-row-end" => push_grid_span(output, PropertyId::GridRowSpan, value, important),
         "flex-grow" => push_non_negative_number(output, PropertyId::FlexGrow, value, important),
         "flex-shrink" => push_non_negative_number(output, PropertyId::FlexShrink, value, important),
         "row-gap" => push_gap_value(output, PropertyId::RowGap, value, important),
@@ -1209,6 +1335,8 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 Some(DisplayValue::Inline)
             } else if value.eq_ignore_ascii_case("flex") {
                 Some(DisplayValue::Flex)
+            } else if value.eq_ignore_ascii_case("grid") {
+                Some(DisplayValue::Grid)
             } else if value.eq_ignore_ascii_case("flow-root") {
                 Some(DisplayValue::FlowRoot)
             } else {
@@ -1309,6 +1437,12 @@ fn push_css_wide(
         "background" | "background-color" => &[PropertyId::BackgroundColor],
         "border-color" => &[PropertyId::BorderColor],
         "display" => &[PropertyId::Display],
+        "grid-template-columns" => &[PropertyId::GridTemplateColumns],
+        "grid-template-rows" => &[PropertyId::GridTemplateRows],
+        "grid-column-start" => &[PropertyId::GridColumnStart],
+        "grid-row-start" => &[PropertyId::GridRowStart],
+        "grid-column-end" => &[PropertyId::GridColumnSpan],
+        "grid-row-end" => &[PropertyId::GridRowSpan],
         "flex-grow" => &[PropertyId::FlexGrow],
         "flex-shrink" => &[PropertyId::FlexShrink],
         "justify-content" => &[PropertyId::JustifyContent],
@@ -1358,6 +1492,71 @@ fn push_sizing_value(
         return;
     }
     push_length(output, property, value, false, important);
+}
+
+fn parse_grid_track_list(value: &str) -> Option<GridTrackList> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("none") {
+        return Some(GridTrackList::default());
+    }
+    let sizes = value
+        .split_whitespace()
+        .map(|part| parse_px(part).filter(|size| *size >= 0.0))
+        .collect::<Option<Vec<_>>>()?;
+    if sizes.is_empty() {
+        return None;
+    }
+    GridTrackList::from_sizes(&sizes)
+}
+
+fn push_grid_line_start(
+    output: &mut Vec<Declaration>,
+    property: PropertyId,
+    value: &str,
+    important: bool,
+) {
+    let value = value.trim();
+    let start = if value.eq_ignore_ascii_case("auto") {
+        Some(None)
+    } else {
+        value
+            .parse::<u8>()
+            .ok()
+            .filter(|line| *line > 0)
+            .map(Some)
+    };
+    if let Some(start) = start {
+        output.push(Declaration {
+            property,
+            value: PropertyValue::GridLineStart(start),
+            important,
+        });
+    }
+}
+
+fn push_grid_span(
+    output: &mut Vec<Declaration>,
+    property: PropertyId,
+    value: &str,
+    important: bool,
+) {
+    let value = value.trim();
+    let span = if value.eq_ignore_ascii_case("auto") {
+        Some(1)
+    } else {
+        value
+            .strip_prefix("span ")
+            .or_else(|| value.strip_prefix("SPAN "))
+            .and_then(|span| span.trim().parse::<u8>().ok())
+            .filter(|span| *span > 0)
+    };
+    if let Some(span) = span {
+        output.push(Declaration {
+            property,
+            value: PropertyValue::GridSpan(span),
+            important,
+        });
+    }
 }
 
 fn push_length(
@@ -2248,6 +2447,55 @@ mod finite_geometry_tests {
             PropertyValue::FlexDirection(FlexDirection::RowReverse),
         );
         assert_eq!(style.flex_direction, FlexDirection::RowReverse);
+    }
+
+    #[test]
+    fn bounded_grid_properties_parse_without_parser_owned_vectors() {
+        let declarations = parse_declarations(
+            "display:grid;grid-template-columns:40px 60px;grid-template-rows:20px 30px;grid-column-start:2;grid-row-start:1;grid-column-end:span 2;grid-row-end:auto",
+        );
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::Display,
+            value: PropertyValue::Display(DisplayValue::Grid),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::GridTemplateColumns,
+            value: PropertyValue::GridTracks(GridTrackList::from_sizes(&[40.0, 60.0]).unwrap()),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::GridTemplateRows,
+            value: PropertyValue::GridTracks(GridTrackList::from_sizes(&[20.0, 30.0]).unwrap()),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::GridColumnStart,
+            value: PropertyValue::GridLineStart(Some(2)),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::GridColumnSpan,
+            value: PropertyValue::GridSpan(2),
+            important: false,
+        }));
+        assert!(declarations.contains(&Declaration {
+            property: PropertyId::GridRowSpan,
+            value: PropertyValue::GridSpan(1),
+            important: false,
+        }));
+    }
+
+    #[test]
+    fn unsupported_grid_track_and_line_syntax_fails_closed() {
+        assert!(parse_declarations("grid-template-columns:1fr 20px").is_empty());
+        assert!(parse_declarations("grid-template-rows:repeat(2, 20px)").is_empty());
+        assert!(parse_declarations("grid-column-start:-1").is_empty());
+        assert!(parse_declarations("grid-column-end:3").is_empty());
+        assert!(parse_declarations("grid-row-end:span 0").is_empty());
+
+        let too_many = "10px 10px 10px 10px 10px 10px 10px 10px 10px";
+        assert!(parse_declarations(&format!("grid-template-columns:{too_many}")).is_empty());
     }
 
     #[test]
