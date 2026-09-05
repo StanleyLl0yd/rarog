@@ -1,11 +1,13 @@
 use rarog_types::Color;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
 pub const DEFAULT_MAX_IMAGE_RESOURCES: usize = 1_024;
 pub const DEFAULT_MAX_IMAGE_PIXELS_PER_RESOURCE: u64 = 16_777_216;
 pub const DEFAULT_MAX_TOTAL_IMAGE_PIXELS: u64 = 67_108_864;
+pub const DEFAULT_MAX_PENDING_IMAGE_DECODES: usize = 64;
+pub const DEFAULT_MAX_PENDING_IMAGE_DECODE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImageResourceLimits {
