@@ -9,7 +9,7 @@ rust-version.workspace = true
 rarog-compositor = { path = "../rarog-compositor" }
 rarog-paint = { path = "../rarog-paint" }
 rarog-types = { path = "../rarog-types" }
-wgpu = { version = "=26.0.1", default-features = false, features = ["std"] }
+wgpu = { version = "=26.0.1", default-features = false, features = ["std", "wgsl"] }
 
 [lints]
 workspace = true
