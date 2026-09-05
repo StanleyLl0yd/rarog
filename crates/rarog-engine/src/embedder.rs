@@ -4,6 +4,9 @@ use super::{
     RenderError, RenderLimits, RenderObservability, RenderOptions, RenderSession,
     validate_viewport_size,
 };
+use rarog_compositor::{
+    DisplayListRevision, FrameCause, FrameDecision, FramePlanner, FramePlannerError, SurfaceSize,
+};
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
@@ -521,7 +524,9 @@ impl View {
         Ok(ViewFrame {
             framebuffer: session.framebuffer(),
             display_list: session.display_list(),
+            display_list_revision: session.display_list_revision(),
             damage: session.damage(),
+            clear_color: self.options.background,
             status,
             full_observability,
         })
@@ -540,9 +545,43 @@ impl View {
 pub struct ViewFrame<'a> {
     pub framebuffer: &'a Framebuffer,
     pub display_list: &'a DisplayList,
+    pub display_list_revision: DisplayListRevision,
     pub damage: &'a DamageRegion,
+    pub clear_color: Color,
     pub status: FrameStatus,
     pub full_observability: Option<RenderObservability>,
+}
+
+impl ViewFrame<'_> {
+    pub const fn compositor_cause(&self) -> FrameCause {
+        match self.status {
+            FrameStatus::Initial => FrameCause::Initial,
+            FrameStatus::ViewportRebuild => FrameCause::Resize,
+            FrameStatus::Incremental(_) => FrameCause::SceneChange,
+        }
+    }
+
+    pub fn plan_compositor_frame(
+        &self,
+        planner: &mut FramePlanner,
+        surface_size: SurfaceSize,
+    ) -> Result<FrameDecision, FramePlannerError> {
+        self.plan_compositor_frame_with_cause(planner, surface_size, self.compositor_cause())
+    }
+
+    pub fn plan_compositor_frame_with_cause(
+        &self,
+        planner: &mut FramePlanner,
+        surface_size: SurfaceSize,
+        cause: FrameCause,
+    ) -> Result<FrameDecision, FramePlannerError> {
+        planner.plan(
+            surface_size,
+            self.display_list_revision,
+            self.damage,
+            cause,
+        )
+    }
 }
 
 fn viewport_pixel_count(size: Size) -> Result<u64, RenderError> {
@@ -666,6 +705,66 @@ mod tests {
             })
         ));
         assert_eq!(frame.full_observability, None);
+    }
+
+    #[test]
+    fn view_frames_drive_compositor_planning_from_retained_revisions() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div>Rarog</div>", BaseUrl::about_blank())
+            .unwrap();
+        let viewport = Size {
+            width: 160.0,
+            height: 90.0,
+        };
+        let surface = rarog_compositor::SurfaceId::new(9).unwrap();
+        let surface_size = SurfaceSize::new(160, 90);
+        let mut planner = FramePlanner::new(surface);
+
+        let initial = view.render(viewport).unwrap();
+        assert_eq!(initial.display_list_revision, DisplayListRevision::new(1));
+        let FrameDecision::Submit(initial_plan) = initial
+            .plan_compositor_frame(&mut planner, surface_size)
+            .unwrap()
+        else {
+            panic!("initial view frame must submit");
+        };
+        assert_eq!(initial_plan.cause(), FrameCause::Initial);
+        assert_eq!(
+            initial_plan.update_kind(),
+            rarog_compositor::FrameUpdateKind::Full
+        );
+        planner.complete(initial_plan.id()).unwrap();
+
+        let unchanged = view.render(viewport).unwrap();
+        assert_eq!(
+            unchanged.display_list_revision,
+            initial.display_list_revision
+        );
+        assert_eq!(
+            unchanged
+                .plan_compositor_frame(&mut planner, surface_size)
+                .unwrap(),
+            FrameDecision::Noop
+        );
+
+        let resized = view
+            .render(Size {
+                width: 220.0,
+                height: 120.0,
+            })
+            .unwrap();
+        let FrameDecision::Submit(resize_plan) = resized
+            .plan_compositor_frame(&mut planner, SurfaceSize::new(220, 120))
+            .unwrap()
+        else {
+            panic!("resized view frame must submit");
+        };
+        assert_eq!(resize_plan.cause(), FrameCause::Resize);
+        assert_eq!(
+            resize_plan.update_kind(),
+            rarog_compositor::FrameUpdateKind::Full
+        );
     }
 
     #[test]
