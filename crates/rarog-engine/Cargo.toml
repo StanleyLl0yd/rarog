@@ -13,6 +13,7 @@ rarog-html = { path = "../rarog-html" }
 rarog-layout = { path = "../rarog-layout" }
 rarog-paint = { path = "../rarog-paint" }
 rarog-platform = { path = "../rarog-platform" }
+rarog-resources = { path = "../rarog-resources" }
 rarog-scheduler = { path = "../rarog-scheduler" }
 rarog-types = { path = "../rarog-types" }
 
