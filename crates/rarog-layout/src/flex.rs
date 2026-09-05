@@ -1332,7 +1332,9 @@ mod tests {
                 height: 100.0,
             },
             &items,
-            FlexRowOptions::default().with_cross_size(Some(60.0)),
+            FlexRowOptions::default()
+                .with_cross_alignment(FlexCrossAlignment::Stretch)
+                .with_cross_size(Some(60.0)),
             &[],
             &[
                 FlexCrossSizeMetadata::auto(0.0, None),
@@ -1359,7 +1361,9 @@ mod tests {
                 height: 100.0,
             },
             &items,
-            FlexRowOptions::default().with_cross_size(Some(80.0)),
+            FlexRowOptions::default()
+                .with_cross_alignment(FlexCrossAlignment::Stretch)
+                .with_cross_size(Some(80.0)),
             &[],
             &[
                 FlexCrossSizeMetadata::auto(12.0, Some(20.0)),
