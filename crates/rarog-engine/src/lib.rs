@@ -1781,8 +1781,8 @@ mod tests {
             .unwrap();
         let report = session.update().expect("grid align-items update succeeds");
         let expected = render_ok(expected_source, deterministic_options());
-        let grid_fragment = fragment_for_dom(&session.layout().fragments, grid)
-            .expect("grid container remains");
+        let grid_fragment =
+            fragment_for_dom(&session.layout().fragments, grid).expect("grid container remains");
 
         assert_eq!(
             fragment_for_dom(&session.layout().fragments, item)
