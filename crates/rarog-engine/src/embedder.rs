@@ -13,6 +13,7 @@ use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
 use rarog_platform::{NullPlatformHost, PlatformCapabilities, PlatformHost};
+use rarog_resources::ImageResourceStore;
 use rarog_types::{Color, Size};
 use std::fmt;
 use std::sync::{
@@ -564,6 +565,7 @@ impl View {
         Ok(ViewFrame {
             framebuffer: session.framebuffer(),
             display_list: session.display_list(),
+            image_resources: session.image_resources(),
             display_list_revision: session.display_list_revision(),
             damage: session.damage(),
             clear_color: self.options.background,
@@ -585,6 +587,7 @@ impl View {
 pub struct ViewFrame<'a> {
     pub framebuffer: &'a Framebuffer,
     pub display_list: &'a DisplayList,
+    pub image_resources: &'a ImageResourceStore,
     pub display_list_revision: DisplayListRevision,
     pub damage: &'a DamageRegion,
     pub clear_color: Color,

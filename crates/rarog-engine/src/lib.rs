@@ -17,6 +17,7 @@ use rarog_paint::{
     DamageRegion, DisplayList, DisplayListError, Framebuffer, FramebufferError, build_display_list,
     replace_display_items_for_fragment, replace_display_items_for_fragments,
 };
+use rarog_resources::ImageResourceStore;
 use rarog_types::{Color, Size};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -331,6 +332,7 @@ pub struct RenderSession {
     display_list_revision: DisplayListRevision,
     damage: DamageRegion,
     framebuffer: Framebuffer,
+    image_resources: ImageResourceStore,
     dirty: DirtyState,
     observability: RenderObservability,
 }
@@ -358,6 +360,7 @@ impl RenderSession {
             display_list_revision: DisplayListRevision::new(1),
             damage: output.damage,
             framebuffer: output.framebuffer,
+            image_resources: ImageResourceStore::default(),
             dirty: DirtyState::clean_at(generation),
             observability: output.observability,
         })
@@ -411,6 +414,10 @@ impl RenderSession {
         &self.framebuffer
     }
 
+    pub fn image_resources(&self) -> &ImageResourceStore {
+        &self.image_resources
+    }
+
     pub fn dirty_state(&self) -> &DirtyState {
         &self.dirty
     }
@@ -452,7 +459,7 @@ impl RenderSession {
 
         let stage_started = Instant::now();
         let mut framebuffer = Framebuffer::try_new(viewport, self.options.background)?;
-        framebuffer.rasterize(&display_list);
+        framebuffer.rasterize_with_images(&display_list, &self.image_resources);
         let raster = stage_started.elapsed();
 
         let generation = self.document.generation();
@@ -933,8 +940,12 @@ impl RenderSession {
             &display_list,
         )?;
 
-        self.framebuffer
-            .rasterize_damage(&display_list, &damage, self.options.background);
+        self.framebuffer.rasterize_damage_with_images(
+            &display_list,
+            &damage,
+            self.options.background,
+            &self.image_resources,
+        );
         if let Some(styles) = rebuilt_styles {
             self.styles = styles;
         }
@@ -1519,6 +1530,30 @@ mod tests {
         assert!(report.dirty_nodes >= 1);
         assert_eq!(report.patched_nodes, 1);
         let _elapsed = report.elapsed;
+    }
+
+    #[test]
+    fn render_session_retains_image_resources_across_render_updates() {
+        let mut session = session("<div>Rarog</div>", deterministic_options());
+        let id = session.image_resources.reserve().unwrap();
+        let reference = session
+            .image_resources
+            .resolve(
+                id,
+                rarog_resources::DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap(),
+            )
+            .unwrap();
+
+        assert!(session.image_resources().image(reference).is_some());
+        session
+            .resize(Size {
+                width: 200.0,
+                height: 100.0,
+            })
+            .unwrap();
+        assert!(session.image_resources().image(reference).is_some());
+        session.update().unwrap();
+        assert!(session.image_resources().image(reference).is_some());
     }
 
     #[test]
