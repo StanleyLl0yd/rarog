@@ -697,9 +697,7 @@ fn resolve_content_distribution(
 ) -> (f32, f32, f32) {
     if remaining >= 0.0 {
         match alignment {
-            FlexContentAlignment::Stretch if count > 0 => {
-                (0.0, 0.0, remaining / count as f32)
-            }
+            FlexContentAlignment::Stretch if count > 0 => (0.0, 0.0, remaining / count as f32),
             FlexContentAlignment::Stretch | FlexContentAlignment::Start => (0.0, 0.0, 0.0),
             FlexContentAlignment::End => (remaining, 0.0, 0.0),
             FlexContentAlignment::Center => (remaining / 2.0, 0.0, 0.0),
