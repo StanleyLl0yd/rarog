@@ -4169,9 +4169,7 @@ mod tests {
                 doc.root(),
                 element(
                     "div",
-                    Some(
-                        "display:grid;grid-template-columns:60px;grid-template-rows:40px",
-                    ),
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
                 ),
             )
             .unwrap();
@@ -4179,9 +4177,7 @@ mod tests {
             container,
             element(
                 "div",
-                Some(
-                    "width:20px;height:10px;justify-self:center;align-self:center",
-                ),
+                Some("width:20px;height:10px;justify-self:center;align-self:center"),
             ),
         )
         .unwrap();
@@ -4206,9 +4202,7 @@ mod tests {
                 doc.root(),
                 element(
                     "div",
-                    Some(
-                        "display:grid;grid-template-columns:60px;grid-template-rows:40px",
-                    ),
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
                 ),
             )
             .unwrap();
@@ -4276,9 +4270,7 @@ mod tests {
                 doc.root(),
                 element(
                     "div",
-                    Some(
-                        "display:grid;grid-template-columns:60px;grid-template-rows:40px",
-                    ),
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
                 ),
             )
             .unwrap();
@@ -4304,9 +4296,7 @@ mod tests {
                 doc.root(),
                 element(
                     "div",
-                    Some(
-                        "display:grid;grid-template-columns:60px;grid-template-rows:40px",
-                    ),
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
                 ),
             )
             .unwrap();
@@ -4326,7 +4316,11 @@ mod tests {
 
         assert!(output.fragments.root.children[0].children.is_empty());
         assert_eq!(
-            output.fragments.root.children[0].boxes.content_box.size.height,
+            output.fragments.root.children[0]
+                .boxes
+                .content_box
+                .size
+                .height,
             40.0
         );
     }
