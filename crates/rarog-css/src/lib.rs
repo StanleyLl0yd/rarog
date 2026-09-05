@@ -134,9 +134,7 @@ impl Default for GridTrackList {
 impl GridTrackList {
     pub fn from_sizes(sizes: &[f32]) -> Option<Self> {
         if sizes.len() > MAX_EXPLICIT_GRID_TRACKS
-            || sizes
-                .iter()
-                .any(|size| !size.is_finite() || *size < 0.0)
+            || sizes.iter().any(|size| !size.is_finite() || *size < 0.0)
         {
             return None;
         }
@@ -1188,18 +1186,13 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 });
             }
         }
-        "grid-column-start" => push_grid_line_start(
-            output,
-            PropertyId::GridColumnStart,
-            value,
-            important,
-        ),
+        "grid-column-start" => {
+            push_grid_line_start(output, PropertyId::GridColumnStart, value, important)
+        }
         "grid-row-start" => {
             push_grid_line_start(output, PropertyId::GridRowStart, value, important)
         }
-        "grid-column-end" => {
-            push_grid_span(output, PropertyId::GridColumnSpan, value, important)
-        }
+        "grid-column-end" => push_grid_span(output, PropertyId::GridColumnSpan, value, important),
         "grid-row-end" => push_grid_span(output, PropertyId::GridRowSpan, value, important),
         "flex-grow" => push_non_negative_number(output, PropertyId::FlexGrow, value, important),
         "flex-shrink" => push_non_negative_number(output, PropertyId::FlexShrink, value, important),
@@ -1519,11 +1512,7 @@ fn push_grid_line_start(
     let start = if value.eq_ignore_ascii_case("auto") {
         Some(None)
     } else {
-        value
-            .parse::<u8>()
-            .ok()
-            .filter(|line| *line > 0)
-            .map(Some)
+        value.parse::<u8>().ok().filter(|line| *line > 0).map(Some)
     };
     if let Some(start) = start {
         output.push(Declaration {
