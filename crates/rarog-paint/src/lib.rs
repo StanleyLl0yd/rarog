@@ -1287,15 +1287,11 @@ mod tests {
         assert_eq!(refresh.updated_commands, 2);
         assert_eq!(
             refresh.damage.rects,
-            vec![
-                Rect::new(0.0, 0.0, 2.0, 2.0),
-                Rect::new(4.0, 0.0, 2.0, 2.0)
-            ]
+            vec![Rect::new(0.0, 0.0, 2.0, 2.0), Rect::new(4.0, 0.0, 2.0, 2.0)]
         );
-        assert!(list
-            .commands()
-            .iter()
-            .all(|command| matches!(command, DisplayCommand::DrawImage { image, .. } if *image == second)));
+        assert!(list.commands().iter().all(
+            |command| matches!(command, DisplayCommand::DrawImage { image, .. } if *image == second)
+        ));
     }
 
     #[test]
