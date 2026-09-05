@@ -1186,7 +1186,6 @@ mod tests {
         assert_eq!(layout.items[1].border_box.origin.y, 30.0);
     }
 
-
     #[test]
     fn per_item_cross_alignment_overrides_container_alignment() {
         let items = [item(1, 20.0, 10.0), item(2, 20.0, 20.0)];
