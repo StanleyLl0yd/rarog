@@ -6,7 +6,9 @@ mod windows {
     };
     use rarog_compositor_wgpu::WgpuCompositorBackend;
     use rarog_engine::{BaseUrl, Engine, View, ViewOptions};
-    use rarog_platform_windows::{WindowsGpuDevice, WindowsGpuSurface};
+    use rarog_platform_windows::{
+        WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery,
+    };
     use rarog_types::Size;
     use std::error::Error;
     use std::fs;
@@ -39,6 +41,12 @@ mod windows {
         let event_loop = EventLoop::new()?;
         event_loop.run_app(&mut app)?;
         Ok(())
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum PresentationOutcome {
+        Presented,
+        Deferred,
     }
 
     struct WindowApp {
@@ -83,6 +91,61 @@ mod windows {
             Ok(())
         }
 
+        fn present_retained(&mut self) -> Result<PresentationOutcome, Box<dyn Error>> {
+            let result = {
+                let (Some(surface), Some(backend)) = (self.surface.as_ref(), self.backend.as_mut())
+                else {
+                    return Ok(PresentationOutcome::Deferred);
+                };
+                surface.present(backend)
+            };
+            match result {
+                Ok(()) => Ok(PresentationOutcome::Presented),
+                Err(error) => self.recover_presentation(error),
+            }
+        }
+
+        fn recover_presentation(
+            &mut self,
+            error: WindowsGpuError,
+        ) -> Result<PresentationOutcome, Box<dyn Error>> {
+            if matches!(error, WindowsGpuError::SuspendedSurface) {
+                return Ok(PresentationOutcome::Deferred);
+            }
+
+            match error.surface_recovery() {
+                Some(WindowsSurfaceRecovery::Retry) => {
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                    Ok(PresentationOutcome::Deferred)
+                }
+                Some(WindowsSurfaceRecovery::Reconfigure) => {
+                    let (Some(gpu), Some(surface)) = (self.gpu.as_ref(), self.surface.as_mut())
+                    else {
+                        return Ok(PresentationOutcome::Deferred);
+                    };
+                    surface.reconfigure(gpu)?;
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                    Ok(PresentationOutcome::Deferred)
+                }
+                Some(WindowsSurfaceRecovery::Recreate) => {
+                    let (Some(window), Some(gpu)) = (self.window.as_ref(), self.gpu.as_ref())
+                    else {
+                        return Ok(PresentationOutcome::Deferred);
+                    };
+                    let size = window.inner_size();
+                    self.surface =
+                        Some(gpu.create_surface(Arc::clone(window), size.width, size.height)?);
+                    window.request_redraw();
+                    Ok(PresentationOutcome::Deferred)
+                }
+                Some(WindowsSurfaceRecovery::Fatal) | None => Err(Box::new(error)),
+            }
+        }
+
         fn render(&mut self) -> Result<(), Box<dyn Error>> {
             let Some(window) = self.window.as_ref() else {
                 return Ok(());
@@ -101,38 +164,30 @@ mod windows {
 
             match decision {
                 FrameDecision::Noop => {
-                    let (Some(surface), Some(backend)) =
-                        (self.surface.as_ref(), self.backend.as_mut())
-                    else {
-                        return Ok(());
-                    };
-                    surface.present(backend)?;
+                    self.present_retained()?;
                 }
                 FrameDecision::Suspended { .. } => {}
                 FrameDecision::Submit(plan) => {
                     let id = plan.id();
-                    let Some(backend) = self.backend.as_mut() else {
-                        self.planner.discard(id)?;
-                        return Ok(());
-                    };
-                    if let Err(error) = backend.submit(FrameSubmission {
-                        plan: &plan,
-                        display_list: frame.display_list,
-                        clear_color: frame.clear_color,
-                    }) {
-                        self.planner.discard(id)?;
-                        return Err(Box::new(error));
+                    {
+                        let Some(backend) = self.backend.as_mut() else {
+                            self.planner.discard(id)?;
+                            return Ok(());
+                        };
+                        if let Err(error) = backend.submit(FrameSubmission {
+                            plan: &plan,
+                            display_list: frame.display_list,
+                            clear_color: frame.clear_color,
+                        }) {
+                            self.planner.discard(id)?;
+                            return Err(Box::new(error));
+                        }
                     }
 
-                    let Some(surface) = self.surface.as_ref() else {
-                        self.planner.discard(id)?;
-                        return Ok(());
-                    };
-                    if let Err(error) = surface.present(backend) {
-                        self.planner.discard(id)?;
-                        return Err(Box::new(error));
+                    match self.present_retained()? {
+                        PresentationOutcome::Presented => self.planner.complete(id)?,
+                        PresentationOutcome::Deferred => self.planner.discard(id)?,
                     }
-                    self.planner.complete(id)?;
                 }
             }
             Ok(())
