@@ -11,6 +11,8 @@ pub enum WindowsGpuError {
     CreateSurface(wgpu::CreateSurfaceError),
     #[cfg(target_os = "windows")]
     Surface(wgpu::SurfaceError),
+    #[cfg(target_os = "windows")]
+    Compositor(rarog_compositor_wgpu::WgpuCompositorError),
     UnsupportedSurface,
     SuspendedSurface,
 }
@@ -33,6 +35,8 @@ impl fmt::Display for WindowsGpuError {
             }
             #[cfg(target_os = "windows")]
             Self::Surface(error) => write!(formatter, "DX12 surface acquisition failed: {error}"),
+            #[cfg(target_os = "windows")]
+            Self::Compositor(error) => write!(formatter, "DX12 presentation failed: {error}"),
             Self::UnsupportedSurface => {
                 formatter.write_str("DX12 adapter does not support the requested surface")
             }
@@ -210,6 +214,19 @@ impl WindowsGpuSurface {
         self.surface
             .get_current_texture()
             .map_err(WindowsGpuError::Surface)
+    }
+
+    pub fn present(
+        &self,
+        backend: &mut rarog_compositor_wgpu::WgpuCompositorBackend,
+    ) -> Result<(), WindowsGpuError> {
+        let frame = self.acquire()?;
+        let format = self.format().ok_or(WindowsGpuError::SuspendedSurface)?;
+        backend
+            .present_to_texture(&frame.texture, format)
+            .map_err(WindowsGpuError::Compositor)?;
+        frame.present();
+        Ok(())
     }
 
     fn reconfigure(&mut self, gpu: &WindowsGpuDevice) -> Result<(), WindowsGpuError> {

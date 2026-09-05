@@ -12,6 +12,7 @@ pub const STAGING_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb
 pub enum WgpuCompositorError {
     SuspendedSurface,
     MissingRetainedFrame,
+    MissingStagingTexture,
     RowPitchOverflow,
     Framebuffer(FramebufferError),
 }
@@ -24,6 +25,9 @@ impl fmt::Display for WgpuCompositorError {
             }
             Self::MissingRetainedFrame => {
                 formatter.write_str("partial compositor update has no matching retained frame")
+            }
+            Self::MissingStagingTexture => {
+                formatter.write_str("wgpu compositor has no staging texture to present")
             }
             Self::RowPitchOverflow => formatter.write_str("wgpu texture row pitch overflow"),
             Self::Framebuffer(error) => write!(formatter, "{error}"),
@@ -45,12 +49,19 @@ struct CpuStage {
     framebuffer: Framebuffer,
 }
 
+struct Presenter {
+    format: wgpu::TextureFormat,
+    sampler: wgpu::Sampler,
+    pipeline: wgpu::RenderPipeline,
+}
+
 pub struct WgpuCompositorBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     texture: Option<wgpu::Texture>,
     texture_size: Option<SurfaceSize>,
     stage: Option<CpuStage>,
+    presenter: Option<Presenter>,
     last_frame: Option<FrameId>,
     last_revision: Option<DisplayListRevision>,
 }
@@ -63,6 +74,7 @@ impl WgpuCompositorBackend {
             texture: None,
             texture_size: None,
             stage: None,
+            presenter: None,
             last_frame: None,
             last_revision: None,
         }
@@ -88,6 +100,71 @@ impl WgpuCompositorBackend {
         self.last_revision
     }
 
+    pub fn present_to_texture(
+        &mut self,
+        target: &wgpu::Texture,
+        target_format: wgpu::TextureFormat,
+    ) -> Result<(), WgpuCompositorError> {
+        if self.texture.is_none() {
+            return Err(WgpuCompositorError::MissingStagingTexture);
+        }
+        self.ensure_presenter(target_format);
+
+        let source = self
+            .texture
+            .as_ref()
+            .ok_or(WgpuCompositorError::MissingStagingTexture)?;
+        let presenter = self
+            .presenter
+            .as_ref()
+            .expect("presenter is established before presentation");
+        let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
+        let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group_layout = presenter.pipeline.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rarog-compositor-present-bind-group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&presenter.sampler),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("rarog-compositor-present-encoder"),
+            });
+        {
+            let attachments = [Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rarog-compositor-present-pass"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&presenter.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.queue.submit([encoder.finish()]);
+        Ok(())
+    }
+
     fn ensure_texture(&mut self, size: SurfaceSize) {
         if self.texture_size == Some(size) && self.texture.is_some() {
             return;
@@ -106,6 +183,93 @@ impl WgpuCompositorBackend {
             view_formats: &[],
         }));
         self.texture_size = Some(size);
+    }
+
+    fn ensure_presenter(&mut self, target_format: wgpu::TextureFormat) {
+        if self
+            .presenter
+            .as_ref()
+            .is_some_and(|presenter| presenter.format == target_format)
+        {
+            return;
+        }
+
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("rarog-compositor-present-shader"),
+                source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
+            });
+        let bind_group_layout =
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("rarog-compositor-present-bind-group-layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("rarog-compositor-present-pipeline-layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let targets = [Some(wgpu::ColorTargetState {
+            format: target_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("rarog-compositor-present-pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &targets,
+                }),
+                multiview: None,
+                cache: None,
+            });
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("rarog-compositor-present-sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        self.presenter = Some(Presenter {
+            format: target_format,
+            sampler,
+            pipeline,
+        });
     }
 
     fn upload_stage(&self) -> Result<(), WgpuCompositorError> {
@@ -194,6 +358,43 @@ fn update_cpu_stage(
     }
     Ok(())
 }
+
+const PRESENT_SHADER: &str = r#"
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var uvs = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0),
+    );
+
+    var output: VertexOutput;
+    output.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    output.uv = uvs[vertex_index];
+    return output;
+}
+
+@group(0) @binding(0)
+var source_texture: texture_2d<f32>;
+
+@group(0) @binding(1)
+var source_sampler: sampler;
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return textureSample(source_texture, source_sampler, input.uv);
+}
+"#;
 
 const fn texture_extent(size: SurfaceSize) -> wgpu::Extent3d {
     wgpu::Extent3d {
@@ -321,6 +522,14 @@ mod tests {
                 },
             ),
             Err(WgpuCompositorError::MissingRetainedFrame)
+        );
+    }
+
+    #[test]
+    fn missing_staging_texture_has_stable_error() {
+        assert_eq!(
+            WgpuCompositorError::MissingStagingTexture.to_string(),
+            "wgpu compositor has no staging texture to present"
         );
     }
 
