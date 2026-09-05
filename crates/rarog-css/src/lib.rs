@@ -105,6 +105,7 @@ pub enum AlignContent {
 pub enum FlexWrap {
     NoWrap,
     Wrap,
+    WrapReverse,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1099,6 +1100,8 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 Some(FlexWrap::NoWrap)
             } else if value.eq_ignore_ascii_case("wrap") {
                 Some(FlexWrap::Wrap)
+            } else if value.eq_ignore_ascii_case("wrap-reverse") {
+                Some(FlexWrap::WrapReverse)
             } else {
                 None
             };
@@ -2185,33 +2188,32 @@ mod finite_geometry_tests {
     }
 
     #[test]
-    fn flex_wrap_parses_nowrap_and_wrap_but_not_wrap_reverse() {
-        assert_eq!(
-            parse_declarations("flex-wrap:wrap"),
-            vec![Declaration {
-                property: PropertyId::FlexWrap,
-                value: PropertyValue::FlexWrap(FlexWrap::Wrap),
-                important: false,
-            }]
-        );
-        assert_eq!(
-            parse_declarations("flex-wrap:NoWrAp"),
-            vec![Declaration {
-                property: PropertyId::FlexWrap,
-                value: PropertyValue::FlexWrap(FlexWrap::NoWrap),
-                important: false,
-            }]
-        );
-        assert!(parse_declarations("flex-wrap:wrap-reverse").is_empty());
+    fn flex_wrap_parses_nowrap_wrap_and_wrap_reverse() {
+        for value in [FlexWrap::NoWrap, FlexWrap::Wrap, FlexWrap::WrapReverse] {
+            let source = match value {
+                FlexWrap::NoWrap => "flex-wrap:NoWrAp",
+                FlexWrap::Wrap => "flex-wrap:wrap",
+                FlexWrap::WrapReverse => "flex-wrap:wrap-reverse",
+            };
+            assert_eq!(
+                parse_declarations(source),
+                vec![Declaration {
+                    property: PropertyId::FlexWrap,
+                    value: PropertyValue::FlexWrap(value),
+                    important: false,
+                }]
+            );
+        }
+        assert!(parse_declarations("flex-wrap:reverse").is_empty());
 
         let mut style = ComputedStyle::default();
         assert_eq!(style.flex_wrap, FlexWrap::NoWrap);
         apply_property_value(
             &mut style,
             PropertyId::FlexWrap,
-            PropertyValue::FlexWrap(FlexWrap::Wrap),
+            PropertyValue::FlexWrap(FlexWrap::WrapReverse),
         );
-        assert_eq!(style.flex_wrap, FlexWrap::Wrap);
+        assert_eq!(style.flex_wrap, FlexWrap::WrapReverse);
     }
 
     #[test]

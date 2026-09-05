@@ -105,6 +105,7 @@ pub struct FlexRowOptions {
     main_alignment: FlexMainAlignment,
     cross_alignment: FlexCrossAlignment,
     content_alignment: FlexContentAlignment,
+    cross_reverse: bool,
     main_gap: f32,
     cross_gap: f32,
     cross_size: Option<f32>,
@@ -118,6 +119,7 @@ impl Default for FlexRowOptions {
             main_alignment: FlexMainAlignment::Start,
             cross_alignment: FlexCrossAlignment::Start,
             content_alignment: FlexContentAlignment::Stretch,
+            cross_reverse: false,
             main_gap: 0.0,
             cross_gap: 0.0,
             cross_size: None,
@@ -140,6 +142,11 @@ impl FlexRowOptions {
 
     pub const fn with_content_alignment(mut self, alignment: FlexContentAlignment) -> Self {
         self.content_alignment = alignment;
+        self
+    }
+
+    pub const fn with_cross_reverse(mut self, reverse: bool) -> Self {
+        self.cross_reverse = reverse;
         self
     }
 
@@ -178,6 +185,10 @@ impl FlexRowOptions {
 
     pub const fn content_alignment(self) -> FlexContentAlignment {
         self.content_alignment
+    }
+
+    pub const fn cross_reverse(self) -> bool {
+        self.cross_reverse
     }
 
     pub const fn main_gap(self) -> f32 {
@@ -547,7 +558,7 @@ pub fn layout_wrapped_flexible_rows_with_cross_metadata(
         resolve_content_distribution(remaining, ranges.len(), options.content_alignment());
 
     let mut placements = Vec::with_capacity(items.len());
-    let mut y = finite_add(origin.y, leading)?;
+    let mut logical_cross_offset = leading;
     for (line_index, (start, end)) in ranges.iter().copied().enumerate() {
         let alignments = if item_cross_alignments.is_empty() {
             &[][..]
@@ -555,11 +566,22 @@ pub fn layout_wrapped_flexible_rows_with_cross_metadata(
             &item_cross_alignments[start..end]
         };
         let line_cross_size = finite_add(line_cross_sizes[line_index], stretch)?;
+        let line_y = if options.cross_reverse() {
+            let from_start = finite_add(logical_cross_offset, line_cross_size)?;
+            finite_add(origin.y, used_cross_size - from_start)?
+        } else {
+            finite_add(origin.y, logical_cross_offset)?
+        };
         let mut row = layout_flexible_single_line_flex_row_with_item_alignments(
-            Point { x: origin.x, y },
+            Point {
+                x: origin.x,
+                y: line_y,
+            },
             available_size,
             &items[start..end],
-            natural_line_options.with_cross_size(Some(line_cross_size)),
+            natural_line_options
+                .with_cross_reverse(options.cross_reverse())
+                .with_cross_size(Some(line_cross_size)),
             alignments,
         )?;
         let cross_metadata = if item_cross_metadata.is_empty() {
@@ -576,10 +598,10 @@ pub fn layout_wrapped_flexible_rows_with_cross_metadata(
             cross_metadata,
         )?;
         placements.extend(row.items);
-        y = finite_add(y, line_cross_size)?;
+        logical_cross_offset = finite_add(logical_cross_offset, line_cross_size)?;
         if line_index + 1 < ranges.len() {
-            y = finite_add(y, options.cross_gap())?;
-            y = finite_add(y, distributed_gap)?;
+            logical_cross_offset = finite_add(logical_cross_offset, options.cross_gap())?;
+            logical_cross_offset = finite_add(logical_cross_offset, distributed_gap)?;
         }
     }
 
@@ -698,6 +720,7 @@ pub fn layout_single_line_flex_row_with_item_alignments(
         used_cross_size,
         options.cross_alignment(),
         item_cross_alignments,
+        options.cross_reverse(),
     )?;
     Ok(layout)
 }
@@ -709,6 +732,7 @@ fn apply_cross_alignment(
     cross_size: f32,
     container_alignment: FlexCrossAlignment,
     item_cross_alignments: &[Option<FlexCrossAlignment>],
+    cross_reverse: bool,
 ) -> Result<(), FlexLayoutError> {
     for (index, (placement, item)) in layout.items.iter_mut().zip(items).enumerate() {
         let alignment = item_cross_alignments
@@ -716,6 +740,11 @@ fn apply_cross_alignment(
             .copied()
             .flatten()
             .unwrap_or(container_alignment);
+        let alignment = if cross_reverse {
+            reverse_cross_alignment(alignment)
+        } else {
+            alignment
+        };
         let outer_height = finite_add(item.margin.top, item.base_size.height)?;
         let outer_height = finite_add(outer_height, item.margin.bottom)?;
         let remaining = cross_size - outer_height;
@@ -731,6 +760,15 @@ fn apply_cross_alignment(
         placement.border_box.origin.y = finite_add(border_y, item.margin.top)?;
     }
     Ok(())
+}
+
+fn reverse_cross_alignment(alignment: FlexCrossAlignment) -> FlexCrossAlignment {
+    match alignment {
+        FlexCrossAlignment::Start => FlexCrossAlignment::End,
+        FlexCrossAlignment::End => FlexCrossAlignment::Start,
+        FlexCrossAlignment::Center => FlexCrossAlignment::Center,
+        FlexCrossAlignment::Stretch => FlexCrossAlignment::Stretch,
+    }
 }
 
 fn apply_auto_cross_stretch(
@@ -1317,6 +1355,84 @@ mod tests {
         assert_eq!(layout.content_size.height, 50.0);
         assert_eq!(layout.items[0].border_box.origin.y, 20.0);
         assert_eq!(layout.items[1].border_box.origin.y, 30.0);
+    }
+
+    #[test]
+    fn wrapped_cross_reverse_stacks_source_order_lines_from_the_cross_end() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_cross_reverse(true)
+                .with_content_alignment(FlexContentAlignment::Start)
+                .with_cross_size(Some(60.0)),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.y, 50.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 30.0);
+        assert_eq!(layout.items[0].node, LayoutNodeId(1));
+        assert_eq!(layout.items[1].node, LayoutNodeId(2));
+    }
+
+    #[test]
+    fn wrapped_cross_reverse_flips_start_and_end_inside_each_line() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_cross_reverse(true)
+                .with_cross_alignment(FlexCrossAlignment::Start)
+                .with_cross_size(Some(60.0)),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.origin.y, 50.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 15.0);
+    }
+
+    #[test]
+    fn wrapped_cross_reverse_preserves_fixed_cross_gap() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_item_alignments(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_cross_reverse(true)
+                .with_content_alignment(FlexContentAlignment::Start)
+                .with_cross_gap(5.0),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(layout.content_size.height, 35.0);
+        assert_eq!(layout.items[0].border_box.origin.y, 25.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 0.0);
     }
 
     #[test]
