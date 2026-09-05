@@ -991,9 +991,7 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         }
         (PropertyId::AlignItems, PropertyValue::AlignItems(value)) => style.align_items = value,
         (PropertyId::AlignSelf, PropertyValue::AlignSelf(value)) => style.align_self = value,
-        (PropertyId::JustifySelf, PropertyValue::JustifySelf(value)) => {
-            style.justify_self = value
-        }
+        (PropertyId::JustifySelf, PropertyValue::JustifySelf(value)) => style.justify_self = value,
         (PropertyId::AlignContent, PropertyValue::AlignContent(value)) => {
             style.align_content = value
         }
@@ -1313,17 +1311,14 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
             let value = value.trim();
             let value = if value.eq_ignore_ascii_case("auto") {
                 Some(JustifySelf::Auto)
-            } else if value.eq_ignore_ascii_case("stretch")
-                || value.eq_ignore_ascii_case("normal")
+            } else if value.eq_ignore_ascii_case("stretch") || value.eq_ignore_ascii_case("normal")
             {
                 Some(JustifySelf::Stretch)
             } else if value.eq_ignore_ascii_case("start")
                 || value.eq_ignore_ascii_case("flex-start")
             {
                 Some(JustifySelf::Start)
-            } else if value.eq_ignore_ascii_case("end")
-                || value.eq_ignore_ascii_case("flex-end")
-            {
+            } else if value.eq_ignore_ascii_case("end") || value.eq_ignore_ascii_case("flex-end") {
                 Some(JustifySelf::End)
             } else if value.eq_ignore_ascii_case("center") {
                 Some(JustifySelf::Center)
