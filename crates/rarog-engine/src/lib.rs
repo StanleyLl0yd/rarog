@@ -1651,6 +1651,60 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_auto_height_transition_remeasures_and_stretches_the_item_line() {
+        let source = r#"<div id="flex" style="display:flex;flex-wrap:wrap;width:100px;height:60px"><div id="first" style="width:60px;height:10px;background:#112233"><div style="height:10px"></div></div><div id="second" style="width:60px;height:20px;background:#445566"></div></div>"#;
+        let expected_source = r#"<div id="flex" style="display:flex;flex-wrap:wrap;width:100px;height:60px"><div id="first" style="width:60px;height:auto;background:#112233"><div style="height:10px"></div></div><div id="second" style="width:60px;height:20px;background:#445566"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let flex = element_with_id(session.document(), "flex");
+        let first = element_with_id(session.document(), "first");
+        let second = element_with_id(session.document(), "second");
+
+        session
+            .document_mut()
+            .set_attribute(
+                first,
+                "style",
+                "width:60px;height:auto;background:#112233",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("wrapped auto-height update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+        let flex_y = fragment_for_dom(&session.layout().fragments, flex)
+            .expect("wrapped flex container remains")
+            .boxes
+            .content_box
+            .origin
+            .y;
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, first)
+                .expect("remeasured wrapped item remains")
+                .boxes
+                .border_box
+                .size
+                .height,
+            25.0
+        );
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, second)
+                .expect("second wrapped item remains")
+                .boxes
+                .border_box
+                .origin
+                .y,
+            flex_y + 25.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
     fn align_content_change_relayouts_wrapped_lines_in_definite_height() {
         let source = r#"<div id="flex" style="display:flex;flex-wrap:wrap;width:100px;height:60px;align-content:flex-start"><div id="a" style="width:60px;height:10px;background:#112233"></div><div id="b" style="width:60px;height:20px;background:#445566"></div></div>"#;
         let expected_source = r#"<div id="flex" style="display:flex;flex-wrap:wrap;width:100px;height:60px;align-content:flex-end"><div id="a" style="width:60px;height:10px;background:#112233"></div><div id="b" style="width:60px;height:20px;background:#445566"></div></div>"#;
