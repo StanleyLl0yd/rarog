@@ -20,7 +20,7 @@ pub use grid::{
 
 use rarog_css::{
     AlignContent, AlignItems, AlignSelf, ComputedStyle, FlexDirection, FlexWrap, JustifyContent,
-    StyleSet, VerticalAlign, computed_style_with_parent,
+    JustifySelf, StyleSet, VerticalAlign, computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
@@ -3018,6 +3018,15 @@ impl FragmentBuilder {
         let mut fragments = Vec::with_capacity(nodes.len());
         for (child, placement) in nodes.into_iter().zip(&layout.items) {
             let style = child.style;
+            let inline_alignment = grid_inline_self_alignment(style.justify_self);
+            let block_alignment =
+                grid_block_self_alignment(style.align_self, container.style.align_items);
+            if (style.width.is_none() && inline_alignment != GridSelfAlignment::Stretch)
+                || (style.height.is_none() && block_alignment != GridSelfAlignment::Stretch)
+            {
+                return (Vec::new(), explicit_content_size);
+            }
+
             let horizontal_noncontent =
                 style.padding.horizontal() + style.border_width.horizontal();
             let vertical_noncontent = style.padding.vertical() + style.border_width.vertical();
@@ -3039,12 +3048,31 @@ impl FragmentBuilder {
                 .unwrap_or_else(|| {
                     clamp_used_dimension(stretch_content_height, style.min_height, style.max_height)
                 });
+            let border_width = content_width + horizontal_noncontent;
+            let border_height = content_height + vertical_noncontent;
+            let margin_box_width = border_width + style.margin.horizontal();
+            let margin_box_height = border_height + style.margin.vertical();
+            let margin_box_x = aligned_grid_item_origin(
+                placement.area.origin.x,
+                placement.area.size.width,
+                margin_box_width,
+                inline_alignment,
+            );
+            let margin_box_y = aligned_grid_item_origin(
+                placement.area.origin.y,
+                placement.area.size.height,
+                margin_box_height,
+                block_alignment,
+            );
 
             let child_containing_block = ContainingBlock {
-                origin: placement.area.origin,
+                origin: Point {
+                    x: margin_box_x,
+                    y: margin_box_y,
+                },
                 available: placement.area.size,
             };
-            let mut child_y = placement.area.origin.y + style.margin.top;
+            let mut child_y = margin_box_y + style.margin.top;
             let fragment = if style.display_grid {
                 self.layout_grid_box_with_content_size(
                     child,
@@ -3569,6 +3597,54 @@ impl FragmentBuilder {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GridSelfAlignment {
+    Stretch,
+    Start,
+    End,
+    Center,
+}
+
+fn grid_inline_self_alignment(justify_self: JustifySelf) -> GridSelfAlignment {
+    match justify_self {
+        JustifySelf::Auto | JustifySelf::Stretch => GridSelfAlignment::Stretch,
+        JustifySelf::Start => GridSelfAlignment::Start,
+        JustifySelf::End => GridSelfAlignment::End,
+        JustifySelf::Center => GridSelfAlignment::Center,
+    }
+}
+
+fn grid_block_self_alignment(
+    align_self: AlignSelf,
+    container_align_items: AlignItems,
+) -> GridSelfAlignment {
+    match align_self {
+        AlignSelf::Auto => match container_align_items {
+            AlignItems::Stretch => GridSelfAlignment::Stretch,
+            AlignItems::FlexStart => GridSelfAlignment::Start,
+            AlignItems::FlexEnd => GridSelfAlignment::End,
+            AlignItems::Center => GridSelfAlignment::Center,
+        },
+        AlignSelf::Stretch => GridSelfAlignment::Stretch,
+        AlignSelf::FlexStart => GridSelfAlignment::Start,
+        AlignSelf::FlexEnd => GridSelfAlignment::End,
+        AlignSelf::Center => GridSelfAlignment::Center,
+    }
+}
+
+fn aligned_grid_item_origin(
+    area_origin: f32,
+    area_size: f32,
+    margin_box_size: f32,
+    alignment: GridSelfAlignment,
+) -> f32 {
+    match alignment {
+        GridSelfAlignment::Stretch | GridSelfAlignment::Start => area_origin,
+        GridSelfAlignment::End => area_origin + area_size - margin_box_size,
+        GridSelfAlignment::Center => area_origin + (area_size - margin_box_size) / 2.0,
+    }
+}
+
 fn stretched_flex_item_content_height(style: ComputedStyle, line_cross_size: f32) -> f32 {
     let outer_noncontent =
         style.margin.vertical() + style.border_width.vertical() + style.padding.vertical();
@@ -4082,6 +4158,170 @@ mod tests {
                 width: 48.0,
                 height: 20.0
             }
+        );
+    }
+
+    #[test]
+    fn css_grid_item_self_alignment_positions_explicit_size_inside_area() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element(
+                "div",
+                Some("width:20px;height:10px;justify-self:center;align-self:center"),
+            ),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box, Rect::new(20.0, 15.0, 20.0, 10.0));
+    }
+
+    #[test]
+    fn css_grid_item_end_alignment_preserves_physical_margins() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element(
+                "div",
+                Some(
+                    "width:20px;height:10px;margin:2px 3px 4px 5px;justify-self:end;align-self:end",
+                ),
+            ),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.margin_box, Rect::new(32.0, 24.0, 28.0, 16.0));
+        assert_eq!(item.boxes.border_box, Rect::new(37.0, 26.0, 20.0, 10.0));
+    }
+
+    #[test]
+    fn css_grid_align_items_is_the_default_for_align_self_auto() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;grid-template-columns:60px;grid-template-rows:40px;align-items:end",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("width:20px;height:10px;justify-self:start")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box, Rect::new(0.0, 30.0, 20.0, 10.0));
+    }
+
+    #[test]
+    fn css_grid_auto_size_still_stretches_by_default() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box, Rect::new(0.0, 0.0, 60.0, 40.0));
+    }
+
+    #[test]
+    fn css_grid_non_stretch_auto_size_remains_fail_closed() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:grid;grid-template-columns:60px;grid-template-rows:40px"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("justify-self:center;align-self:center")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+
+        assert!(output.fragments.root.children[0].children.is_empty());
+        assert_eq!(
+            output.fragments.root.children[0]
+                .boxes
+                .content_box
+                .size
+                .height,
+            40.0
         );
     }
 
