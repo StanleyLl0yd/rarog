@@ -680,14 +680,21 @@ pub fn layout_single_line_flex_row_with_item_alignments(
     let mut logical_main_offset = 0.0_f32;
     let mut max_cross_size = 0.0_f32;
     let mut placements = Vec::with_capacity(items.len());
-    let physical_main_end = finite_add(origin.x, available_size.width)?;
+    let physical_main_end = if options.main_reverse() && !items.is_empty() {
+        Some(finite_add(origin.x, available_size.width)?)
+    } else {
+        None
+    };
 
     for (index, item) in items.iter().enumerate() {
         validate_item(*item)?;
 
         let border_x = if options.main_reverse() {
             let from_end = finite_add(logical_main_offset, item.margin.right)?;
-            let border_end = finite_add(physical_main_end, -from_end)?;
+            let border_end = finite_add(
+                physical_main_end.expect("reverse non-empty rows have a physical main end"),
+                -from_end,
+            )?;
             finite_add(border_end, -item.base_size.width)?
         } else {
             let outer_start = finite_add(origin.x, logical_main_offset)?;
