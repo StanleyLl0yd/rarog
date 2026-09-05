@@ -1067,25 +1067,24 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         "gap" => push_gap_shorthand(output, value, important),
         "align-content" => {
             let value = value.trim();
-            let value = if value.eq_ignore_ascii_case("stretch")
-                || value.eq_ignore_ascii_case("normal")
-            {
-                Some(AlignContent::Stretch)
-            } else if value.eq_ignore_ascii_case("flex-start") {
-                Some(AlignContent::FlexStart)
-            } else if value.eq_ignore_ascii_case("flex-end") {
-                Some(AlignContent::FlexEnd)
-            } else if value.eq_ignore_ascii_case("center") {
-                Some(AlignContent::Center)
-            } else if value.eq_ignore_ascii_case("space-between") {
-                Some(AlignContent::SpaceBetween)
-            } else if value.eq_ignore_ascii_case("space-around") {
-                Some(AlignContent::SpaceAround)
-            } else if value.eq_ignore_ascii_case("space-evenly") {
-                Some(AlignContent::SpaceEvenly)
-            } else {
-                None
-            };
+            let value =
+                if value.eq_ignore_ascii_case("stretch") || value.eq_ignore_ascii_case("normal") {
+                    Some(AlignContent::Stretch)
+                } else if value.eq_ignore_ascii_case("flex-start") {
+                    Some(AlignContent::FlexStart)
+                } else if value.eq_ignore_ascii_case("flex-end") {
+                    Some(AlignContent::FlexEnd)
+                } else if value.eq_ignore_ascii_case("center") {
+                    Some(AlignContent::Center)
+                } else if value.eq_ignore_ascii_case("space-between") {
+                    Some(AlignContent::SpaceBetween)
+                } else if value.eq_ignore_ascii_case("space-around") {
+                    Some(AlignContent::SpaceAround)
+                } else if value.eq_ignore_ascii_case("space-evenly") {
+                    Some(AlignContent::SpaceEvenly)
+                } else {
+                    None
+                };
             if let Some(value) = value {
                 output.push(Declaration {
                     property: PropertyId::AlignContent,
