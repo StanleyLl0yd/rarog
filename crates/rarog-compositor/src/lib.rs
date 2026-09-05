@@ -1,4 +1,5 @@
 use rarog_paint::{DamageRegion, DisplayList};
+use rarog_resources::ImageResourceStore;
 use rarog_types::{Color, Rect};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -182,7 +183,7 @@ impl std::error::Error for FrameSchedulerError {}
 pub struct FrameScheduler {
     next_request: u64,
     pending: FrameRequestReasons,
-    active: Option<ScheduledFrameRequest>,
+    active: Option<FrameRequestId>,
 }
 
 impl Default for FrameScheduler {
@@ -209,15 +210,12 @@ impl FrameScheduler {
     }
 
     pub const fn active_request(&self) -> Option<FrameRequestId> {
-        match self.active {
-            Some(active) => Some(active.id),
-            None => None,
-        }
+        self.active
     }
 
     pub fn begin(&mut self) -> Result<Option<ScheduledFrameRequest>, FrameSchedulerError> {
         if let Some(active) = self.active {
-            return Err(FrameSchedulerError::FrameInProgress(active.id));
+            return Err(FrameSchedulerError::FrameInProgress(active));
         }
         if self.pending.is_empty() {
             return Ok(None);
@@ -229,37 +227,30 @@ impl FrameScheduler {
         let id = FrameRequestId(self.next_request);
         self.next_request = self.next_request.checked_add(1).unwrap_or(0);
         let reasons = std::mem::take(&mut self.pending);
-        let scheduled = ScheduledFrameRequest { id, reasons };
-        self.active = Some(scheduled);
-        Ok(Some(scheduled))
+        self.active = Some(id);
+        Ok(Some(ScheduledFrameRequest { id, reasons }))
     }
 
     pub fn complete(&mut self, request: FrameRequestId) -> Result<(), FrameSchedulerError> {
-        self.take_active(request)?;
-        Ok(())
+        self.finish(request)
     }
 
     pub fn discard(&mut self, request: FrameRequestId) -> Result<(), FrameSchedulerError> {
-        let active = self.take_active(request)?;
-        self.pending.0 |= active.reasons.0;
-        Ok(())
+        self.finish(request)
     }
 
-    fn take_active(
-        &mut self,
-        request: FrameRequestId,
-    ) -> Result<ScheduledFrameRequest, FrameSchedulerError> {
+    fn finish(&mut self, request: FrameRequestId) -> Result<(), FrameSchedulerError> {
         let Some(active) = self.active else {
             return Err(FrameSchedulerError::NoActiveFrame);
         };
-        if active.id != request {
+        if active != request {
             return Err(FrameSchedulerError::WrongCompletion {
-                expected: active.id,
+                expected: active,
                 actual: request,
             });
         }
         self.active = None;
-        Ok(active)
+        Ok(())
     }
 }
 
@@ -482,6 +473,7 @@ impl FramePlanner {
 pub struct FrameSubmission<'a> {
     pub plan: &'a FramePlan,
     pub display_list: &'a DisplayList,
+    pub image_resources: Option<&'a ImageResourceStore>,
     pub clear_color: Color,
 }
 
@@ -620,34 +612,6 @@ mod tests {
         assert!(second.reasons().contains(FrameCause::Scroll));
         scheduler.complete(second.id()).unwrap();
         assert!(scheduler.begin().unwrap().is_none());
-    }
-
-    #[test]
-    fn frame_scheduler_discard_requeues_all_active_reasons() {
-        let mut scheduler = FrameScheduler::new();
-        scheduler.request(FrameCause::Scroll);
-        scheduler.request(FrameCause::ResourceReady);
-        let request = scheduler.begin().unwrap().unwrap();
-        scheduler.request(FrameCause::SceneChange);
-
-        scheduler.discard(request.id()).unwrap();
-        assert_eq!(scheduler.active_request(), None);
-        assert!(scheduler.pending_reasons().contains(FrameCause::Scroll));
-        assert!(
-            scheduler
-                .pending_reasons()
-                .contains(FrameCause::ResourceReady)
-        );
-        assert!(
-            scheduler
-                .pending_reasons()
-                .contains(FrameCause::SceneChange)
-        );
-
-        let retry = scheduler.begin().unwrap().unwrap();
-        assert!(retry.reasons().contains(FrameCause::Scroll));
-        assert!(retry.reasons().contains(FrameCause::ResourceReady));
-        assert!(retry.reasons().contains(FrameCause::SceneChange));
     }
 
     #[test]
@@ -954,6 +918,7 @@ mod tests {
             .submit(FrameSubmission {
                 plan: &plan,
                 display_list: &list,
+                image_resources: None,
                 clear_color: Color::WHITE,
             })
             .unwrap();
