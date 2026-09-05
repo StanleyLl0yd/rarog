@@ -1,5 +1,5 @@
 use rarog_paint::{DamageRegion, DisplayList};
-use rarog_types::Rect;
+use rarog_types::{Color, Rect};
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -293,6 +293,7 @@ impl FramePlanner {
 pub struct FrameSubmission<'a> {
     pub plan: &'a FramePlan,
     pub display_list: &'a DisplayList,
+    pub clear_color: Color,
 }
 
 pub trait CompositorBackend {
@@ -639,6 +640,7 @@ mod tests {
             fn submit(&mut self, frame: FrameSubmission<'_>) -> Result<(), Self::Error> {
                 assert_eq!(frame.plan.surface(), surface());
                 assert_eq!(frame.display_list.len(), 0);
+                assert_eq!(frame.clear_color, Color::WHITE);
                 self.submitted += 1;
                 Ok(())
             }
@@ -662,6 +664,7 @@ mod tests {
             .submit(FrameSubmission {
                 plan: &plan,
                 display_list: &list,
+                clear_color: Color::WHITE,
             })
             .unwrap();
         assert_eq!(backend.submitted, 1);
