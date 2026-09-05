@@ -231,7 +231,7 @@ impl FramePlanner {
                 FrameUpdateKind::Full,
                 FrameCause::Resize,
                 vec![surface_rect],
-            )
+            ),
             Some(_) if normalized_damage.is_empty() => return Ok(FrameDecision::Noop),
             Some(_) if normalized_damage.len() == 1 && normalized_damage[0] == surface_rect => {
                 (FrameUpdateKind::Full, cause, normalized_damage)
