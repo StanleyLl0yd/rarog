@@ -575,12 +575,7 @@ impl ViewFrame<'_> {
         surface_size: SurfaceSize,
         cause: FrameCause,
     ) -> Result<FrameDecision, FramePlannerError> {
-        planner.plan(
-            surface_size,
-            self.display_list_revision,
-            self.damage,
-            cause,
-        )
+        planner.plan(surface_size, self.display_list_revision, self.damage, cause)
     }
 }
 
