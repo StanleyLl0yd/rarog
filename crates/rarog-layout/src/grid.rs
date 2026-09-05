@@ -46,6 +46,53 @@ impl GridItem {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridPlacementRequest {
+    pub node: LayoutNodeId,
+    pub row_start: Option<usize>,
+    pub column_start: Option<usize>,
+    pub row_span: usize,
+    pub column_span: usize,
+}
+
+impl GridPlacementRequest {
+    pub const fn auto(node: LayoutNodeId) -> Self {
+        Self {
+            node,
+            row_start: None,
+            column_start: None,
+            row_span: 1,
+            column_span: 1,
+        }
+    }
+
+    pub const fn explicit(node: LayoutNodeId, row_start: usize, column_start: usize) -> Self {
+        Self {
+            node,
+            row_start: Some(row_start),
+            column_start: Some(column_start),
+            row_span: 1,
+            column_span: 1,
+        }
+    }
+
+    pub const fn with_row_start(mut self, row_start: Option<usize>) -> Self {
+        self.row_start = row_start;
+        self
+    }
+
+    pub const fn with_column_start(mut self, column_start: Option<usize>) -> Self {
+        self.column_start = column_start;
+        self
+    }
+
+    pub const fn with_span(mut self, row_span: usize, column_span: usize) -> Self {
+        self.row_span = row_span;
+        self.column_span = column_span;
+        self
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GridPlacement {
     pub node: LayoutNodeId,
@@ -68,6 +115,7 @@ pub enum GridLayoutError {
     InvalidGap { axis: GridAxis },
     InvalidSpan { node: LayoutNodeId },
     PlacementOutsideGrid { node: LayoutNodeId },
+    AutoPlacementUnavailable { node: LayoutNodeId },
     GeometryOverflow,
 }
 
@@ -102,6 +150,12 @@ impl fmt::Display for GridLayoutError {
                     "grid item {node:?} placement is outside the explicit grid"
                 )
             }
+            Self::AutoPlacementUnavailable { node } => {
+                write!(
+                    formatter,
+                    "grid item {node:?} cannot be auto-placed in the explicit grid"
+                )
+            }
             Self::GeometryOverflow => formatter.write_str("grid geometry overflowed finite bounds"),
         }
     }
@@ -132,24 +186,9 @@ pub fn layout_fixed_grid(
 
     let mut placements = Vec::with_capacity(items.len());
     for item in items {
-        if item.row_span == 0 || item.column_span == 0 {
-            return Err(GridLayoutError::InvalidSpan { node: item.node });
-        }
-        let row_end = item
-            .row_start
-            .checked_add(item.row_span)
-            .ok_or(GridLayoutError::PlacementOutsideGrid { node: item.node })?;
-        let column_end = item
-            .column_start
-            .checked_add(item.column_span)
-            .ok_or(GridLayoutError::PlacementOutsideGrid { node: item.node })?;
-        if row_end > rows.len()
-            || column_end > columns.len()
-            || item.row_start >= rows.len()
-            || item.column_start >= columns.len()
-        {
-            return Err(GridLayoutError::PlacementOutsideGrid { node: item.node });
-        }
+        validate_concrete_item(*item, columns.len(), rows.len())?;
+        let row_end = item.row_start + item.row_span;
+        let column_end = item.column_start + item.column_span;
 
         let x = finite_add(origin.x, column_offsets[item.column_start])?;
         let y = finite_add(origin.y, row_offsets[item.row_start])?;
@@ -170,6 +209,170 @@ pub fn layout_fixed_grid(
         overflows_columns_axis: content_width > available_size.width,
         overflows_rows_axis: content_height > available_size.height,
     })
+}
+
+pub fn layout_fixed_grid_with_auto_placement(
+    origin: Point,
+    available_size: Size,
+    columns: &[GridTrack],
+    rows: &[GridTrack],
+    column_gap: f32,
+    row_gap: f32,
+    requests: &[GridPlacementRequest],
+) -> Result<GridLayout, GridLayoutError> {
+    layout_fixed_grid(
+        origin,
+        available_size,
+        columns,
+        rows,
+        column_gap,
+        row_gap,
+        &[],
+    )?;
+
+    let mut resolved = vec![None; requests.len()];
+    let mut occupied = Vec::new();
+
+    for (index, request) in requests.iter().copied().enumerate() {
+        validate_request_span(request)?;
+        if let (Some(row_start), Some(column_start)) =
+            (request.row_start, request.column_start)
+        {
+            let item = GridItem::new(request.node, row_start, column_start)
+                .with_span(request.row_span, request.column_span);
+            validate_concrete_item(item, columns.len(), rows.len())?;
+            resolved[index] = Some(item);
+            occupied.push(item);
+        }
+    }
+
+    for (index, request) in requests.iter().copied().enumerate() {
+        if resolved[index].is_some() {
+            continue;
+        }
+        let Some(item) = find_auto_placement(request, columns.len(), rows.len(), &occupied) else {
+            return Err(GridLayoutError::AutoPlacementUnavailable { node: request.node });
+        };
+        resolved[index] = Some(item);
+        occupied.push(item);
+    }
+
+    let items = resolved
+        .into_iter()
+        .map(|item| item.expect("every grid placement request was resolved"))
+        .collect::<Vec<_>>();
+    layout_fixed_grid(
+        origin,
+        available_size,
+        columns,
+        rows,
+        column_gap,
+        row_gap,
+        &items,
+    )
+}
+
+fn validate_request_span(request: GridPlacementRequest) -> Result<(), GridLayoutError> {
+    if request.row_span == 0 || request.column_span == 0 {
+        Err(GridLayoutError::InvalidSpan { node: request.node })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_concrete_item(
+    item: GridItem,
+    column_count: usize,
+    row_count: usize,
+) -> Result<(), GridLayoutError> {
+    if item.row_span == 0 || item.column_span == 0 {
+        return Err(GridLayoutError::InvalidSpan { node: item.node });
+    }
+    let row_end = item
+        .row_start
+        .checked_add(item.row_span)
+        .ok_or(GridLayoutError::PlacementOutsideGrid { node: item.node })?;
+    let column_end = item
+        .column_start
+        .checked_add(item.column_span)
+        .ok_or(GridLayoutError::PlacementOutsideGrid { node: item.node })?;
+    if row_end > row_count
+        || column_end > column_count
+        || item.row_start >= row_count
+        || item.column_start >= column_count
+    {
+        Err(GridLayoutError::PlacementOutsideGrid { node: item.node })
+    } else {
+        Ok(())
+    }
+}
+
+fn find_auto_placement(
+    request: GridPlacementRequest,
+    column_count: usize,
+    row_count: usize,
+    occupied: &[GridItem],
+) -> Option<GridItem> {
+    match (request.row_start, request.column_start) {
+        (Some(row), None) => {
+            for column in 0..column_count {
+                let candidate = GridItem::new(request.node, row, column)
+                    .with_span(request.row_span, request.column_span);
+                if candidate_fits(candidate, column_count, row_count, occupied) {
+                    return Some(candidate);
+                }
+            }
+        }
+        (None, Some(column)) => {
+            for row in 0..row_count {
+                let candidate = GridItem::new(request.node, row, column)
+                    .with_span(request.row_span, request.column_span);
+                if candidate_fits(candidate, column_count, row_count, occupied) {
+                    return Some(candidate);
+                }
+            }
+        }
+        (None, None) => {
+            for row in 0..row_count {
+                for column in 0..column_count {
+                    let candidate = GridItem::new(request.node, row, column)
+                        .with_span(request.row_span, request.column_span);
+                    if candidate_fits(candidate, column_count, row_count, occupied) {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
+        (Some(_), Some(_)) => unreachable!("fully explicit requests resolve before auto-placement"),
+    }
+    None
+}
+
+fn candidate_fits(
+    candidate: GridItem,
+    column_count: usize,
+    row_count: usize,
+    occupied: &[GridItem],
+) -> bool {
+    if validate_concrete_item(candidate, column_count, row_count).is_err() {
+        return false;
+    }
+    !occupied
+        .iter()
+        .copied()
+        .any(|item| grid_items_overlap(candidate, item))
+}
+
+fn grid_items_overlap(left: GridItem, right: GridItem) -> bool {
+    let left_row_end = left.row_start + left.row_span;
+    let left_column_end = left.column_start + left.column_span;
+    let right_row_end = right.row_start + right.row_span;
+    let right_column_end = right.column_start + right.column_span;
+
+    left.row_start < right_row_end
+        && right.row_start < left_row_end
+        && left.column_start < right_column_end
+        && right.column_start < left_column_end
 }
 
 fn validate_origin(origin: Point) -> Result<(), GridLayoutError> {
@@ -323,6 +526,135 @@ mod tests {
         assert_eq!(layout.items[0].node, LayoutNodeId(7));
         assert_eq!(layout.items[1].node, LayoutNodeId(3));
         assert_eq!(layout.items[0].area, layout.items[1].area);
+    }
+
+    #[test]
+    fn auto_placement_fills_explicit_grid_in_row_major_source_order() {
+        let layout = layout_fixed_grid_with_auto_placement(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &[track(20.0), track(30.0)],
+            &[track(10.0), track(15.0)],
+            0.0,
+            0.0,
+            &[
+                GridPlacementRequest::auto(LayoutNodeId(1)),
+                GridPlacementRequest::auto(LayoutNodeId(2)),
+                GridPlacementRequest::auto(LayoutNodeId(3)),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].area, Rect::new(0.0, 0.0, 20.0, 10.0));
+        assert_eq!(layout.items[1].area, Rect::new(20.0, 0.0, 30.0, 10.0));
+        assert_eq!(layout.items[2].area, Rect::new(0.0, 10.0, 20.0, 15.0));
+    }
+
+    #[test]
+    fn explicit_placements_reserve_cells_before_auto_items() {
+        let layout = layout_fixed_grid_with_auto_placement(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &[track(20.0), track(30.0)],
+            &[track(10.0), track(15.0)],
+            0.0,
+            0.0,
+            &[
+                GridPlacementRequest::auto(LayoutNodeId(1)),
+                GridPlacementRequest::explicit(LayoutNodeId(2), 0, 0),
+                GridPlacementRequest::auto(LayoutNodeId(3)),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].area, Rect::new(20.0, 0.0, 30.0, 10.0));
+        assert_eq!(layout.items[1].area, Rect::new(0.0, 0.0, 20.0, 10.0));
+        assert_eq!(layout.items[2].area, Rect::new(0.0, 10.0, 20.0, 15.0));
+        assert_eq!(layout.items[0].node, LayoutNodeId(1));
+        assert_eq!(layout.items[1].node, LayoutNodeId(2));
+        assert_eq!(layout.items[2].node, LayoutNodeId(3));
+    }
+
+    #[test]
+    fn auto_placement_honors_spans_and_partially_explicit_axes() {
+        let layout = layout_fixed_grid_with_auto_placement(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &[track(10.0), track(20.0), track(30.0)],
+            &[track(15.0), track(25.0)],
+            0.0,
+            0.0,
+            &[
+                GridPlacementRequest::explicit(LayoutNodeId(1), 0, 0),
+                GridPlacementRequest::auto(LayoutNodeId(2)).with_span(1, 2),
+                GridPlacementRequest::auto(LayoutNodeId(3))
+                    .with_row_start(Some(1)),
+                GridPlacementRequest::auto(LayoutNodeId(4))
+                    .with_column_start(Some(2)),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[1].area, Rect::new(10.0, 0.0, 50.0, 15.0));
+        assert_eq!(layout.items[2].area, Rect::new(0.0, 15.0, 10.0, 25.0));
+        assert_eq!(layout.items[3].area, Rect::new(30.0, 15.0, 30.0, 25.0));
+    }
+
+    #[test]
+    fn explicit_overlap_is_allowed_but_blocks_auto_placement() {
+        let layout = layout_fixed_grid_with_auto_placement(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &[track(20.0), track(20.0)],
+            &[track(20.0)],
+            0.0,
+            0.0,
+            &[
+                GridPlacementRequest::explicit(LayoutNodeId(1), 0, 0),
+                GridPlacementRequest::explicit(LayoutNodeId(2), 0, 0),
+                GridPlacementRequest::auto(LayoutNodeId(3)),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].area, layout.items[1].area);
+        assert_eq!(layout.items[2].area, Rect::new(20.0, 0.0, 20.0, 20.0));
+    }
+
+    #[test]
+    fn auto_placement_fails_when_explicit_tracks_have_no_fitting_area() {
+        assert_eq!(
+            layout_fixed_grid_with_auto_placement(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 100.0,
+                },
+                &[track(20.0)],
+                &[track(20.0)],
+                0.0,
+                0.0,
+                &[
+                    GridPlacementRequest::explicit(LayoutNodeId(1), 0, 0),
+                    GridPlacementRequest::auto(LayoutNodeId(2)),
+                ],
+            ),
+            Err(GridLayoutError::AutoPlacementUnavailable {
+                node: LayoutNodeId(2),
+            })
+        );
     }
 
     #[test]
