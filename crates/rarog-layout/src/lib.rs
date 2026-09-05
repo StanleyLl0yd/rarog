@@ -1,14 +1,15 @@
 mod flex;
 
 pub use flex::{
-    FlexContentAlignment, FlexCrossAlignment, FlexLayoutError, FlexMainAlignment,
-    FlexMultiLineLayout, FlexRowItem, FlexRowLayout, FlexRowOptions, FlexRowPlacement,
-    FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
+    FlexContentAlignment, FlexCrossAlignment, FlexCrossSizeMetadata, FlexLayoutError,
+    FlexMainAlignment, FlexMultiLineLayout, FlexRowItem, FlexRowLayout, FlexRowOptions,
+    FlexRowPlacement, FlexibleFlexRowItem, layout_flexible_single_line_flex_row,
     layout_flexible_single_line_flex_row_with_alignment,
     layout_flexible_single_line_flex_row_with_item_alignments,
     layout_flexible_single_line_flex_row_with_options, layout_single_line_flex_row,
     layout_single_line_flex_row_with_alignment, layout_single_line_flex_row_with_item_alignments,
-    layout_single_line_flex_row_with_options, layout_wrapped_flexible_rows_with_item_alignments,
+    layout_single_line_flex_row_with_options, layout_wrapped_flexible_rows_with_cross_metadata,
+    layout_wrapped_flexible_rows_with_item_alignments,
 };
 
 use rarog_css::{
@@ -2924,6 +2925,54 @@ impl FragmentBuilder {
         }
     }
 
+    fn measure_flex_item_natural_border_height(
+        &self,
+        child: &LayoutNode,
+        available_height: f32,
+        resolved_border_width: f32,
+    ) -> Option<f32> {
+        let mut builder = FragmentBuilder {
+            next_id: 0,
+            margin_profiles: self.margin_profiles.clone(),
+        };
+        let containing_block = ContainingBlock {
+            origin: Point { x: 0.0, y: 0.0 },
+            available: Size {
+                width: resolved_border_width + child.style.margin.horizontal(),
+                height: available_height,
+            },
+        };
+        let content_width = (resolved_border_width
+            - child.style.padding.horizontal()
+            - child.style.border_width.horizontal())
+        .max(0.0);
+        let mut cursor_y = child.style.margin.top;
+        let fragment = if child.style.display_flex {
+            builder.layout_flex_box_with_content_size(
+                child,
+                containing_block,
+                &mut cursor_y,
+                Some(content_width),
+                None,
+            )
+        } else {
+            builder.layout_box_with_content_size(
+                child,
+                containing_block,
+                &mut cursor_y,
+                Some(content_width),
+                None,
+            )
+        };
+        fragment
+            .boxes
+            .border_box
+            .size
+            .height
+            .is_finite()
+            .then_some(fragment.boxes.border_box.size.height)
+    }
+
     fn layout_flex_children(
         &mut self,
         container: &LayoutNode,
@@ -2933,7 +2982,7 @@ impl FragmentBuilder {
         let mut nodes = Vec::new();
         let mut items = Vec::new();
         let mut item_cross_alignments = Vec::new();
-        let mut content_height_overrides = Vec::new();
+        let mut item_cross_metadata = Vec::new();
         let container_cross_alignment = flex_cross_alignment(container.style.align_items);
 
         for child in &container.children {
@@ -2951,10 +3000,9 @@ impl FragmentBuilder {
                         item_cross_alignment.unwrap_or(container_cross_alignment);
                     let content_height = if let Some(height) = style.height {
                         clamp_used_dimension(height, style.min_height, style.max_height)
+                    } else if container.style.flex_wrap == FlexWrap::Wrap {
+                        clamp_used_dimension(0.0, style.min_height, style.max_height)
                     } else {
-                        if container.style.flex_wrap == FlexWrap::Wrap {
-                            return (Vec::new(), 0.0);
-                        }
                         if effective_cross_alignment != FlexCrossAlignment::Stretch {
                             return (Vec::new(), 0.0);
                         }
@@ -2965,6 +3013,8 @@ impl FragmentBuilder {
                     };
                     let horizontal_noncontent =
                         style.padding.horizontal() + style.border_width.horizontal();
+                    let vertical_noncontent =
+                        style.padding.vertical() + style.border_width.vertical();
                     let effective_min_width = style.min_width.unwrap_or(0.0);
                     let effective_max_width = style
                         .max_width
@@ -2975,9 +3025,7 @@ impl FragmentBuilder {
                                 child.id,
                                 Size {
                                     width: content_width + horizontal_noncontent,
-                                    height: content_height
-                                        + style.padding.vertical()
-                                        + style.border_width.vertical(),
+                                    height: content_height + vertical_noncontent,
                                 },
                                 style.margin,
                             ),
@@ -2990,7 +3038,18 @@ impl FragmentBuilder {
                         ),
                     );
                     item_cross_alignments.push(item_cross_alignment);
-                    content_height_overrides.push(style.height.is_none().then_some(content_height));
+                    let effective_min_height = style.min_height.unwrap_or(0.0);
+                    let effective_max_height = style
+                        .max_height
+                        .map(|maximum| maximum.max(effective_min_height));
+                    item_cross_metadata.push(if style.height.is_none() {
+                        FlexCrossSizeMetadata::auto(
+                            effective_min_height + vertical_noncontent,
+                            effective_max_height.map(|maximum| maximum + vertical_noncontent),
+                        )
+                    } else {
+                        FlexCrossSizeMetadata::default()
+                    });
                     nodes.push(child);
                 }
                 LayoutNodeKind::Text(_) | LayoutNodeKind::Root => {
@@ -3007,6 +3066,34 @@ impl FragmentBuilder {
             .with_cross_gap(container.style.row_gap)
             .with_cross_size(definite_cross_size)
             .with_cross_size_limits(container.style.min_height, container.style.max_height);
+
+        if container.style.flex_wrap == FlexWrap::Wrap
+            && item_cross_metadata.iter().any(|metadata| metadata.auto)
+        {
+            let Ok(provisional) = layout_wrapped_flexible_rows_with_item_alignments(
+                containing_block.origin,
+                containing_block.available,
+                &items,
+                options,
+                &item_cross_alignments,
+            ) else {
+                return (Vec::new(), 0.0);
+            };
+            for (index, (child, placement)) in nodes.iter().zip(&provisional.items).enumerate() {
+                if !item_cross_metadata[index].auto {
+                    continue;
+                }
+                let Some(border_height) = self.measure_flex_item_natural_border_height(
+                    child,
+                    containing_block.available.height,
+                    placement.border_box.size.width,
+                ) else {
+                    return (Vec::new(), 0.0);
+                };
+                items[index].item.base_size.height = border_height;
+            }
+        }
+
         let (placements, natural_content_height) = match container.style.flex_wrap {
             FlexWrap::NoWrap => {
                 let Ok(row) = layout_flexible_single_line_flex_row_with_item_alignments(
@@ -3021,12 +3108,13 @@ impl FragmentBuilder {
                 (row.items, row.content_size.height)
             }
             FlexWrap::Wrap => {
-                let Ok(layout) = layout_wrapped_flexible_rows_with_item_alignments(
+                let Ok(layout) = layout_wrapped_flexible_rows_with_cross_metadata(
                     containing_block.origin,
                     containing_block.available,
                     &items,
                     options,
                     &item_cross_alignments,
+                    &item_cross_metadata,
                 ) else {
                     return (Vec::new(), 0.0);
                 };
@@ -3035,11 +3123,7 @@ impl FragmentBuilder {
         };
 
         let mut fragments = Vec::with_capacity(nodes.len());
-        for ((child, placement), content_height_override) in nodes
-            .into_iter()
-            .zip(placements.iter())
-            .zip(content_height_overrides)
-        {
+        for (child, placement) in nodes.into_iter().zip(placements.iter()) {
             let child_containing_block = ContainingBlock {
                 origin: Point {
                     x: placement.border_box.origin.x - child.style.margin.left,
@@ -3054,6 +3138,12 @@ impl FragmentBuilder {
                 - child.style.padding.horizontal()
                 - child.style.border_width.horizontal())
             .max(0.0);
+            let content_height_override = child.style.height.is_none().then(|| {
+                (placement.border_box.size.height
+                    - child.style.padding.vertical()
+                    - child.style.border_width.vertical())
+                .max(0.0)
+            });
             let mut child_y = placement.border_box.origin.y;
             let fragment = if child.style.display_flex {
                 self.layout_flex_box_with_content_size(
@@ -3745,7 +3835,7 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_auto_height_items_remain_fail_closed_until_per_line_stretch_sizing() {
+    fn wrapped_auto_height_items_measure_content_and_stretch_per_line() {
         let mut doc = Document::new();
         let container = doc
             .append_new(
@@ -3756,7 +3846,12 @@ mod tests {
                 ),
             )
             .unwrap();
-        doc.append_new(container, element("div", Some("width:60px")))
+        let first = doc
+            .append_new(container, element("div", Some("width:60px")))
+            .unwrap();
+        doc.append_new(first, element("div", Some("height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
             .unwrap();
 
         let output = layout_document(
@@ -3766,9 +3861,121 @@ mod tests {
                 height: 200.0,
             },
         );
+        let container = &output.fragments.root.children[0];
+        let first = &container.children[0];
 
-        assert!(output.fragments.root.children[0].children.is_empty());
+        assert_eq!(first.boxes.border_box.size.height, 25.0);
+        assert_eq!(first.children[0].boxes.border_box.size.height, 10.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 25.0);
     }
+
+    #[test]
+    fn wrapped_auto_height_non_stretch_item_keeps_measured_height() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-wrap:wrap;width:100px;height:60px;align-items:center",
+                    ),
+                ),
+            )
+            .unwrap();
+        let first = doc
+            .append_new(container, element("div", Some("width:60px")))
+            .unwrap();
+        doc.append_new(first, element("div", Some("height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.size.height, 10.0);
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 7.5);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 32.5);
+    }
+
+    #[test]
+    fn wrapped_auto_height_stretch_respects_item_max_height() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:flex;flex-wrap:wrap;width:100px;height:60px"),
+                ),
+            )
+            .unwrap();
+        let first = doc
+            .append_new(
+                container,
+                element("div", Some("width:60px;max-height:15px")),
+            )
+            .unwrap();
+        doc.append_new(first, element("div", Some("height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let first = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(first.boxes.content_box.size.height, 15.0);
+        assert_eq!(first.boxes.border_box.size.height, 15.0);
+    }
+
+    #[test]
+    fn auto_height_wrapped_container_uses_measured_item_cross_sizes() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element("div", Some("display:flex;flex-wrap:wrap;width:100px")),
+            )
+            .unwrap();
+        let first = doc
+            .append_new(container, element("div", Some("width:60px")))
+            .unwrap();
+        doc.append_new(first, element("div", Some("height:10px")))
+            .unwrap();
+        let second = doc
+            .append_new(container, element("div", Some("width:60px")))
+            .unwrap();
+        doc.append_new(second, element("div", Some("height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.boxes.content_box.size.height, 30.0);
+        assert_eq!(container.children[0].boxes.border_box.size.height, 10.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 10.0);
+        assert_eq!(container.children[1].boxes.border_box.size.height, 20.0);
+    }
+
 
     #[test]
     fn definite_height_flex_container_stretches_auto_height_item() {
