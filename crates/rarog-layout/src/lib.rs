@@ -3837,6 +3837,40 @@ mod tests {
     }
 
     #[test]
+    fn row_reverse_and_wrap_reverse_compose_without_reordering_fragments() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:flex;flex-direction:row-reverse;flex-wrap:wrap-reverse;width:100px;height:60px;align-content:flex-start",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:10px")))
+            .unwrap();
+        doc.append_new(container, element("div", Some("width:60px;height:20px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box.origin.x, 40.0);
+        assert_eq!(container.children[0].boxes.border_box.origin.y, 50.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.x, 40.0);
+        assert_eq!(container.children[1].boxes.border_box.origin.y, 30.0);
+    }
+
+    #[test]
     fn flex_wrap_reverse_stacks_lines_from_the_container_cross_end() {
         let mut doc = Document::new();
         let container = doc
