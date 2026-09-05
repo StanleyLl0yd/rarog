@@ -3019,7 +3019,8 @@ impl FragmentBuilder {
         for (child, placement) in nodes.into_iter().zip(&layout.items) {
             let style = child.style;
             let inline_alignment = grid_inline_self_alignment(style.justify_self);
-            let block_alignment = grid_block_self_alignment(style.align_self);
+            let block_alignment =
+                grid_block_self_alignment(style.align_self, container.style.align_items);
             if (style.width.is_none() && inline_alignment != GridSelfAlignment::Stretch)
                 || (style.height.is_none() && block_alignment != GridSelfAlignment::Stretch)
             {
@@ -3613,9 +3614,18 @@ fn grid_inline_self_alignment(justify_self: JustifySelf) -> GridSelfAlignment {
     }
 }
 
-fn grid_block_self_alignment(align_self: AlignSelf) -> GridSelfAlignment {
+fn grid_block_self_alignment(
+    align_self: AlignSelf,
+    container_align_items: AlignItems,
+) -> GridSelfAlignment {
     match align_self {
-        AlignSelf::Auto | AlignSelf::Stretch => GridSelfAlignment::Stretch,
+        AlignSelf::Auto => match container_align_items {
+            AlignItems::Stretch => GridSelfAlignment::Stretch,
+            AlignItems::FlexStart => GridSelfAlignment::Start,
+            AlignItems::FlexEnd => GridSelfAlignment::End,
+            AlignItems::Center => GridSelfAlignment::Center,
+        },
+        AlignSelf::Stretch => GridSelfAlignment::Stretch,
         AlignSelf::FlexStart => GridSelfAlignment::Start,
         AlignSelf::FlexEnd => GridSelfAlignment::End,
         AlignSelf::Center => GridSelfAlignment::Center,
@@ -4224,6 +4234,38 @@ mod tests {
 
         assert_eq!(item.boxes.margin_box, Rect::new(32.0, 24.0, 28.0, 16.0));
         assert_eq!(item.boxes.border_box, Rect::new(37.0, 26.0, 20.0, 10.0));
+    }
+
+    #[test]
+    fn css_grid_align_items_is_the_default_for_align_self_auto() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;grid-template-columns:60px;grid-template-rows:40px;align-items:end",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("width:20px;height:10px;justify-self:start")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box, Rect::new(0.0, 30.0, 20.0, 10.0));
     }
 
     #[test]
