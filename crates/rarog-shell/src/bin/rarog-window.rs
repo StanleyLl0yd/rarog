@@ -2,7 +2,8 @@
 mod windows {
     use pollster::block_on;
     use rarog_compositor::{
-        CompositorBackend, FrameDecision, FramePlanner, FrameSubmission, SurfaceId, SurfaceSize,
+        CompositorBackend, FrameCause, FrameDecision, FramePlanner, FrameSubmission, SurfaceId,
+        SurfaceSize,
     };
     use rarog_compositor_wgpu::WgpuCompositorBackend;
     use rarog_engine::{BaseUrl, Engine, View, ViewOptions};
@@ -84,6 +85,7 @@ mod windows {
         }
 
         fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn Error>> {
+            self.view.request_frame(FrameCause::Resize);
             let (Some(gpu), Some(surface)) = (self.gpu.as_ref(), self.surface.as_mut()) else {
                 return Ok(());
             };
@@ -155,24 +157,52 @@ mod windows {
                 return Ok(());
             }
 
-            let surface_size = SurfaceSize::new(size.width, size.height);
+            let Some(request) = self.view.begin_frame_request()? else {
+                self.present_retained()?;
+                return Ok(());
+            };
+            let request_id = request.id();
+            let outcome = self.render_scheduled(size.width, size.height, request.primary_cause());
+
+            match outcome {
+                Ok(PresentationOutcome::Presented) => {
+                    self.view.complete_frame_request(request_id)?;
+                    Ok(())
+                }
+                Ok(PresentationOutcome::Deferred) => {
+                    self.view.discard_frame_request(request_id)?;
+                    Ok(())
+                }
+                Err(error) => {
+                    self.view.discard_frame_request(request_id)?;
+                    Err(error)
+                }
+            }
+        }
+
+        fn render_scheduled(
+            &mut self,
+            width: u32,
+            height: u32,
+            cause: FrameCause,
+        ) -> Result<PresentationOutcome, Box<dyn Error>> {
+            let surface_size = SurfaceSize::new(width, height);
             let frame = self.view.render(Size {
-                width: size.width as f32,
-                height: size.height as f32,
+                width: width as f32,
+                height: height as f32,
             })?;
-            let decision = frame.plan_compositor_frame(&mut self.planner, surface_size)?;
+            let decision =
+                frame.plan_compositor_frame_with_cause(&mut self.planner, surface_size, cause)?;
 
             match decision {
-                FrameDecision::Noop => {
-                    self.present_retained()?;
-                }
-                FrameDecision::Suspended { .. } => {}
+                FrameDecision::Noop => self.present_retained(),
+                FrameDecision::Suspended { .. } => Ok(PresentationOutcome::Deferred),
                 FrameDecision::Submit(plan) => {
                     let id = plan.id();
                     {
                         let Some(backend) = self.backend.as_mut() else {
                             self.planner.discard(id)?;
-                            return Ok(());
+                            return Ok(PresentationOutcome::Deferred);
                         };
                         if let Err(error) = backend.submit(FrameSubmission {
                             plan: &plan,
@@ -186,12 +216,17 @@ mod windows {
                     }
 
                     match self.present_retained()? {
-                        PresentationOutcome::Presented => self.planner.complete(id)?,
-                        PresentationOutcome::Deferred => self.planner.discard(id)?,
+                        PresentationOutcome::Presented => {
+                            self.planner.complete(id)?;
+                            Ok(PresentationOutcome::Presented)
+                        }
+                        PresentationOutcome::Deferred => {
+                            self.planner.discard(id)?;
+                            Ok(PresentationOutcome::Deferred)
+                        }
                     }
                 }
             }
-            Ok(())
         }
 
         fn fail(&self, event_loop: &ActiveEventLoop, error: &dyn std::fmt::Display) {
