@@ -777,10 +777,7 @@ mod tests {
         assert_eq!(store.image(pending), None);
 
         let ready = store
-            .resolve(
-                id,
-                DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap(),
-            )
+            .resolve(id, DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap())
             .unwrap();
         assert_eq!(ready.revision(), 1);
         assert_eq!(store.current_ref(id), Some(ready));
