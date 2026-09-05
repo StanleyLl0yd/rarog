@@ -1259,6 +1259,51 @@ mod tests {
     }
 
     #[test]
+    fn pending_image_revision_paints_nothing_until_ready_refresh() {
+        let mut images = ImageResourceStore::default();
+        let id = images.reserve().unwrap();
+        let pending = images.revision_ref(id).unwrap();
+        let mut list = DisplayList::try_from_parts(
+            vec![DisplayItemId::test(1)],
+            vec![DisplayCommand::DrawImage {
+                rect: Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: pending,
+            }],
+        )
+        .unwrap();
+        let mut framebuffer = Framebuffer::new(
+            Size {
+                width: 2.0,
+                height: 2.0,
+            },
+            Color::TRANSPARENT,
+        );
+        framebuffer.rasterize_with_images(&list, &images);
+        let blank_hash = framebuffer.stable_hash64();
+
+        let ready = images
+            .resolve(id, DecodedImage::try_new(1, 1, vec![Color::WHITE]).unwrap())
+            .unwrap();
+        let refresh = list.refresh_image_resource(ready);
+        assert_eq!(refresh.updated_commands, 1);
+        assert_eq!(refresh.damage.rects, vec![Rect::new(0.0, 0.0, 2.0, 2.0)]);
+
+        framebuffer.rasterize_damage_with_images(
+            &list,
+            &refresh.damage,
+            Color::TRANSPARENT,
+            &images,
+        );
+        assert_ne!(framebuffer.stable_hash64(), blank_hash);
+        assert!(
+            framebuffer
+                .pixels
+                .iter()
+                .all(|pixel| *pixel == Color::WHITE)
+        );
+    }
+
+    #[test]
     fn refresh_image_resource_updates_matching_commands_and_reports_damage() {
         let mut images = ImageResourceStore::default();
         let id = images.reserve().unwrap();

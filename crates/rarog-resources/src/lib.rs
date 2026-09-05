@@ -691,6 +691,14 @@ impl ImageResourceStore {
         Ok(())
     }
 
+    pub fn revision_ref(&self, id: ImageResourceId) -> Option<ImageResourceRef> {
+        let entry = self.entries.get(&id)?;
+        Some(ImageResourceRef {
+            id,
+            revision: entry.revision,
+        })
+    }
+
     pub fn current_ref(&self, id: ImageResourceId) -> Option<ImageResourceRef> {
         let entry = self.entries.get(&id)?;
         matches!(entry.state, StoredImageState::Ready(_)).then_some(ImageResourceRef {
@@ -757,6 +765,24 @@ mod tests {
             vec![color; usize::try_from(u64::from(width) * u64::from(height)).unwrap()],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn revision_ref_snapshots_pending_state_without_exposing_pixels() {
+        let mut store = ImageResourceStore::default();
+        let id = store.reserve().unwrap();
+        let pending = store.revision_ref(id).unwrap();
+        assert_eq!(pending.revision(), 0);
+        assert_eq!(store.current_ref(id), None);
+        assert_eq!(store.image(pending), None);
+
+        let ready = store
+            .resolve(id, DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap())
+            .unwrap();
+        assert_eq!(ready.revision(), 1);
+        assert_eq!(store.current_ref(id), Some(ready));
+        assert_eq!(store.image(pending), None);
+        assert!(store.image(ready).is_some());
     }
 
     #[test]
