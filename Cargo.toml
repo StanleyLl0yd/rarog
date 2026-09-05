@@ -15,6 +15,7 @@ members = [
   "crates/rarog-script",
   "crates/rarog-script-spidermonkey",
   "crates/rarog-scheduler",
+  "crates/rarog-scroll",
   "crates/rarog-paint",
   "crates/rarog-compositor",
   "crates/rarog-compositor-wgpu",
