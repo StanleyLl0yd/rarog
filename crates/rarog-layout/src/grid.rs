@@ -79,16 +79,28 @@ impl fmt::Display for GridLayoutError {
                 formatter.write_str("grid available size must be finite and non-negative")
             }
             Self::InvalidTrackSize { axis, index } => {
-                write!(formatter, "grid {axis:?} track {index} must be finite and non-negative")
+                write!(
+                    formatter,
+                    "grid {axis:?} track {index} must be finite and non-negative"
+                )
             }
             Self::InvalidGap { axis } => {
-                write!(formatter, "grid {axis:?} gap must be finite and non-negative")
+                write!(
+                    formatter,
+                    "grid {axis:?} gap must be finite and non-negative"
+                )
             }
             Self::InvalidSpan { node } => {
-                write!(formatter, "grid item {node:?} must span at least one row and column")
+                write!(
+                    formatter,
+                    "grid item {node:?} must span at least one row and column"
+                )
             }
             Self::PlacementOutsideGrid { node } => {
-                write!(formatter, "grid item {node:?} placement is outside the explicit grid")
+                write!(
+                    formatter,
+                    "grid item {node:?} placement is outside the explicit grid"
+                )
             }
             Self::GeometryOverflow => formatter.write_str("grid geometry overflowed finite bounds"),
         }
@@ -141,10 +153,7 @@ pub fn layout_fixed_grid(
 
         let x = finite_add(origin.x, column_offsets[item.column_start])?;
         let y = finite_add(origin.y, row_offsets[item.row_start])?;
-        let width = span_extent(
-            &columns[item.column_start..column_end],
-            column_gap,
-        )?;
+        let width = span_extent(&columns[item.column_start..column_end], column_gap)?;
         let height = span_extent(&rows[item.row_start..row_end], row_gap)?;
         placements.push(GridPlacement {
             node: item.node,
@@ -172,10 +181,7 @@ fn validate_origin(origin: Point) -> Result<(), GridLayoutError> {
 }
 
 fn validate_available_size(size: Size) -> Result<(), GridLayoutError> {
-    if size.width.is_finite()
-        && size.height.is_finite()
-        && size.width >= 0.0
-        && size.height >= 0.0
+    if size.width.is_finite() && size.height.is_finite() && size.width >= 0.0 && size.height >= 0.0
     {
         Ok(())
     } else {
@@ -263,14 +269,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            layout.items[0].area,
-            Rect::new(5.0, 7.0, 40.0, 20.0)
-        );
-        assert_eq!(
-            layout.items[1].area,
-            Rect::new(55.0, 32.0, 60.0, 30.0)
-        );
+        assert_eq!(layout.items[0].area, Rect::new(5.0, 7.0, 40.0, 20.0));
+        assert_eq!(layout.items[1].area, Rect::new(55.0, 32.0, 60.0, 30.0));
         assert_eq!(
             layout.content_size,
             Size {
@@ -298,10 +298,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            layout.items[0].area,
-            Rect::new(0.0, 0.0, 54.0, 31.0)
-        );
+        assert_eq!(layout.items[0].area, Rect::new(0.0, 0.0, 54.0, 31.0));
     }
 
     #[test]
