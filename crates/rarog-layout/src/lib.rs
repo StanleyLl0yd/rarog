@@ -3004,33 +3004,23 @@ impl FragmentBuilder {
             let horizontal_noncontent =
                 style.padding.horizontal() + style.border_width.horizontal();
             let vertical_noncontent = style.padding.vertical() + style.border_width.vertical();
-            let stretch_content_width = (placement.area.size.width
-                - style.margin.horizontal()
-                - horizontal_noncontent)
-                .max(0.0);
-            let stretch_content_height = (placement.area.size.height
-                - style.margin.vertical()
-                - vertical_noncontent)
-                .max(0.0);
+            let stretch_content_width =
+                (placement.area.size.width - style.margin.horizontal() - horizontal_noncontent)
+                    .max(0.0);
+            let stretch_content_height =
+                (placement.area.size.height - style.margin.vertical() - vertical_noncontent)
+                    .max(0.0);
             let content_width = style
                 .width
                 .map(|width| clamp_used_dimension(width, style.min_width, style.max_width))
                 .unwrap_or_else(|| {
-                    clamp_used_dimension(
-                        stretch_content_width,
-                        style.min_width,
-                        style.max_width,
-                    )
+                    clamp_used_dimension(stretch_content_width, style.min_width, style.max_width)
                 });
             let content_height = style
                 .height
                 .map(|height| clamp_used_dimension(height, style.min_height, style.max_height))
                 .unwrap_or_else(|| {
-                    clamp_used_dimension(
-                        stretch_content_height,
-                        style.min_height,
-                        style.max_height,
-                    )
+                    clamp_used_dimension(stretch_content_height, style.min_height, style.max_height)
                 });
 
             let child_containing_block = ContainingBlock {
@@ -3973,8 +3963,14 @@ mod tests {
 
         assert!(output.tree.root.children[0].style.display_grid);
         assert_eq!(container.boxes.content_box.size.height, 55.0);
-        assert_eq!(container.children[0].boxes.border_box, Rect::new(0.0, 0.0, 40.0, 20.0));
-        assert_eq!(container.children[1].boxes.border_box, Rect::new(50.0, 25.0, 60.0, 30.0));
+        assert_eq!(
+            container.children[0].boxes.border_box,
+            Rect::new(0.0, 0.0, 40.0, 20.0)
+        );
+        assert_eq!(
+            container.children[1].boxes.border_box,
+            Rect::new(50.0, 25.0, 60.0, 30.0)
+        );
     }
 
     #[test]
@@ -4017,8 +4013,14 @@ mod tests {
         let container = &output.fragments.root.children[0];
 
         assert_eq!(container.children.len(), 2);
-        assert_eq!(container.children[0].boxes.border_box, Rect::new(0.0, 0.0, 54.0, 31.0));
-        assert_eq!(container.children[1].boxes.border_box, Rect::new(0.0, 0.0, 20.0, 10.0));
+        assert_eq!(
+            container.children[0].boxes.border_box,
+            Rect::new(0.0, 0.0, 54.0, 31.0)
+        );
+        assert_eq!(
+            container.children[1].boxes.border_box,
+            Rect::new(0.0, 0.0, 20.0, 10.0)
+        );
     }
 
     #[test]
@@ -4057,7 +4059,13 @@ mod tests {
 
         assert_eq!(item.boxes.margin_box, Rect::new(0.0, 0.0, 60.0, 30.0));
         assert_eq!(item.boxes.border_box, Rect::new(5.0, 2.0, 52.0, 24.0));
-        assert_eq!(item.boxes.content_box.size, Size { width: 48.0, height: 20.0 });
+        assert_eq!(
+            item.boxes.content_box.size,
+            Size {
+                width: 48.0,
+                height: 20.0
+            }
+        );
     }
 
     #[test]
@@ -4068,9 +4076,7 @@ mod tests {
                 doc.root(),
                 element(
                     "div",
-                    Some(
-                        "display:grid;grid-template-columns:40px;grid-template-rows:20px",
-                    ),
+                    Some("display:grid;grid-template-columns:40px;grid-template-rows:20px"),
                 ),
             )
             .unwrap();
