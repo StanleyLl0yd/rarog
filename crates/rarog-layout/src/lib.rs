@@ -14,7 +14,8 @@ pub use flex::{
 };
 
 pub use grid::{
-    GridAxis, GridItem, GridLayout, GridLayoutError, GridPlacement, GridTrack, layout_fixed_grid,
+    GridAxis, GridItem, GridLayout, GridLayoutError, GridPlacement, GridPlacementRequest, GridTrack,
+    layout_fixed_grid, layout_fixed_grid_with_auto_placement,
 };
 
 use rarog_css::{
@@ -2970,26 +2971,29 @@ impl FragmentBuilder {
         let explicit_content_size = explicit_grid.content_size;
 
         let mut nodes = Vec::new();
-        let mut items = Vec::new();
+        let mut requests = Vec::new();
         for child in &container.children {
             match &child.kind {
                 LayoutNodeKind::Text(run) if run.text.chars().all(char::is_whitespace) => continue,
                 LayoutNodeKind::Box => {
-                    let (Some(row_start), Some(column_start)) =
-                        (child.style.grid_row_start, child.style.grid_column_start)
-                    else {
-                        return (Vec::new(), explicit_content_size);
-                    };
-                    items.push(
-                        GridItem::new(
-                            child.id,
-                            usize::from(row_start) - 1,
-                            usize::from(column_start) - 1,
-                        )
-                        .with_span(
-                            usize::from(child.style.grid_row_span),
-                            usize::from(child.style.grid_column_span),
-                        ),
+                    requests.push(
+                        GridPlacementRequest::auto(child.id)
+                            .with_row_start(
+                                child
+                                    .style
+                                    .grid_row_start
+                                    .map(|start| usize::from(start) - 1),
+                            )
+                            .with_column_start(
+                                child
+                                    .style
+                                    .grid_column_start
+                                    .map(|start| usize::from(start) - 1),
+                            )
+                            .with_span(
+                                usize::from(child.style.grid_row_span),
+                                usize::from(child.style.grid_column_span),
+                            ),
                     );
                     nodes.push(child);
                 }
@@ -2999,16 +3003,16 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(layout) = layout_fixed_grid(
+        let Ok(layout) = layout_fixed_grid_with_auto_placement(
             containing_block.origin,
             containing_block.available,
             &columns,
             &rows,
             container.style.column_gap,
             container.style.row_gap,
-            &items,
+            &requests,
         ) else {
-            return (Vec::new(), Size::default());
+            return (Vec::new(), explicit_content_size);
         };
 
         let mut fragments = Vec::with_capacity(nodes.len());
@@ -4082,7 +4086,124 @@ mod tests {
     }
 
     #[test]
-    fn css_grid_without_explicit_item_placement_fails_closed() {
+    fn css_grid_auto_places_items_in_row_major_order() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;grid-template-columns:40px 60px;grid-template-rows:20px 30px",
+                    ),
+                ),
+            )
+            .unwrap();
+        for _ in 0..3 {
+            doc.append_new(container, element("div", None)).unwrap();
+        }
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box, Rect::new(0.0, 0.0, 40.0, 20.0));
+        assert_eq!(container.children[1].boxes.border_box, Rect::new(40.0, 0.0, 60.0, 20.0));
+        assert_eq!(container.children[2].boxes.border_box, Rect::new(0.0, 20.0, 40.0, 30.0));
+    }
+
+    #[test]
+    fn css_grid_explicit_items_reserve_cells_before_auto_items() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;grid-template-columns:40px 60px;grid-template-rows:20px 30px",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("grid-row-start:1;grid-column-start:1")),
+        )
+        .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[0].boxes.border_box, Rect::new(40.0, 0.0, 60.0, 20.0));
+        assert_eq!(container.children[1].boxes.border_box, Rect::new(0.0, 0.0, 40.0, 20.0));
+        assert_eq!(container.children[2].boxes.border_box, Rect::new(0.0, 20.0, 40.0, 30.0));
+    }
+
+    #[test]
+    fn css_grid_auto_placement_honors_partial_axis_and_spans() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;grid-template-columns:20px 30px 40px;grid-template-rows:10px 15px",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("grid-row-start:1;grid-column-start:1")),
+        )
+        .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("grid-column-end:span 2")),
+        )
+        .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("grid-row-start:2")),
+        )
+        .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("grid-column-start:3")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let container = &output.fragments.root.children[0];
+
+        assert_eq!(container.children[1].boxes.border_box, Rect::new(20.0, 0.0, 70.0, 10.0));
+        assert_eq!(container.children[2].boxes.border_box, Rect::new(0.0, 10.0, 20.0, 15.0));
+        assert_eq!(container.children[3].boxes.border_box, Rect::new(50.0, 10.0, 40.0, 15.0));
+    }
+
+    #[test]
+    fn css_grid_auto_placement_fails_closed_when_explicit_grid_is_full() {
         let mut doc = Document::new();
         let container = doc
             .append_new(
@@ -4093,8 +4214,12 @@ mod tests {
                 ),
             )
             .unwrap();
-        doc.append_new(container, element("div", Some("width:10px;height:10px")))
-            .unwrap();
+        doc.append_new(
+            container,
+            element("div", Some("grid-row-start:1;grid-column-start:1")),
+        )
+        .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
 
         let output = layout_document(
             &doc,
@@ -4103,11 +4228,12 @@ mod tests {
                 height: 200.0,
             },
         );
-
         let container = &output.fragments.root.children[0];
+
         assert!(container.children.is_empty());
         assert_eq!(container.boxes.content_box.size.height, 20.0);
     }
+
 
     #[test]
     fn flex_direction_row_reverse_places_source_order_items_from_the_right() {
