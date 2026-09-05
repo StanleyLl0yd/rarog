@@ -2956,6 +2956,19 @@ impl FragmentBuilder {
             .map(GridTrack::new)
             .collect::<Vec<_>>();
 
+        let Ok(explicit_grid) = layout_fixed_grid(
+            containing_block.origin,
+            containing_block.available,
+            &columns,
+            &rows,
+            container.style.column_gap,
+            container.style.row_gap,
+            &[],
+        ) else {
+            return (Vec::new(), explicit_content_size);
+        };
+        let explicit_content_size = explicit_grid.content_size;
+
         let mut nodes = Vec::new();
         let mut items = Vec::new();
         for child in &container.children {
@@ -2965,7 +2978,7 @@ impl FragmentBuilder {
                     let (Some(row_start), Some(column_start)) =
                         (child.style.grid_row_start, child.style.grid_column_start)
                     else {
-                        return (Vec::new(), Size::default());
+                        return (Vec::new(), explicit_content_size);
                     };
                     items.push(
                         GridItem::new(
@@ -2981,7 +2994,7 @@ impl FragmentBuilder {
                     nodes.push(child);
                 }
                 LayoutNodeKind::Text(_) | LayoutNodeKind::Root => {
-                    return (Vec::new(), Size::default());
+                    return (Vec::new(), explicit_content_size);
                 }
             }
         }
@@ -4091,7 +4104,9 @@ mod tests {
             },
         );
 
-        assert!(output.fragments.root.children[0].children.is_empty());
+        let container = &output.fragments.root.children[0];
+        assert!(container.children.is_empty());
+        assert_eq!(container.boxes.content_box.size.height, 20.0);
     }
 
     #[test]
