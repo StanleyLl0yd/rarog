@@ -691,10 +691,9 @@ pub fn layout_single_line_flex_row_with_item_alignments(
 
         let border_x = if options.main_reverse() {
             let from_end = finite_add(logical_main_offset, item.margin.right)?;
-            let border_end = finite_add(
-                physical_main_end.expect("reverse non-empty rows have a physical main end"),
-                -from_end,
-            )?;
+            let physical_main_end =
+                physical_main_end.ok_or(FlexLayoutError::GeometryOverflow)?;
+            let border_end = finite_add(physical_main_end, -from_end)?;
             finite_add(border_end, -item.base_size.width)?
         } else {
             let outer_start = finite_add(origin.x, logical_main_offset)?;
@@ -1817,6 +1816,29 @@ mod tests {
         .unwrap();
         assert_eq!(between.items[0].border_box.origin.x, 50.0);
         assert_eq!(between.items[1].border_box.origin.x, 0.0);
+    }
+
+    #[test]
+    fn main_reverse_uses_flexed_widths_before_reverse_placement() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 1.0, 1.0),
+            FlexibleFlexRowItem::new(item(2, 20.0, 10.0), 1.0, 1.0),
+        ];
+        let layout = layout_flexible_single_line_flex_row_with_options(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 20.0,
+            },
+            &items,
+            FlexRowOptions::default().with_main_reverse(true),
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.width, 50.0);
+        assert_eq!(layout.items[1].border_box.size.width, 50.0);
+        assert_eq!(layout.items[0].border_box.origin.x, 50.0);
+        assert_eq!(layout.items[1].border_box.origin.x, 0.0);
     }
 
     #[test]
