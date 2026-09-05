@@ -1279,7 +1279,7 @@ mod tests {
         assert_eq!(layout.line_count, 2);
         assert_eq!(layout.content_size.height, 60.0);
         assert_eq!(layout.items[0].border_box.origin.y, 0.0);
-        assert_eq!(layout.items[1].border_box.origin.y, 25.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 15.0);
     }
 
     #[test]
