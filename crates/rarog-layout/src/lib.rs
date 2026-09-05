@@ -2965,7 +2965,7 @@ impl FragmentBuilder {
             container.style.row_gap,
             &[],
         ) else {
-            return (Vec::new(), explicit_content_size);
+            return (Vec::new(), Size::default());
         };
         let explicit_content_size = explicit_grid.content_size;
 
