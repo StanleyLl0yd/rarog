@@ -791,6 +791,23 @@ mod tests {
     }
 
     #[test]
+    fn view_frame_exposes_its_render_session_image_store() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div>Rarog</div>", BaseUrl::about_blank())
+            .unwrap();
+
+        let frame = view
+            .render(Size {
+                width: 160.0,
+                height: 90.0,
+            })
+            .unwrap();
+
+        assert!(frame.image_resources.is_empty());
+    }
+
+    #[test]
     fn view_frames_drive_compositor_planning_from_retained_revisions() {
         let engine = Engine::builder().build().unwrap();
         let mut view = engine.create_view(ViewOptions::default()).unwrap();
