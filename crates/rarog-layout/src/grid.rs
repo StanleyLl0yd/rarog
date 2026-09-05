@@ -235,9 +235,7 @@ pub fn layout_fixed_grid_with_auto_placement(
 
     for (index, request) in requests.iter().copied().enumerate() {
         validate_request_span(request)?;
-        if let (Some(row_start), Some(column_start)) =
-            (request.row_start, request.column_start)
-        {
+        if let (Some(row_start), Some(column_start)) = (request.row_start, request.column_start) {
             let item = GridItem::new(request.node, row_start, column_start)
                 .with_span(request.row_span, request.column_span);
             validate_concrete_item(item, columns.len(), rows.len())?;
@@ -596,10 +594,8 @@ mod tests {
             &[
                 GridPlacementRequest::explicit(LayoutNodeId(1), 0, 0),
                 GridPlacementRequest::auto(LayoutNodeId(2)).with_span(1, 2),
-                GridPlacementRequest::auto(LayoutNodeId(3))
-                    .with_row_start(Some(1)),
-                GridPlacementRequest::auto(LayoutNodeId(4))
-                    .with_column_start(Some(2)),
+                GridPlacementRequest::auto(LayoutNodeId(3)).with_row_start(Some(1)),
+                GridPlacementRequest::auto(LayoutNodeId(4)).with_column_start(Some(2)),
             ],
         )
         .unwrap();
