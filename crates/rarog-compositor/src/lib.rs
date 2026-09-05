@@ -87,19 +87,16 @@ impl FrameRequestReasons {
     }
 
     pub fn primary_cause(self) -> Option<FrameCause> {
-        for cause in [
+        [
             FrameCause::Initial,
             FrameCause::Resize,
             FrameCause::ResourceReady,
             FrameCause::Scroll,
             FrameCause::SceneChange,
             FrameCause::Explicit,
-        ] {
-            if self.contains(cause) {
-                return Some(cause);
-            }
-        }
-        None
+        ]
+        .into_iter()
+        .find(|&cause| self.contains(cause))
     }
 
     fn insert(&mut self, cause: FrameCause) {
