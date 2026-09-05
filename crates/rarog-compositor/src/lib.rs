@@ -86,7 +86,7 @@ impl FrameRequestReasons {
         self.0 & frame_cause_bit(cause) != 0
     }
 
-    pub const fn primary_cause(self) -> Option<FrameCause> {
+    pub fn primary_cause(self) -> Option<FrameCause> {
         for cause in [
             FrameCause::Initial,
             FrameCause::Resize,
@@ -142,7 +142,7 @@ impl ScheduledFrameRequest {
         self.reasons
     }
 
-    pub const fn primary_cause(self) -> FrameCause {
+    pub fn primary_cause(self) -> FrameCause {
         match self.reasons.primary_cause() {
             Some(cause) => cause,
             None => FrameCause::Explicit,
