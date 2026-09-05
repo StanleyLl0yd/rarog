@@ -51,6 +51,23 @@ impl FlexibleFlexRowItem {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FlexCrossSizeMetadata {
+    pub auto: bool,
+    pub min_size: f32,
+    pub max_size: Option<f32>,
+}
+
+impl FlexCrossSizeMetadata {
+    pub const fn auto(min_size: f32, max_size: Option<f32>) -> Self {
+        Self {
+            auto: true,
+            min_size,
+            max_size,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FlexMainAlignment {
     #[default]
@@ -214,6 +231,8 @@ pub enum FlexLayoutError {
     InvalidGap,
     InvalidCrossSize,
     InvalidItemAlignmentCount { expected: usize, actual: usize },
+    InvalidItemCrossSizeMetadataCount { expected: usize, actual: usize },
+    InvalidItemCrossSizeMetadata { node: LayoutNodeId },
     InvalidItemSize { node: LayoutNodeId },
     InvalidMargin { node: LayoutNodeId },
     NegativeMarginUnsupported { node: LayoutNodeId },
@@ -238,6 +257,14 @@ impl fmt::Display for FlexLayoutError {
             Self::InvalidItemAlignmentCount { expected, actual } => write!(
                 formatter,
                 "flex item alignment count mismatch: expected {expected}, got {actual}"
+            ),
+            Self::InvalidItemCrossSizeMetadataCount { expected, actual } => write!(
+                formatter,
+                "flex item cross-size metadata count mismatch: expected {expected}, got {actual}"
+            ),
+            Self::InvalidItemCrossSizeMetadata { node } => write!(
+                formatter,
+                "flex item {node:?} has invalid cross-size metadata"
             ),
             Self::InvalidItemSize { node } => {
                 write!(formatter, "flex item {node:?} has an invalid base size")
@@ -416,10 +443,29 @@ pub fn layout_wrapped_flexible_rows_with_item_alignments(
     options: FlexRowOptions,
     item_cross_alignments: &[Option<FlexCrossAlignment>],
 ) -> Result<FlexMultiLineLayout, FlexLayoutError> {
+    layout_wrapped_flexible_rows_with_cross_metadata(
+        origin,
+        available_size,
+        items,
+        options,
+        item_cross_alignments,
+        &[],
+    )
+}
+
+pub fn layout_wrapped_flexible_rows_with_cross_metadata(
+    origin: Point,
+    available_size: Size,
+    items: &[FlexibleFlexRowItem],
+    options: FlexRowOptions,
+    item_cross_alignments: &[Option<FlexCrossAlignment>],
+    item_cross_metadata: &[FlexCrossSizeMetadata],
+) -> Result<FlexMultiLineLayout, FlexLayoutError> {
     validate_origin(origin)?;
     validate_size(available_size).map_err(|_| FlexLayoutError::InvalidAvailableSize)?;
     validate_options(options)?;
     validate_item_alignment_count(items.len(), item_cross_alignments)?;
+    validate_cross_size_metadata(items, item_cross_metadata)?;
 
     if items.is_empty() {
         let used_cross_size = resolve_cross_size(0.0, options)?;
@@ -509,12 +555,25 @@ pub fn layout_wrapped_flexible_rows_with_item_alignments(
             &item_cross_alignments[start..end]
         };
         let line_cross_size = finite_add(line_cross_sizes[line_index], stretch)?;
-        let row = layout_flexible_single_line_flex_row_with_item_alignments(
+        let mut row = layout_flexible_single_line_flex_row_with_item_alignments(
             Point { x: origin.x, y },
             available_size,
             &items[start..end],
             natural_line_options.with_cross_size(Some(line_cross_size)),
             alignments,
+        )?;
+        let cross_metadata = if item_cross_metadata.is_empty() {
+            &[][..]
+        } else {
+            &item_cross_metadata[start..end]
+        };
+        apply_auto_cross_stretch(
+            &mut row,
+            &items[start..end],
+            line_cross_size,
+            options.cross_alignment(),
+            alignments,
+            cross_metadata,
         )?;
         placements.extend(row.items);
         y = finite_add(y, line_cross_size)?;
@@ -674,6 +733,52 @@ fn apply_cross_alignment(
     Ok(())
 }
 
+fn apply_auto_cross_stretch(
+    layout: &mut FlexRowLayout,
+    items: &[FlexibleFlexRowItem],
+    line_cross_size: f32,
+    container_alignment: FlexCrossAlignment,
+    item_cross_alignments: &[Option<FlexCrossAlignment>],
+    item_cross_metadata: &[FlexCrossSizeMetadata],
+) -> Result<(), FlexLayoutError> {
+    if item_cross_metadata.is_empty() {
+        return Ok(());
+    }
+
+    for (index, ((placement, flexible), metadata)) in layout
+        .items
+        .iter_mut()
+        .zip(items)
+        .zip(item_cross_metadata)
+        .enumerate()
+    {
+        if !metadata.auto {
+            continue;
+        }
+        let alignment = item_cross_alignments
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or(container_alignment);
+        if alignment != FlexCrossAlignment::Stretch {
+            continue;
+        }
+
+        let item = flexible.item;
+        let margins = finite_add(item.margin.top, item.margin.bottom)?;
+        let mut border_height = (line_cross_size - margins).max(0.0);
+        border_height = border_height.max(metadata.min_size);
+        if let Some(maximum) = metadata.max_size {
+            border_height = border_height.min(maximum.max(metadata.min_size));
+        }
+        if !border_height.is_finite() {
+            return Err(FlexLayoutError::GeometryOverflow);
+        }
+        placement.border_box.size.height = border_height;
+    }
+    Ok(())
+}
+
 fn resolve_cross_size(
     natural_cross_size: f32,
     options: FlexRowOptions,
@@ -774,6 +879,34 @@ fn apply_main_alignment(
         placement.border_box.origin.x = finite_add(placement.border_box.origin.x, accumulated_gap)?;
         if index + 1 < count {
             accumulated_gap = finite_add(accumulated_gap, gap)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_cross_size_metadata(
+    items: &[FlexibleFlexRowItem],
+    metadata: &[FlexCrossSizeMetadata],
+) -> Result<(), FlexLayoutError> {
+    if metadata.is_empty() {
+        return Ok(());
+    }
+    if metadata.len() != items.len() {
+        return Err(FlexLayoutError::InvalidItemCrossSizeMetadataCount {
+            expected: items.len(),
+            actual: metadata.len(),
+        });
+    }
+    for (item, metadata) in items.iter().zip(metadata) {
+        if !metadata.min_size.is_finite()
+            || metadata.min_size < 0.0
+            || metadata
+                .max_size
+                .is_some_and(|maximum| !maximum.is_finite() || maximum < metadata.min_size)
+        {
+            return Err(FlexLayoutError::InvalidItemCrossSizeMetadata {
+                node: item.item.node,
+            });
         }
     }
     Ok(())
@@ -1184,6 +1317,110 @@ mod tests {
         assert_eq!(layout.content_size.height, 50.0);
         assert_eq!(layout.items[0].border_box.origin.y, 20.0);
         assert_eq!(layout.items[1].border_box.origin.y, 30.0);
+    }
+
+    #[test]
+    fn wrapped_auto_cross_items_stretch_to_their_resolved_line() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_cross_metadata(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default().with_cross_size(Some(60.0)),
+            &[],
+            &[
+                FlexCrossSizeMetadata::auto(0.0, None),
+                FlexCrossSizeMetadata::default(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.height, 25.0);
+        assert_eq!(layout.items[1].border_box.size.height, 20.0);
+        assert_eq!(layout.items[1].border_box.origin.y, 25.0);
+    }
+
+    #[test]
+    fn wrapped_auto_cross_stretch_respects_border_box_limits() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 10.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_cross_metadata(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default().with_cross_size(Some(80.0)),
+            &[],
+            &[
+                FlexCrossSizeMetadata::auto(12.0, Some(20.0)),
+                FlexCrossSizeMetadata::default(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.height, 20.0);
+    }
+
+    #[test]
+    fn wrapped_auto_cross_non_stretch_keeps_measured_height() {
+        let items = [
+            FlexibleFlexRowItem::new(item(1, 60.0, 12.0), 0.0, 0.0),
+            FlexibleFlexRowItem::new(item(2, 60.0, 20.0), 0.0, 0.0),
+        ];
+        let layout = layout_wrapped_flexible_rows_with_cross_metadata(
+            Point::default(),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &items,
+            FlexRowOptions::default()
+                .with_cross_alignment(FlexCrossAlignment::Center)
+                .with_cross_size(Some(60.0)),
+            &[None, None],
+            &[
+                FlexCrossSizeMetadata::auto(0.0, None),
+                FlexCrossSizeMetadata::default(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(layout.items[0].border_box.size.height, 12.0);
+    }
+
+    #[test]
+    fn wrapped_cross_metadata_count_is_validated() {
+        let items = [FlexibleFlexRowItem::new(item(1, 20.0, 10.0), 0.0, 0.0)];
+        assert_eq!(
+            layout_wrapped_flexible_rows_with_cross_metadata(
+                Point::default(),
+                Size {
+                    width: 100.0,
+                    height: 100.0,
+                },
+                &items,
+                FlexRowOptions::default(),
+                &[],
+                &[
+                    FlexCrossSizeMetadata::default(),
+                    FlexCrossSizeMetadata::default(),
+                ],
+            ),
+            Err(FlexLayoutError::InvalidItemCrossSizeMetadataCount {
+                expected: 1,
+                actual: 2,
+            })
+        );
     }
 
     #[test]
