@@ -11,5 +11,8 @@ rarog-paint = { path = "../rarog-paint" }
 rarog-types = { path = "../rarog-types" }
 wgpu = { version = "=26.0.1", default-features = false, features = ["std", "wgsl"] }
 
+[dev-dependencies]
+rarog-resources = { path = "../rarog-resources" }
+
 [lints]
 workspace = true
