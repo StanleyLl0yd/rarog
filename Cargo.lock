@@ -2205,6 +2205,7 @@ name = "rarog-compositor"
 version = "0.1.0"
 dependencies = [
  "rarog-paint",
+ "rarog-resources",
  "rarog-types",
 ]
 
@@ -2214,6 +2215,7 @@ version = "0.1.0"
 dependencies = [
  "rarog-compositor",
  "rarog-paint",
+ "rarog-resources",
  "rarog-types",
  "wgpu",
 ]

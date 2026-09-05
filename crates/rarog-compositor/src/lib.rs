@@ -1,4 +1,5 @@
 use rarog_paint::{DamageRegion, DisplayList};
+use rarog_resources::ImageResourceStore;
 use rarog_types::{Color, Rect};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -482,6 +483,7 @@ impl FramePlanner {
 pub struct FrameSubmission<'a> {
     pub plan: &'a FramePlan,
     pub display_list: &'a DisplayList,
+    pub image_resources: Option<&'a ImageResourceStore>,
     pub clear_color: Color,
 }
 
@@ -954,6 +956,7 @@ mod tests {
             .submit(FrameSubmission {
                 plan: &plan,
                 display_list: &list,
+                image_resources: None,
                 clear_color: Color::WHITE,
             })
             .unwrap();

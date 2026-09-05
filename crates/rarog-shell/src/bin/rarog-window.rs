@@ -118,6 +118,7 @@ mod windows {
                     if let Err(error) = backend.submit(FrameSubmission {
                         plan: &plan,
                         display_list: frame.display_list,
+                        image_resources: None,
                         clear_color: frame.clear_color,
                     }) {
                         self.planner.discard(id)?;

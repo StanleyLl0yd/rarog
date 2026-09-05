@@ -339,7 +339,10 @@ fn update_cpu_stage(
                 },
                 frame.clear_color,
             )?;
-            framebuffer.rasterize(frame.display_list);
+            match frame.image_resources {
+                Some(images) => framebuffer.rasterize_with_images(frame.display_list, images),
+                None => framebuffer.rasterize(frame.display_list),
+            }
             *stage = Some(CpuStage { size, framebuffer });
         }
         FrameUpdateKind::Partial => {
@@ -347,13 +350,22 @@ fn update_cpu_stage(
                 .as_mut()
                 .filter(|retained| retained.size == size)
                 .ok_or(WgpuCompositorError::MissingRetainedFrame)?;
-            retained.framebuffer.rasterize_damage(
-                frame.display_list,
-                &DamageRegion {
-                    rects: frame.plan.damage().to_vec(),
-                },
-                frame.clear_color,
-            );
+            let damage = DamageRegion {
+                rects: frame.plan.damage().to_vec(),
+            };
+            match frame.image_resources {
+                Some(images) => retained.framebuffer.rasterize_damage_with_images(
+                    frame.display_list,
+                    &damage,
+                    frame.clear_color,
+                    images,
+                ),
+                None => retained.framebuffer.rasterize_damage(
+                    frame.display_list,
+                    &damage,
+                    frame.clear_color,
+                ),
+            }
         }
     }
     Ok(())
@@ -410,7 +422,8 @@ mod tests {
     use rarog_compositor::{
         DisplayListRevision, FrameCause, FrameDecision, FramePlanner, SurfaceId,
     };
-    use rarog_paint::DisplayList;
+    use rarog_paint::{DisplayCommand, DisplayItemId, DisplayList};
+    use rarog_resources::{DecodedImage, ImageResourceStore};
     use rarog_types::{Color, Rect};
 
     #[test]
@@ -437,6 +450,7 @@ mod tests {
             &FrameSubmission {
                 plan: &initial,
                 display_list: &list,
+                image_resources: None,
                 clear_color: Color::BLACK,
             },
         )
@@ -462,6 +476,7 @@ mod tests {
             &FrameSubmission {
                 plan: &partial,
                 display_list: &list,
+                image_resources: None,
                 clear_color: Color::WHITE,
             },
         )
@@ -475,6 +490,60 @@ mod tests {
         assert_eq!(&bytes[8..12], &white);
         assert_eq!(&bytes[12..16], &black);
         assert!(bytes[16..].chunks_exact(4).all(|pixel| pixel == black));
+    }
+
+    #[test]
+    fn cpu_stage_rasterizes_display_list_images_from_submission_resources() {
+        let surface = SurfaceId::new(13).unwrap();
+        let size = SurfaceSize::new(1, 1);
+        let mut planner = FramePlanner::new(surface);
+        let mut images = ImageResourceStore::default();
+        let resource = images.reserve().unwrap();
+        let red = Color {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        let image = images
+            .resolve(resource, DecodedImage::try_new(1, 1, vec![red]).unwrap())
+            .unwrap();
+        let list = DisplayList::try_from_parts(
+            vec![DisplayItemId {
+                source: 1,
+                fragment: 1,
+                slot: 0,
+            }],
+            vec![DisplayCommand::DrawImage {
+                rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                image,
+            }],
+        )
+        .unwrap();
+        let FrameDecision::Submit(plan) = planner
+            .plan(
+                size,
+                DisplayListRevision::new(1),
+                &DamageRegion::default(),
+                FrameCause::ResourceReady,
+            )
+            .unwrap()
+        else {
+            panic!("initial image frame must submit");
+        };
+        let mut stage = None;
+        update_cpu_stage(
+            &mut stage,
+            &FrameSubmission {
+                plan: &plan,
+                display_list: &list,
+                image_resources: Some(&images),
+                clear_color: Color::TRANSPARENT,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(stage.unwrap().framebuffer.to_rgba8(), vec![255, 0, 0, 255]);
     }
 
     #[test]
@@ -518,6 +587,7 @@ mod tests {
                 &FrameSubmission {
                     plan: &partial,
                     display_list: &list,
+                    image_resources: None,
                     clear_color: Color::WHITE,
                 },
             ),
