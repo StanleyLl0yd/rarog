@@ -516,15 +516,46 @@ pub(crate) fn resolve_intrinsic_content_sized_tracks(
     contributions: &[GridIntrinsicContributions],
     kind: GridIntrinsicContributionKind,
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
-    let mut states = resolve_non_spanning_intrinsic_track_states(
+    resolve_intrinsic_tracks_with_space(
         sizing,
         axis,
         items,
         contributions,
         kind,
         kind,
+        0.0,
+        None,
+        false,
+    )
+}
+
+pub(crate) fn resolve_intrinsic_tracks_with_space(
+    sizing: &[GridTrackSizing],
+    axis: GridAxis,
+    items: &[GridItem],
+    contributions: &[GridIntrinsicContributions],
+    base_kind: GridIntrinsicContributionKind,
+    growth_kind: GridIntrinsicContributionKind,
+    gap: f32,
+    available_space: Option<f32>,
+    stretch_auto: bool,
+) -> Result<Vec<GridTrack>, GridLayoutError> {
+    let mut states = resolve_non_spanning_intrinsic_track_states(
+        sizing,
+        axis,
+        items,
+        contributions,
+        base_kind,
+        growth_kind,
     )?;
-    finalize_track_sizing_phases(&mut states, sizing, 0.0, None, axis, false)?;
+    finalize_track_sizing_phases(
+        &mut states,
+        sizing,
+        gap,
+        available_space,
+        axis,
+        stretch_auto,
+    )?;
 
     Ok(states
         .into_iter()
@@ -1478,6 +1509,59 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[test]
+    fn intrinsic_track_geometry_can_finalize_definite_space() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Fixed(20.0)];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(40.0, 40.0, 80.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        let tracks = resolve_intrinsic_tracks_with_space(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MaxContent,
+            0.0,
+            Some(120.0),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(tracks[0].base_size, 100.0);
+        assert_eq!(tracks[1].base_size, 20.0);
+    }
+
+    #[test]
+    fn intrinsic_track_geometry_preserves_indefinite_compatibility_projection() {
+        let sizing = [GridTrackSizing::Auto];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(40.0, 40.0, 80.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        let tracks = resolve_intrinsic_tracks_with_space(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::MaxContent,
+            GridIntrinsicContributionKind::MaxContent,
+            0.0,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(tracks[0].base_size, 80.0);
     }
 
     #[test]
