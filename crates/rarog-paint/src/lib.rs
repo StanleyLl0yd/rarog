@@ -656,7 +656,7 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
         match command {
             DisplayCommand::FillRect { rect, color }
             | DisplayCommand::TextPlaceholder { rect, color } => {
-                let destination = translate_rect(transform_rect(rect, &transforms), translation);
+                let destination = transform_rect(rect, &transforms);
                 let bounds = match *clips.last().expect("clip state") {
                     Some(clip) => intersection(destination, clip),
                     None => Some(destination),
@@ -673,7 +673,7 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
                 ordinal = ordinal.saturating_add(1);
             }
             DisplayCommand::DrawImage { rect, image } => {
-                let destination = translate_rect(transform_rect(rect, &transforms), translation);
+                let destination = transform_rect(rect, &transforms);
                 let bounds = match *clips.last().expect("clip state") {
                     Some(clip) => intersection(destination, clip),
                     None => Some(destination),
@@ -693,7 +693,7 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
                 ordinal = ordinal.saturating_add(1);
             }
             DisplayCommand::PushClip { rect } => {
-                let rect = translate_rect(transform_rect(rect, &transforms), translation);
+                let rect = transform_rect(rect, &transforms);
                 let clip = match *clips.last().expect("clip state") {
                     Some(current) => {
                         Some(intersection(current, rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)))
