@@ -483,7 +483,7 @@ pub(crate) fn plan_auto_track_base_size_increases(
     }
     validate_gap(gap, axis)?;
 
-    let mut planned = vec![0.0; states.len()];
+    let mut planned = vec![0.0_f32; states.len()];
     for contribution in contributions.iter().copied() {
         if contribution.span == 0 || !contribution.size.is_finite() || contribution.size < 0.0 {
             return Err(GridLayoutError::InvalidContribution {
@@ -491,12 +491,11 @@ pub(crate) fn plan_auto_track_base_size_increases(
                 axis,
             });
         }
-        let end = contribution
-            .start
-            .checked_add(contribution.span)
-            .ok_or(GridLayoutError::PlacementOutsideGrid {
+        let end = contribution.start.checked_add(contribution.span).ok_or(
+            GridLayoutError::PlacementOutsideGrid {
                 node: contribution.node,
-            })?;
+            },
+        )?;
         let Some(span_states) = states.get(contribution.start..end) else {
             return Err(GridLayoutError::PlacementOutsideGrid {
                 node: contribution.node,
@@ -591,8 +590,7 @@ fn distribute_base_size_space(
         for slot in active.iter().copied() {
             let (track_index, increase) = increases[slot];
             if let GridTrackGrowthLimit::Finite(limit) = states[track_index].growth_limit {
-                let remaining =
-                    (limit - states[track_index].base_size - increase).max(0.0);
+                let remaining = (limit - states[track_index].base_size - increase).max(0.0);
                 step = step.min(remaining);
             }
         }
@@ -1207,11 +1205,8 @@ mod tests {
 
     #[test]
     fn spanning_distribution_terminates_when_equal_share_underflows() {
-        let states = initialize_track_sizing_states(
-            &[GridTrackSizing::Auto; 8],
-            GridAxis::Column,
-        )
-        .unwrap();
+        let states =
+            initialize_track_sizing_states(&[GridTrackSizing::Auto; 8], GridAxis::Column).unwrap();
         let planned = plan_auto_track_base_size_increases(
             &states,
             &[GridTrackSizing::Auto; 8],
