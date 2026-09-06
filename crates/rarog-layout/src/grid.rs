@@ -579,10 +579,8 @@ pub(crate) fn resolve_non_spanning_intrinsic_track_states(
         planned_contributions.push(GridSpanningSizeContribution::new(
             item.node, start, span, base_size,
         ));
-        growth_targets[start] = Some(
-            growth_targets[start]
-                .map_or(growth_size, |current| current.max(growth_size)),
-        );
+        growth_targets[start] =
+            Some(growth_targets[start].map_or(growth_size, |current| current.max(growth_size)));
     }
 
     apply_spanning_base_size_rounds(&mut states, sizing, 0.0, axis, &planned_contributions)?;
@@ -1409,10 +1407,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(states[0].base_size, 12.0);
-        assert_eq!(
-            states[0].growth_limit,
-            GridTrackGrowthLimit::Finite(36.0)
-        );
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(36.0));
     }
 
     #[test]
@@ -1446,10 +1441,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(states[0].base_size, 18.0);
-        assert_eq!(
-            states[0].growth_limit,
-            GridTrackGrowthLimit::Finite(50.0)
-        );
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(50.0));
     }
 
     #[test]
@@ -1465,10 +1457,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(states[0].base_size, 0.0);
-        assert_eq!(
-            states[0].growth_limit,
-            GridTrackGrowthLimit::Finite(0.0)
-        );
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(0.0));
     }
 
     #[test]
@@ -1484,10 +1473,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(states[0].base_size, 24.0);
-        assert_eq!(
-            states[0].growth_limit,
-            GridTrackGrowthLimit::Finite(24.0)
-        );
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(24.0));
     }
 
     #[test]
