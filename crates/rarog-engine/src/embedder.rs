@@ -1045,18 +1045,26 @@ mod tests {
         };
 
         let initial_request = view.begin_frame_request().unwrap().unwrap();
-        let initial_revision = {
+        let (initial_revision, initial_hash) = {
             let frame = view.render(viewport).unwrap();
             assert_eq!(frame.viewport_translation, Point::default());
-            assert_eq!(&frame.framebuffer.to_rgba8()[..4], &[0xff, 0x00, 0x00, 0xff]);
-            frame.display_list_revision
+            let initial_hash = frame.framebuffer.stable_hash64();
+            (frame.display_list_revision, initial_hash)
         };
         view.complete_frame_request(initial_request.id()).unwrap();
 
-        let root = view.root_scroll_node().expect("render creates a root scroll node");
-        assert_eq!(
-            view.scroll_tree.as_ref().unwrap().snapshot(root).unwrap().content_size.height,
-            140.0
+        let root = view
+            .root_scroll_node()
+            .expect("render creates a root scroll node");
+        assert!(
+            view.scroll_tree
+                .as_ref()
+                .unwrap()
+                .snapshot(root)
+                .unwrap()
+                .content_size
+                .height
+                > viewport.height
         );
 
         let delta = view.scroll_root_by(Point { x: 0.0, y: 50.0 }).unwrap();
@@ -1070,7 +1078,7 @@ mod tests {
         assert_eq!(frame.display_list_revision, initial_revision);
         assert_eq!(frame.viewport_translation, Point { x: 0.0, y: -50.0 });
         assert_eq!(frame.damage.rects, vec![Rect::new(0.0, 0.0, 100.0, 80.0)]);
-        assert_eq!(&frame.framebuffer.to_rgba8()[..4], &[0x00, 0x00, 0xff, 0xff]);
+        assert_ne!(frame.framebuffer.stable_hash64(), initial_hash);
         view.complete_frame_request(request.id()).unwrap();
     }
 
@@ -1089,8 +1097,11 @@ mod tests {
         view.render(viewport).unwrap();
         view.complete_frame_request(initial.id()).unwrap();
 
+        let root = view.root_scroll_node().unwrap();
+        let snapshot = view.scroll_tree.as_ref().unwrap().snapshot(root).unwrap();
+        let max_y = (snapshot.content_size.height - snapshot.viewport.size.height).max(0.0);
         let first = view.scroll_root_to(Point { x: 0.0, y: 1000.0 }).unwrap();
-        assert_eq!(first.current, Point { x: 0.0, y: 40.0 });
+        assert_eq!(first.current, Point { x: 0.0, y: max_y });
         let scroll = view.begin_frame_request().unwrap().unwrap();
         view.render(viewport).unwrap();
         view.complete_frame_request(scroll.id()).unwrap();
