@@ -1212,6 +1212,27 @@ impl FragmentTree {
     pub fn fragment_count(&self) -> usize {
         count_fragments(&self.root)
     }
+
+    pub fn scrollable_content_size(&self) -> Size {
+        let origin = self.root.boxes.content_box.origin;
+        let viewport = self.root.boxes.content_box.size;
+        let mut max_x = origin.x + viewport.width.max(0.0);
+        let mut max_y = origin.y + viewport.height.max(0.0);
+        collect_positive_overflow_extent(&self.root, &mut max_x, &mut max_y);
+        Size {
+            width: (max_x - origin.x).max(viewport.width).max(0.0),
+            height: (max_y - origin.y).max(viewport.height).max(0.0),
+        }
+    }
+}
+
+fn collect_positive_overflow_extent(fragment: &Fragment, max_x: &mut f32, max_y: &mut f32) {
+    let rect = fragment.boxes.margin_box;
+    *max_x = (*max_x).max(rect.origin.x + rect.size.width);
+    *max_y = (*max_y).max(rect.origin.y + rect.size.height);
+    for child in &fragment.children {
+        collect_positive_overflow_extent(child, max_x, max_y);
+    }
 }
 
 fn count_fragments(fragment: &Fragment) -> usize {
@@ -3895,6 +3916,57 @@ mod tests {
         );
         assert_eq!(run.intrinsic_sizes().min_content, 16.0);
         assert_eq!(run.intrinsic_sizes().max_content, run.advance);
+    }
+
+    #[test]
+    fn scrollable_content_size_tracks_positive_overflow_beyond_viewport() {
+        let mut doc = Document::new();
+        doc.append_new(
+            doc.root(),
+            element("div", Some("width:150px;height:60px")),
+        )
+        .unwrap();
+        doc.append_new(
+            doc.root(),
+            element("div", Some("height:70px")),
+        )
+        .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 100.0,
+                height: 80.0,
+            },
+        );
+
+        assert_eq!(
+            output.fragments.scrollable_content_size(),
+            Size {
+                width: 150.0,
+                height: 130.0,
+            }
+        );
+    }
+
+    #[test]
+    fn scrollable_content_size_never_shrinks_below_viewport() {
+        let doc = Document::new();
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 100.0,
+                height: 80.0,
+            },
+        );
+
+        assert_eq!(
+            output.fragments.scrollable_content_size(),
+            Size {
+                width: 100.0,
+                height: 80.0,
+            }
+        );
     }
 
     #[test]
