@@ -43,6 +43,8 @@ Thus existing Flex rendering remains unchanged while computed style retains the 
 
 Grid formatting-root invalidation now treats changes to `justify-content` and `align-content` as layout-affecting.
 
+The preserved `Normal` / `Stretch` values are the only bounded content-distribution values that authorize the later final auto-track stretch phase. Positional and space-distribution values must not be inferred as stretch merely because older Flex used-value code mapped defaults to start/stretch behavior.
+
 No Grid track geometry changes in this slice.
 
 ## Consequences
