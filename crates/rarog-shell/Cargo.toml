@@ -12,7 +12,6 @@ rarog-engine = { path = "../rarog-engine" }
 [target.'cfg(target_os = "windows")'.dependencies]
 pollster = { version = "=0.4.0", default-features = false }
 rarog-compositor = { path = "../rarog-compositor" }
-rarog-compositor-wgpu = { path = "../rarog-compositor-wgpu" }
 rarog-platform-windows = { path = "../rarog-platform-windows" }
 rarog-types = { path = "../rarog-types" }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
