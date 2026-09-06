@@ -488,6 +488,61 @@ pub struct FrameSubmission<'a> {
     pub clear_color: Color,
 }
 
+#[derive(Clone, Debug)]
+pub struct OwnedFrameSubmission {
+    plan: FramePlan,
+    display_list: DisplayList,
+    image_resources: Option<ImageResourceStore>,
+    viewport_translation: Point,
+    clear_color: Color,
+}
+
+impl OwnedFrameSubmission {
+    pub fn from_borrowed(frame: FrameSubmission<'_>) -> Self {
+        Self {
+            plan: frame.plan.clone(),
+            display_list: frame.display_list.clone(),
+            image_resources: frame.image_resources.cloned(),
+            viewport_translation: frame.viewport_translation,
+            clear_color: frame.clear_color,
+        }
+    }
+
+    pub const fn frame_id(&self) -> FrameId {
+        self.plan.id()
+    }
+
+    pub const fn plan(&self) -> &FramePlan {
+        &self.plan
+    }
+
+    pub const fn viewport_translation(&self) -> Point {
+        self.viewport_translation
+    }
+
+    pub const fn clear_color(&self) -> Color {
+        self.clear_color
+    }
+
+    pub fn display_list(&self) -> &DisplayList {
+        &self.display_list
+    }
+
+    pub fn image_resources(&self) -> Option<&ImageResourceStore> {
+        self.image_resources.as_ref()
+    }
+
+    pub fn as_borrowed(&self) -> FrameSubmission<'_> {
+        FrameSubmission {
+            plan: &self.plan,
+            display_list: &self.display_list,
+            image_resources: self.image_resources.as_ref(),
+            viewport_translation: self.viewport_translation,
+            clear_color: self.clear_color,
+        }
+    }
+}
+
 pub trait CompositorBackend {
     type Error;
 
@@ -586,6 +641,53 @@ mod tests {
         let id = plan.id();
         planner.complete(id).unwrap();
         id
+    }
+
+    #[test]
+    fn owned_frame_submission_detaches_frame_lifetime() {
+        let mut planner = FramePlanner::new(surface());
+        let FrameDecision::Submit(plan) = planner
+            .plan(
+                size(),
+                DisplayListRevision::new(3),
+                &DamageRegion::default(),
+                FrameCause::Initial,
+            )
+            .unwrap()
+        else {
+            panic!("initial frame must submit");
+        };
+        let list = DisplayList::default();
+        let mut images = ImageResourceStore::default();
+        let resource = images.reserve().unwrap();
+        let translation = Point { x: -2.0, y: -3.0 };
+        let owned = OwnedFrameSubmission::from_borrowed(FrameSubmission {
+            plan: &plan,
+            display_list: &list,
+            image_resources: Some(&images),
+            viewport_translation: translation,
+            clear_color: Color::WHITE,
+        });
+
+        drop(images);
+        drop(list);
+
+        assert_eq!(owned.frame_id(), plan.id());
+        assert_eq!(owned.plan(), &plan);
+        assert_eq!(owned.viewport_translation(), translation);
+        assert_eq!(owned.clear_color(), Color::WHITE);
+        assert!(owned.display_list().is_empty());
+        assert_eq!(
+            owned
+                .image_resources()
+                .and_then(|store| store.status(resource)),
+            Some(rarog_resources::ImageResourceStatus::Pending)
+        );
+
+        let borrowed = owned.as_borrowed();
+        assert_eq!(borrowed.plan.id(), plan.id());
+        assert_eq!(borrowed.viewport_translation, translation);
+        assert_eq!(borrowed.clear_color, Color::WHITE);
     }
 
     #[test]
