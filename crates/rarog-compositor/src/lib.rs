@@ -1,6 +1,6 @@
 use rarog_paint::{DamageRegion, DisplayList};
 use rarog_resources::ImageResourceStore;
-use rarog_types::{Color, Rect};
+use rarog_types::{Color, Point, Rect};
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -484,6 +484,7 @@ pub struct FrameSubmission<'a> {
     pub plan: &'a FramePlan,
     pub display_list: &'a DisplayList,
     pub image_resources: Option<&'a ImageResourceStore>,
+    pub viewport_translation: Point,
     pub clear_color: Color,
 }
 
@@ -957,6 +958,7 @@ mod tests {
                 plan: &plan,
                 display_list: &list,
                 image_resources: None,
+                viewport_translation: Point::default(),
                 clear_color: Color::WHITE,
             })
             .unwrap();
