@@ -562,7 +562,7 @@ impl<E> CompositorCompletion<E> {
         self.frame
     }
 
-    pub fn result(self) -> Result<PresentationStatus, E> {
+    pub fn result(self) -> Result<(), E> {
         self.result
     }
 }
@@ -730,7 +730,7 @@ impl<E> PresentingCompositorCompletion<E> {
         self.frame
     }
 
-    pub fn result(self) -> Result<(), E> {
+    pub fn result(self) -> Result<PresentationStatus, E> {
         self.result
     }
 }
