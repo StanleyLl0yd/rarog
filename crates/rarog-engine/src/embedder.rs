@@ -1083,6 +1083,74 @@ mod tests {
     }
 
     #[test]
+    fn scene_damage_is_projected_through_current_root_scroll_offset() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html(
+            "<div id=\"hero\" style=\"height:60px;background:#ff0000\"></div><div style=\"height:120px\"></div>",
+            BaseUrl::about_blank(),
+        )
+        .unwrap();
+        let viewport = Size {
+            width: 100.0,
+            height: 80.0,
+        };
+
+        let initial = view.begin_frame_request().unwrap().unwrap();
+        view.render(viewport).unwrap();
+        view.complete_frame_request(initial.id()).unwrap();
+
+        view.scroll_root_by(Point { x: 0.0, y: 20.0 }).unwrap();
+        let scroll = view.begin_frame_request().unwrap().unwrap();
+        view.render(viewport).unwrap();
+        view.complete_frame_request(scroll.id()).unwrap();
+
+        let hero = view
+            .session
+            .as_ref()
+            .map(|session| {
+                session
+                    .document()
+                    .snapshot();
+                session
+                    .document()
+                    .node_ids()
+                    .find(|node| {
+                        session
+                            .document()
+                            .node(*node)
+                            .and_then(|current| match &current.kind {
+                                rarog_dom::NodeKind::Element(element) => {
+                                    element.attributes.get("id").map(String::as_str)
+                                }
+                                _ => None,
+                            })
+                            == Some("hero")
+                    })
+                    .unwrap()
+            })
+            .unwrap();
+        view.session
+            .as_mut()
+            .unwrap()
+            .document_mut()
+            .set_attribute(hero, "style", "height:60px;background:#0000ff")
+            .unwrap();
+        view.request_frame(FrameCause::SceneChange);
+        let request = view.begin_frame_request().unwrap().unwrap();
+        let (frame_damage, translation) = {
+            let frame = view.render(viewport).unwrap();
+            (frame.damage.clone(), frame.viewport_translation)
+        };
+        view.complete_frame_request(request.id()).unwrap();
+
+        let document_damage = view.session.as_ref().unwrap().damage().clone();
+        assert!(!document_damage.rects.is_empty());
+        assert_eq!(frame_damage, document_damage.translated(translation));
+        assert_eq!(translation, Point { x: 0.0, y: -20.0 });
+    }
+
+    #[test]
     fn clamped_root_scroll_does_not_schedule_redundant_frame() {
         let engine = Engine::builder().build().unwrap();
         let mut view = engine.create_view(ViewOptions::default()).unwrap();
