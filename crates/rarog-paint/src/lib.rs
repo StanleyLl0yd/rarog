@@ -728,6 +728,17 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
 }
 
 impl DamageRegion {
+    pub fn translated(&self, translation: Point) -> Self {
+        Self {
+            rects: self
+                .rects
+                .iter()
+                .copied()
+                .map(|rect| translate_rect(rect, translation))
+                .collect(),
+        }
+    }
+
     pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
         let current_items = effective_indexed_paint(current);
         let mut damage = Self::default();
@@ -1480,6 +1491,19 @@ mod tests {
         );
         full.rasterize_with_images(&after, &images);
         assert_eq!(incremental.stable_hash64(), full.stable_hash64());
+    }
+
+    #[test]
+    fn damage_translation_projects_document_rects_into_viewport_space() {
+        let damage = DamageRegion {
+            rects: vec![Rect::new(10.0, 20.0, 30.0, 40.0)],
+        };
+
+        assert_eq!(
+            damage.translated(Point { x: -3.0, y: -5.0 }).rects,
+            vec![Rect::new(7.0, 15.0, 30.0, 40.0)]
+        );
+        assert_eq!(damage.rects, vec![Rect::new(10.0, 20.0, 30.0, 40.0)]);
     }
 
     #[test]
