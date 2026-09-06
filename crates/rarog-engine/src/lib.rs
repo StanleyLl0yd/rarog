@@ -441,10 +441,7 @@ impl RenderSession {
         self.viewport_translation
     }
 
-    pub fn set_viewport_translation(
-        &mut self,
-        translation: Point,
-    ) -> Result<bool, RenderError> {
+    pub fn set_viewport_translation(&mut self, translation: Point) -> Result<bool, RenderError> {
         if !translation.x.is_finite() || !translation.y.is_finite() {
             return Err(RenderError::InvalidViewportTranslation);
         }
@@ -452,8 +449,7 @@ impl RenderSession {
             return Ok(false);
         }
 
-        let mut framebuffer =
-            Framebuffer::try_new(self.options.viewport, self.options.background)?;
+        let mut framebuffer = Framebuffer::try_new(self.options.viewport, self.options.background)?;
         framebuffer.rasterize_with_images_and_translation(
             &self.display_list,
             &self.image_resources,
