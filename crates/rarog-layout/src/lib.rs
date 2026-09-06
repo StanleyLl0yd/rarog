@@ -4475,12 +4475,12 @@ mod tests {
                 .border_box
                 .size
                 .width,
-            88.0
+            312.0
         );
     }
 
     #[test]
-    fn css_grid_auto_columns_use_max_content_contributions() {
+    fn css_grid_auto_columns_stretch_across_definite_inline_space_by_default() {
         let mut doc = Document::new();
         let container = doc
             .append_new(
@@ -4505,9 +4505,72 @@ mod tests {
         );
         let grid = &output.fragments.root.children[0];
 
+        assert_eq!(grid.children[0].boxes.border_box.size.width, 300.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.x, 300.0);
+        assert_eq!(grid.boxes.content_box.size.width, 320.0);
+    }
+
+    #[test]
+    fn css_grid_flex_start_keeps_auto_column_at_max_content_when_space_remains() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;justify-content:flex-start;grid-template-columns:auto 20px;grid-template-rows:20px",
+                    ),
+                ),
+            )
+            .unwrap();
+        let first = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(first, NodeKind::Text("hello".into()))
+            .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
         assert_eq!(grid.children[0].boxes.border_box.size.width, 40.0);
         assert_eq!(grid.children[1].boxes.border_box.origin.x, 40.0);
         assert_eq!(grid.boxes.content_box.size.width, 320.0);
+    }
+
+    #[test]
+    fn css_grid_definite_inline_space_maximizes_auto_track_between_intrinsic_bounds() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:60px;justify-content:flex-start;grid-template-columns:auto;grid-template-rows:20px",
+                    ),
+                ),
+            )
+            .unwrap();
+        let item = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(item, NodeKind::Text("hello world".into()))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let item = &output.fragments.root.children[0].children[0];
+
+        assert_eq!(item.boxes.border_box.size.width, 60.0);
     }
 
     #[test]
@@ -4542,6 +4605,78 @@ mod tests {
         assert_eq!(grid.children[1].boxes.border_box.origin.y, 12.0);
         assert_eq!(grid.children[1].boxes.border_box.size.height, 18.0);
         assert_eq!(grid.boxes.content_box.size.height, 30.0);
+    }
+
+    #[test]
+    fn css_grid_definite_height_stretches_auto_rows_by_default() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:40px;height:100px;grid-template-columns:40px;grid-template-rows:auto auto",
+                    ),
+                ),
+            )
+            .unwrap();
+        let first = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(first, element("div", Some("height:12px")))
+            .unwrap();
+        let second = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(second, element("div", Some("height:18px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.size.height, 47.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.y, 47.0);
+        assert_eq!(grid.children[1].boxes.border_box.size.height, 53.0);
+        assert_eq!(grid.boxes.content_box.size.height, 100.0);
+    }
+
+    #[test]
+    fn css_grid_flex_start_keeps_definite_height_auto_rows_at_intrinsic_sizes() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:40px;height:100px;align-content:flex-start;grid-template-columns:40px;grid-template-rows:auto auto",
+                    ),
+                ),
+            )
+            .unwrap();
+        let first = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(first, element("div", Some("height:12px")))
+            .unwrap();
+        let second = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(second, element("div", Some("height:18px")))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.size.height, 12.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.y, 12.0);
+        assert_eq!(grid.children[1].boxes.border_box.size.height, 18.0);
+        assert_eq!(grid.boxes.content_box.size.height, 100.0);
     }
 
     #[test]
