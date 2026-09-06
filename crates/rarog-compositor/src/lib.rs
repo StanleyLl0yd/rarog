@@ -3,6 +3,8 @@ use rarog_resources::ImageResourceStore;
 use rarog_types::{Color, Point, Rect};
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
+use std::thread::{self, JoinHandle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SurfaceId(u64);
@@ -549,6 +551,151 @@ pub trait CompositorBackend {
     fn submit(&mut self, frame: FrameSubmission<'_>) -> Result<(), Self::Error>;
 }
 
+#[derive(Debug)]
+pub struct CompositorCompletion<E> {
+    frame: FrameId,
+    result: Result<(), E>,
+}
+
+impl<E> CompositorCompletion<E> {
+    pub const fn frame(&self) -> FrameId {
+        self.frame
+    }
+
+    pub fn result(self) -> Result<(), E> {
+        self.result
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompositorWorkerSendError {
+    QueueFull,
+    Disconnected,
+}
+
+impl fmt::Display for CompositorWorkerSendError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QueueFull => formatter.write_str("compositor worker queue is full"),
+            Self::Disconnected => formatter.write_str("compositor worker is disconnected"),
+        }
+    }
+}
+
+impl std::error::Error for CompositorWorkerSendError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompositorWorkerDisconnected;
+
+impl fmt::Display for CompositorWorkerDisconnected {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("compositor worker completion channel is disconnected")
+    }
+}
+
+impl std::error::Error for CompositorWorkerDisconnected {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompositorWorkerPanicked;
+
+impl fmt::Display for CompositorWorkerPanicked {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("compositor worker thread panicked")
+    }
+}
+
+impl std::error::Error for CompositorWorkerPanicked {}
+
+pub struct CompositorWorker<E> {
+    sender: Option<SyncSender<OwnedFrameSubmission>>,
+    completions: Option<Receiver<CompositorCompletion<E>>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl<E: Send + 'static> CompositorWorker<E> {
+    pub fn spawn<B>(mut backend: B) -> std::io::Result<Self>
+    where
+        B: CompositorBackend<Error = E> + Send + 'static,
+    {
+        let (sender, frames) = sync_channel::<OwnedFrameSubmission>(1);
+        let (completion_sender, completions) = sync_channel::<CompositorCompletion<E>>(1);
+        let thread = thread::Builder::new()
+            .name("rarog-compositor".into())
+            .spawn(move || {
+                while let Ok(frame) = frames.recv() {
+                    let id = frame.frame_id();
+                    let result = backend.submit(frame.as_borrowed());
+                    if completion_sender
+                        .send(CompositorCompletion { frame: id, result })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
+
+        Ok(Self {
+            sender: Some(sender),
+            completions: Some(completions),
+            thread: Some(thread),
+        })
+    }
+
+    pub fn try_submit(&self, frame: OwnedFrameSubmission) -> Result<(), CompositorWorkerSendError> {
+        let Some(sender) = self.sender.as_ref() else {
+            return Err(CompositorWorkerSendError::Disconnected);
+        };
+        sender.try_send(frame).map_err(|error| match error {
+            TrySendError::Full(_) => CompositorWorkerSendError::QueueFull,
+            TrySendError::Disconnected(_) => CompositorWorkerSendError::Disconnected,
+        })
+    }
+
+    pub fn try_completion(
+        &self,
+    ) -> Result<Option<CompositorCompletion<E>>, CompositorWorkerDisconnected> {
+        let Some(completions) = self.completions.as_ref() else {
+            return Err(CompositorWorkerDisconnected);
+        };
+        match completions.try_recv() {
+            Ok(completion) => Ok(Some(completion)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(CompositorWorkerDisconnected),
+        }
+    }
+
+    pub fn recv_completion(&self) -> Result<CompositorCompletion<E>, CompositorWorkerDisconnected> {
+        self.completions
+            .as_ref()
+            .ok_or(CompositorWorkerDisconnected)?
+            .recv()
+            .map_err(|_| CompositorWorkerDisconnected)
+    }
+
+    pub fn shutdown(mut self) -> Result<(), CompositorWorkerPanicked> {
+        self.close()
+    }
+
+    fn close(&mut self) -> Result<(), CompositorWorkerPanicked> {
+        self.sender.take();
+        self.completions.take();
+        if let Some(thread) = self.thread.take() {
+            thread.join().map_err(|_| CompositorWorkerPanicked)?;
+        }
+        Ok(())
+    }
+}
+
+impl<E> Drop for CompositorWorker<E> {
+    fn drop(&mut self) {
+        self.sender.take();
+        self.completions.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 fn normalize_damage(
     size: SurfaceSize,
     damage: &DamageRegion,
@@ -688,6 +835,110 @@ mod tests {
         assert_eq!(borrowed.plan.id(), plan.id());
         assert_eq!(borrowed.viewport_translation, translation);
         assert_eq!(borrowed.clear_color, Color::WHITE);
+    }
+
+    fn owned_test_frame(surface_value: u64) -> OwnedFrameSubmission {
+        let mut planner =
+            FramePlanner::new(SurfaceId::new(surface_value).expect("test surface is non-zero"));
+        let FrameDecision::Submit(plan) = planner
+            .plan(
+                size(),
+                DisplayListRevision::new(1),
+                &DamageRegion::default(),
+                FrameCause::Initial,
+            )
+            .unwrap()
+        else {
+            panic!("test frame must submit");
+        };
+        OwnedFrameSubmission::from_borrowed(FrameSubmission {
+            plan: &plan,
+            display_list: &DisplayList::default(),
+            image_resources: None,
+            viewport_translation: Point::default(),
+            clear_color: Color::WHITE,
+        })
+    }
+
+    #[test]
+    fn compositor_worker_executes_submission_on_named_worker_thread() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct RecordingBackend {
+            thread_name: Arc<Mutex<Option<String>>>,
+        }
+
+        impl CompositorBackend for RecordingBackend {
+            type Error = ();
+
+            fn submit(&mut self, _frame: FrameSubmission<'_>) -> Result<(), Self::Error> {
+                *self.thread_name.lock().unwrap() =
+                    std::thread::current().name().map(str::to_owned);
+                Ok(())
+            }
+        }
+
+        let thread_name = Arc::new(Mutex::new(None));
+        let worker = CompositorWorker::spawn(RecordingBackend {
+            thread_name: Arc::clone(&thread_name),
+        })
+        .unwrap();
+        let frame = owned_test_frame(31);
+        let expected = frame.frame_id();
+
+        worker.try_submit(frame).unwrap();
+        let completion = worker.recv_completion().unwrap();
+
+        assert_eq!(completion.frame(), expected);
+        assert_eq!(completion.result(), Ok(()));
+        assert_eq!(
+            thread_name.lock().unwrap().as_deref(),
+            Some("rarog-compositor")
+        );
+        worker.shutdown().unwrap();
+    }
+
+    #[test]
+    fn compositor_worker_applies_bounded_backpressure() {
+        use std::sync::mpsc::channel;
+
+        struct BlockingBackend {
+            started: std::sync::mpsc::Sender<()>,
+            release: std::sync::mpsc::Receiver<()>,
+        }
+
+        impl CompositorBackend for BlockingBackend {
+            type Error = ();
+
+            fn submit(&mut self, _frame: FrameSubmission<'_>) -> Result<(), Self::Error> {
+                self.started.send(()).unwrap();
+                self.release.recv().unwrap();
+                Ok(())
+            }
+        }
+
+        let (started_tx, started_rx) = channel();
+        let (release_tx, release_rx) = channel();
+        let worker = CompositorWorker::spawn(BlockingBackend {
+            started: started_tx,
+            release: release_rx,
+        })
+        .unwrap();
+
+        worker.try_submit(owned_test_frame(32)).unwrap();
+        started_rx.recv().unwrap();
+        worker.try_submit(owned_test_frame(33)).unwrap();
+        assert_eq!(
+            worker.try_submit(owned_test_frame(34)).unwrap_err(),
+            CompositorWorkerSendError::QueueFull
+        );
+
+        release_tx.send(()).unwrap();
+        worker.recv_completion().unwrap().result().unwrap();
+        release_tx.send(()).unwrap();
+        worker.recv_completion().unwrap().result().unwrap();
+        worker.shutdown().unwrap();
     }
 
     #[test]
