@@ -126,12 +126,15 @@ impl GridAxisIntrinsicContributions {
     }
 
     fn validate(self, node: LayoutNodeId, axis: GridAxis) -> Result<Self, GridLayoutError> {
-        if self.minimum.is_finite()
-            && self.min_content.is_finite()
-            && self.max_content.is_finite()
-            && self.minimum >= 0.0
-            && self.minimum <= self.min_content
-            && self.min_content <= self.max_content
+        let minimum = self.size_for(GridIntrinsicContributionKind::Minimum);
+        let min_content = self.size_for(GridIntrinsicContributionKind::MinContent);
+        let max_content = self.size_for(GridIntrinsicContributionKind::MaxContent);
+        if minimum.is_finite()
+            && min_content.is_finite()
+            && max_content.is_finite()
+            && minimum >= 0.0
+            && minimum <= min_content
+            && min_content <= max_content
         {
             Ok(self)
         } else {
@@ -161,19 +164,19 @@ impl GridIntrinsicContributions {
     }
 
     const fn from_legacy(contribution: GridItemContribution) -> Self {
-        Self {
-            node: contribution.node,
-            inline: GridAxisIntrinsicContributions::new(
+        Self::new(
+            contribution.node,
+            GridAxisIntrinsicContributions::new(
                 contribution.inline_size,
                 contribution.inline_size,
                 contribution.inline_size,
             ),
-            block: GridAxisIntrinsicContributions::new(
+            GridAxisIntrinsicContributions::new(
                 contribution.block_size,
                 contribution.block_size,
                 contribution.block_size,
             ),
-        }
+        )
     }
 
     pub(crate) fn size_for(
