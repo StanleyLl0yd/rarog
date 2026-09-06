@@ -19,6 +19,11 @@ pub use grid::{
     layout_fixed_grid_with_auto_placement, resolve_content_sized_tracks, resolve_grid_placements,
 };
 
+use grid::{
+    GridAxisIntrinsicContributions, GridIntrinsicContributionKind, GridIntrinsicContributions,
+    resolve_intrinsic_content_sized_tracks,
+};
+
 use rarog_css::{
     AlignContent, AlignItems, AlignSelf, ComputedStyle, FlexDirection, FlexWrap,
     GridTrackSize as CssGridTrackSize, JustifyContent, JustifyItems, JustifySelf, StyleSet,
@@ -3056,18 +3061,19 @@ impl FragmentBuilder {
         let inline_contributions = nodes
             .iter()
             .map(|child| {
-                GridItemContribution::new(
+                GridIntrinsicContributions::new(
                     child.id,
-                    child.intrinsic.max_content + child.style.margin.horizontal(),
-                    0.0,
+                    grid_inline_intrinsic_contributions(child),
+                    GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
                 )
             })
             .collect::<Vec<_>>();
-        let Ok(columns) = resolve_content_sized_tracks(
+        let Ok(columns) = resolve_intrinsic_content_sized_tracks(
             &column_sizing,
             GridAxis::Column,
             &items,
             &inline_contributions,
+            GridIntrinsicContributionKind::MaxContent,
         ) else {
             return (Vec::new(), fallback_content_size);
         };
@@ -3117,16 +3123,21 @@ impl FragmentBuilder {
                 ) else {
                     return (Vec::new(), fallback_content_size);
                 };
-                contributions.push(GridItemContribution::new(
+                let block_size = border_height + child.style.margin.vertical();
+                contributions.push(GridIntrinsicContributions::new(
                     child.id,
-                    child.intrinsic.max_content + child.style.margin.horizontal(),
-                    border_height + child.style.margin.vertical(),
+                    grid_inline_intrinsic_contributions(child),
+                    GridAxisIntrinsicContributions::new(block_size, block_size, block_size),
                 ));
             }
 
-            let Ok(rows) =
-                resolve_content_sized_tracks(&row_sizing, GridAxis::Row, &items, &contributions)
-            else {
+            let Ok(rows) = resolve_intrinsic_content_sized_tracks(
+                &row_sizing,
+                GridAxis::Row,
+                &items,
+                &contributions,
+                GridIntrinsicContributionKind::MaxContent,
+            ) else {
                 return (Vec::new(), fallback_content_size);
             };
             rows
@@ -3736,6 +3747,15 @@ impl FragmentBuilder {
         self.next_id += 1;
         id
     }
+}
+
+fn grid_inline_intrinsic_contributions(
+    node: &LayoutNode,
+) -> GridAxisIntrinsicContributions {
+    let margin = node.style.margin.horizontal();
+    let min_content = node.intrinsic.min_content + margin;
+    let max_content = node.intrinsic.max_content + margin;
+    GridAxisIntrinsicContributions::new(min_content, min_content, max_content)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4353,6 +4373,50 @@ mod tests {
                 width: 48.0,
                 height: 20.0
             }
+        );
+    }
+
+    #[test]
+    fn grid_inline_contributions_preserve_min_and_max_content_measurements() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:grid;grid-template-columns:auto;grid-template-rows:20px"),
+                ),
+            )
+            .unwrap();
+        let item = doc
+            .append_new(
+                container,
+                element("div", Some("margin-left:3px;margin-right:5px")),
+            )
+            .unwrap();
+        doc.append_new(item, NodeKind::Text("hello world".into()))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let node = &output.tree.root.children[0].children[0];
+        let contributions = grid_inline_intrinsic_contributions(node);
+
+        assert_eq!(contributions.minimum, 48.0);
+        assert_eq!(contributions.min_content, 48.0);
+        assert_eq!(contributions.max_content, 96.0);
+        assert_eq!(
+            output.fragments.root.children[0].children[0]
+                .boxes
+                .border_box
+                .size
+                .width,
+            88.0
         );
     }
 
