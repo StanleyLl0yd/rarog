@@ -1,5 +1,10 @@
 use std::fmt;
 
+#[cfg(target_os = "windows")]
+use rarog_compositor::{
+    CompositorBackend, FrameSubmission, PresentationStatus, PresentingCompositorBackend,
+};
+
 #[derive(Debug)]
 pub enum WindowsGpuError {
     UnsupportedTarget,
@@ -102,6 +107,14 @@ pub struct WindowsGpuSurface {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WindowsGpuSurface;
 
+#[cfg(target_os = "windows")]
+pub struct WindowsPresentingCompositor<T> {
+    target: T,
+    gpu: WindowsGpuDevice,
+    surface: WindowsGpuSurface,
+    backend: rarog_compositor_wgpu::WgpuCompositorBackend,
+}
+
 impl WindowsGpuDevice {
     pub const fn target_available() -> bool {
         cfg!(target_os = "windows")
@@ -199,6 +212,88 @@ impl WindowsGpuDevice {
         };
         surface.reconfigure(self)?;
         Ok(surface)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl<T> WindowsPresentingCompositor<T>
+where
+    T: Clone + Into<wgpu::SurfaceTarget<'static>>,
+{
+    pub async fn request(target: T, width: u32, height: u32) -> Result<Self, WindowsGpuError> {
+        let gpu = WindowsGpuDevice::request().await?;
+        Self::new(gpu, target, width, height)
+    }
+
+    pub fn new(
+        gpu: WindowsGpuDevice,
+        target: T,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, WindowsGpuError> {
+        let surface = gpu.create_surface(target.clone(), width, height)?;
+        let backend = gpu.compositor_backend();
+        Ok(Self {
+            target,
+            gpu,
+            surface,
+            backend,
+        })
+    }
+
+    fn recover_presentation(
+        &mut self,
+        error: WindowsGpuError,
+    ) -> Result<PresentationStatus, WindowsGpuError> {
+        if matches!(error, WindowsGpuError::SuspendedSurface) {
+            return Ok(PresentationStatus::Deferred);
+        }
+
+        match error.surface_recovery() {
+            Some(WindowsSurfaceRecovery::Retry) => Ok(PresentationStatus::Deferred),
+            Some(WindowsSurfaceRecovery::Reconfigure) => {
+                self.surface.reconfigure(&self.gpu)?;
+                Ok(PresentationStatus::Deferred)
+            }
+            Some(WindowsSurfaceRecovery::Recreate) => {
+                let width = self.surface.width();
+                let height = self.surface.height();
+                self.surface =
+                    self.gpu
+                        .create_surface(self.target.clone(), width, height)?;
+                Ok(PresentationStatus::Deferred)
+            }
+            Some(WindowsSurfaceRecovery::Fatal) | None => Err(error),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl<T> CompositorBackend for WindowsPresentingCompositor<T>
+where
+    T: Clone + Into<wgpu::SurfaceTarget<'static>>,
+{
+    type Error = WindowsGpuError;
+
+    fn submit(&mut self, frame: FrameSubmission<'_>) -> Result<(), Self::Error> {
+        let size = frame.plan.size();
+        self.surface.resize(&self.gpu, size.width, size.height)?;
+        self.backend
+            .submit(frame)
+            .map_err(WindowsGpuError::Compositor)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl<T> PresentingCompositorBackend for WindowsPresentingCompositor<T>
+where
+    T: Clone + Into<wgpu::SurfaceTarget<'static>>,
+{
+    fn present_retained(&mut self) -> Result<PresentationStatus, Self::Error> {
+        match self.surface.present(&mut self.backend) {
+            Ok(()) => Ok(PresentationStatus::Presented),
+            Err(error) => self.recover_presentation(error),
+        }
     }
 }
 
