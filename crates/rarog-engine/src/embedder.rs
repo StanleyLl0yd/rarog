@@ -1105,31 +1105,30 @@ mod tests {
         view.render(viewport).unwrap();
         view.complete_frame_request(scroll.id()).unwrap();
 
-        let hero = view
-            .session
-            .as_ref()
-            .map(|session| {
-                session
-                    .document()
-                    .snapshot();
-                session
-                    .document()
-                    .node_ids()
-                    .find(|node| {
-                        session
-                            .document()
-                            .node(*node)
-                            .and_then(|current| match &current.kind {
-                                rarog_dom::NodeKind::Element(element) => {
-                                    element.attributes.get("id").map(String::as_str)
-                                }
-                                _ => None,
-                            })
-                            == Some("hero")
+        let hero = {
+            let document = view.session.as_ref().unwrap().document();
+            let mut stack = vec![document.root()];
+            let mut found = None;
+            while let Some(node) = stack.pop() {
+                if document
+                    .node(node)
+                    .and_then(|current| match &current.kind {
+                        rarog_dom::NodeKind::Element(element) => {
+                            element.attributes.get("id").map(String::as_str)
+                        }
+                        _ => None,
                     })
-                    .unwrap()
-            })
-            .unwrap();
+                    == Some("hero")
+                {
+                    found = Some(node);
+                    break;
+                }
+                if let Some(children) = document.children(node) {
+                    stack.extend(children.iter().rev().copied());
+                }
+            }
+            found.expect("test document contains #hero")
+        };
         view.session
             .as_mut()
             .unwrap()
