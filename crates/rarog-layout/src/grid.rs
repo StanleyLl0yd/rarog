@@ -94,6 +94,104 @@ impl GridSpanningSizeContribution {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GridIntrinsicContributionKind {
+    Minimum,
+    MinContent,
+    MaxContent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GridAxisIntrinsicContributions {
+    pub minimum: f32,
+    pub min_content: f32,
+    pub max_content: f32,
+}
+
+impl GridAxisIntrinsicContributions {
+    pub const fn new(minimum: f32, min_content: f32, max_content: f32) -> Self {
+        Self {
+            minimum,
+            min_content,
+            max_content,
+        }
+    }
+
+    const fn size_for(self, kind: GridIntrinsicContributionKind) -> f32 {
+        match kind {
+            GridIntrinsicContributionKind::Minimum => self.minimum,
+            GridIntrinsicContributionKind::MinContent => self.min_content,
+            GridIntrinsicContributionKind::MaxContent => self.max_content,
+        }
+    }
+
+    fn validate(self, node: LayoutNodeId, axis: GridAxis) -> Result<Self, GridLayoutError> {
+        let minimum = self.size_for(GridIntrinsicContributionKind::Minimum);
+        let min_content = self.size_for(GridIntrinsicContributionKind::MinContent);
+        let max_content = self.size_for(GridIntrinsicContributionKind::MaxContent);
+        if minimum.is_finite()
+            && min_content.is_finite()
+            && max_content.is_finite()
+            && minimum >= 0.0
+            && minimum <= min_content
+            && min_content <= max_content
+        {
+            Ok(self)
+        } else {
+            Err(GridLayoutError::InvalidContribution { node, axis })
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GridIntrinsicContributions {
+    pub node: LayoutNodeId,
+    pub inline: GridAxisIntrinsicContributions,
+    pub block: GridAxisIntrinsicContributions,
+}
+
+impl GridIntrinsicContributions {
+    pub const fn new(
+        node: LayoutNodeId,
+        inline: GridAxisIntrinsicContributions,
+        block: GridAxisIntrinsicContributions,
+    ) -> Self {
+        Self {
+            node,
+            inline,
+            block,
+        }
+    }
+
+    const fn from_legacy(contribution: GridItemContribution) -> Self {
+        Self::new(
+            contribution.node,
+            GridAxisIntrinsicContributions::new(
+                contribution.inline_size,
+                contribution.inline_size,
+                contribution.inline_size,
+            ),
+            GridAxisIntrinsicContributions::new(
+                contribution.block_size,
+                contribution.block_size,
+                contribution.block_size,
+            ),
+        )
+    }
+
+    pub(crate) fn size_for(
+        self,
+        axis: GridAxis,
+        kind: GridIntrinsicContributionKind,
+    ) -> Result<f32, GridLayoutError> {
+        match axis {
+            GridAxis::Column => self.inline.validate(self.node, axis),
+            GridAxis::Row => self.block.validate(self.node, axis),
+        }
+        .map(|contributions| contributions.size_for(kind))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GridItemContribution {
     pub node: LayoutNodeId,
@@ -107,13 +205,6 @@ impl GridItemContribution {
             node,
             inline_size,
             block_size,
-        }
-    }
-
-    const fn size_for_axis(self, axis: GridAxis) -> f32 {
-        match axis {
-            GridAxis::Column => self.inline_size,
-            GridAxis::Row => self.block_size,
         }
     }
 }
@@ -438,13 +529,8 @@ pub fn resolve_content_sized_tracks(
                 node: item.node,
                 axis,
             })?;
-        let size = contribution.size_for_axis(axis);
-        if !size.is_finite() || size < 0.0 {
-            return Err(GridLayoutError::InvalidContribution {
-                node: item.node,
-                axis,
-            });
-        }
+        let size = GridIntrinsicContributions::from_legacy(contribution)
+            .size_for(axis, GridIntrinsicContributionKind::MaxContent)?;
         planned_contributions.push(GridSpanningSizeContribution::new(
             item.node, start, span, size,
         ));
@@ -1113,6 +1199,113 @@ mod tests {
         let mut intrinsic = GridTrackSizingState::intrinsic();
         intrinsic.grow_base_to(50.0);
         assert_eq!(intrinsic.base_size, 50.0);
+    }
+
+    #[test]
+    fn legacy_contribution_adapter_preserves_existing_scalar_sizes() {
+        let contributions = GridIntrinsicContributions::from_legacy(GridItemContribution::new(
+            LayoutNodeId(3),
+            42.0,
+            18.0,
+        ));
+
+        for kind in [
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MinContent,
+            GridIntrinsicContributionKind::MaxContent,
+        ] {
+            assert_eq!(
+                contributions.size_for(GridAxis::Column, kind).unwrap(),
+                42.0
+            );
+            assert_eq!(contributions.size_for(GridAxis::Row, kind).unwrap(), 18.0);
+        }
+    }
+
+    #[test]
+    fn intrinsic_contribution_kinds_are_selected_per_axis() {
+        let contributions = GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(12.0, 20.0, 36.0),
+            GridAxisIntrinsicContributions::new(8.0, 14.0, 22.0),
+        );
+
+        assert_eq!(
+            contributions
+                .size_for(GridAxis::Column, GridIntrinsicContributionKind::Minimum)
+                .unwrap(),
+            12.0
+        );
+        assert_eq!(
+            contributions
+                .size_for(GridAxis::Column, GridIntrinsicContributionKind::MinContent)
+                .unwrap(),
+            20.0
+        );
+        assert_eq!(
+            contributions
+                .size_for(GridAxis::Column, GridIntrinsicContributionKind::MaxContent)
+                .unwrap(),
+            36.0
+        );
+        assert_eq!(
+            contributions
+                .size_for(GridAxis::Row, GridIntrinsicContributionKind::Minimum)
+                .unwrap(),
+            8.0
+        );
+        assert_eq!(
+            contributions
+                .size_for(GridAxis::Row, GridIntrinsicContributionKind::MaxContent)
+                .unwrap(),
+            22.0
+        );
+    }
+
+    #[test]
+    fn intrinsic_contribution_kinds_validate_selected_axis_geometry() {
+        let contributions = GridIntrinsicContributions::new(
+            LayoutNodeId(7),
+            GridAxisIntrinsicContributions::new(10.0, f32::NAN, 20.0),
+            GridAxisIntrinsicContributions::new(5.0, 6.0, 7.0),
+        );
+
+        assert_eq!(
+            contributions.size_for(GridAxis::Column, GridIntrinsicContributionKind::MinContent,),
+            Err(GridLayoutError::InvalidContribution {
+                node: LayoutNodeId(7),
+                axis: GridAxis::Column,
+            })
+        );
+        assert_eq!(
+            contributions
+                .size_for(GridAxis::Row, GridIntrinsicContributionKind::MinContent)
+                .unwrap(),
+            6.0
+        );
+    }
+
+    #[test]
+    fn intrinsic_contribution_kinds_require_monotonic_sizes() {
+        let contributions = GridIntrinsicContributions::new(
+            LayoutNodeId(9),
+            GridAxisIntrinsicContributions::new(30.0, 20.0, 25.0),
+            GridAxisIntrinsicContributions::new(1.0, 1.0, 1.0),
+        );
+
+        assert_eq!(
+            contributions.size_for(GridAxis::Column, GridIntrinsicContributionKind::Minimum,),
+            Err(GridLayoutError::InvalidContribution {
+                node: LayoutNodeId(9),
+                axis: GridAxis::Column,
+            })
+        );
+        assert_eq!(
+            contributions
+                .size_for(GridAxis::Row, GridIntrinsicContributionKind::MaxContent)
+                .unwrap(),
+            1.0
+        );
     }
 
     #[test]
