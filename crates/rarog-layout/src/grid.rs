@@ -36,6 +36,46 @@ impl GridTrackSizing {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum GridTrackGrowthLimit {
+    Finite(f32),
+    Infinite,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GridTrackSizingState {
+    pub base_size: f32,
+    pub growth_limit: GridTrackGrowthLimit,
+}
+
+impl GridTrackSizingState {
+    const fn fixed(size: f32) -> Self {
+        Self {
+            base_size: size,
+            growth_limit: GridTrackGrowthLimit::Finite(size),
+        }
+    }
+
+    const fn intrinsic() -> Self {
+        Self {
+            base_size: 0.0,
+            growth_limit: GridTrackGrowthLimit::Infinite,
+        }
+    }
+
+    fn grow_base_to(&mut self, requested_size: f32) {
+        let bounded_size = match self.growth_limit {
+            GridTrackGrowthLimit::Finite(limit) => requested_size.min(limit),
+            GridTrackGrowthLimit::Infinite => requested_size,
+        };
+        self.base_size = self.base_size.max(bounded_size);
+    }
+
+    const fn resolved_track(self) -> GridTrack {
+        GridTrack::new(self.base_size)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GridItemContribution {
     pub node: LayoutNodeId,
     pub inline_size: f32,
@@ -345,18 +385,7 @@ pub fn resolve_content_sized_tracks(
     items: &[GridItem],
     contributions: &[GridItemContribution],
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
-    let mut tracks = sizing
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, track)| match track {
-            GridTrackSizing::Fixed(size) if size.is_finite() && size >= 0.0 => {
-                Ok(GridTrack::new(size))
-            }
-            GridTrackSizing::Auto => Ok(GridTrack::new(0.0)),
-            GridTrackSizing::Fixed(_) => Err(GridLayoutError::InvalidTrackSize { axis, index }),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut states = initialize_track_sizing_states(sizing, axis)?;
 
     for item in items.iter().copied() {
         let (start, span) = match axis {
@@ -396,10 +425,31 @@ pub fn resolve_content_sized_tracks(
                 axis,
             });
         }
-        tracks[start].base_size = tracks[start].base_size.max(size);
+        states[start].grow_base_to(size);
     }
 
-    Ok(tracks)
+    Ok(states
+        .into_iter()
+        .map(GridTrackSizingState::resolved_track)
+        .collect())
+}
+
+fn initialize_track_sizing_states(
+    sizing: &[GridTrackSizing],
+    axis: GridAxis,
+) -> Result<Vec<GridTrackSizingState>, GridLayoutError> {
+    sizing
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, track)| match track {
+            GridTrackSizing::Fixed(size) if size.is_finite() && size >= 0.0 => {
+                Ok(GridTrackSizingState::fixed(size))
+            }
+            GridTrackSizing::Auto => Ok(GridTrackSizingState::intrinsic()),
+            GridTrackSizing::Fixed(_) => Err(GridLayoutError::InvalidTrackSize { axis, index }),
+        })
+        .collect()
 }
 
 fn validate_request_span(request: GridPlacementRequest) -> Result<(), GridLayoutError> {
@@ -862,6 +912,40 @@ mod tests {
                 node: LayoutNodeId(2),
             })
         );
+    }
+
+    #[test]
+    fn track_sizing_state_initializes_base_sizes_and_growth_limits() {
+        let states = initialize_track_sizing_states(
+            &[GridTrackSizing::Fixed(24.0), GridTrackSizing::Auto],
+            GridAxis::Column,
+        )
+        .unwrap();
+
+        assert_eq!(
+            states,
+            vec![
+                GridTrackSizingState {
+                    base_size: 24.0,
+                    growth_limit: GridTrackGrowthLimit::Finite(24.0),
+                },
+                GridTrackSizingState {
+                    base_size: 0.0,
+                    growth_limit: GridTrackGrowthLimit::Infinite,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn track_sizing_state_growth_respects_finite_limit() {
+        let mut fixed = GridTrackSizingState::fixed(20.0);
+        fixed.grow_base_to(50.0);
+        assert_eq!(fixed.base_size, 20.0);
+
+        let mut intrinsic = GridTrackSizingState::intrinsic();
+        intrinsic.grow_base_to(50.0);
+        assert_eq!(intrinsic.base_size, 50.0);
     }
 
     #[test]
