@@ -84,10 +84,9 @@ mod windows {
             compositor.try_present_retained()?;
             let completion = compositor.recv_completion()?;
             if completion.frame().is_some() {
-                return Err(io::Error::other(
-                    "retained presentation returned a frame completion",
-                )
-                .into());
+                return Err(
+                    io::Error::other("retained presentation returned a frame completion").into(),
+                );
             }
             let status = completion.result()?;
             self.request_redraw_if_deferred(status);
