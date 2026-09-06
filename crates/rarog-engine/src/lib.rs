@@ -98,7 +98,7 @@ impl std::fmt::Display for RenderError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidViewportSize => {
-                formatter.write_str("viewport dimensions must be non-negative")
+                formatter.write_str("viewport dimensions must be finite and non-negative")
             }
             Self::InvalidRenderLimits => formatter.write_str("render limits must be non-zero"),
             Self::DocumentSourceLimitExceeded { bytes, limit } => write!(
@@ -1322,7 +1322,11 @@ fn validate_render_state_limits(
 }
 
 fn validate_viewport_size(viewport: Size) -> Result<(), RenderError> {
-    if viewport.width < 0.0 || viewport.height < 0.0 {
+    if !viewport.width.is_finite()
+        || !viewport.height.is_finite()
+        || viewport.width < 0.0
+        || viewport.height < 0.0
+    {
         return Err(RenderError::InvalidViewportSize);
     }
     Ok(())
@@ -3570,6 +3574,28 @@ mod render_boundary_hardening_tests {
             error,
             RenderError::Framebuffer(FramebufferError::NonFiniteSize)
         ));
+    }
+
+    #[test]
+    fn non_finite_viewport_is_rejected_before_render_work() {
+        for viewport in [
+            Size {
+                width: f32::NAN,
+                height: 100.0,
+            },
+            Size {
+                width: 100.0,
+                height: f32::INFINITY,
+            },
+        ] {
+            assert!(matches!(
+                render_html("<div>x</div>", RenderOptions {
+                    viewport,
+                    background: Color::WHITE,
+                }),
+                Err(RenderError::InvalidViewportSize)
+            ));
+        }
     }
 
     #[test]
