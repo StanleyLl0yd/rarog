@@ -516,8 +516,32 @@ pub(crate) fn resolve_intrinsic_content_sized_tracks(
     contributions: &[GridIntrinsicContributions],
     kind: GridIntrinsicContributionKind,
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
+    let states = resolve_non_spanning_intrinsic_track_states(
+        sizing,
+        axis,
+        items,
+        contributions,
+        kind,
+        kind,
+    )?;
+
+    Ok(states
+        .into_iter()
+        .map(GridTrackSizingState::resolved_track)
+        .collect())
+}
+
+pub(crate) fn resolve_non_spanning_intrinsic_track_states(
+    sizing: &[GridTrackSizing],
+    axis: GridAxis,
+    items: &[GridItem],
+    contributions: &[GridIntrinsicContributions],
+    base_kind: GridIntrinsicContributionKind,
+    growth_kind: GridIntrinsicContributionKind,
+) -> Result<Vec<GridTrackSizingState>, GridLayoutError> {
     let mut states = initialize_track_sizing_states(sizing, axis)?;
     let mut planned_contributions = Vec::new();
+    let mut growth_targets: Vec<Option<f32>> = vec![None; sizing.len()];
 
     for item in items.iter().copied() {
         let (start, span) = match axis {
@@ -550,18 +574,29 @@ pub(crate) fn resolve_intrinsic_content_sized_tracks(
                 node: item.node,
                 axis,
             })?;
-        let size = contribution.size_for(axis, kind)?;
+        let base_size = contribution.size_for(axis, base_kind)?;
+        let growth_size = contribution.size_for(axis, growth_kind)?;
         planned_contributions.push(GridSpanningSizeContribution::new(
-            item.node, start, span, size,
+            item.node, start, span, base_size,
         ));
+        growth_targets[start] = Some(
+            growth_targets[start]
+                .map_or(growth_size, |current| current.max(growth_size)),
+        );
     }
 
     apply_spanning_base_size_rounds(&mut states, sizing, 0.0, axis, &planned_contributions)?;
 
-    Ok(states
-        .into_iter()
-        .map(GridTrackSizingState::resolved_track)
-        .collect())
+    for (index, (state, track)) in states.iter_mut().zip(sizing.iter()).enumerate() {
+        if matches!(track, GridTrackSizing::Auto) {
+            let growth_limit = growth_targets[index]
+                .unwrap_or(state.base_size)
+                .max(state.base_size);
+            state.growth_limit = GridTrackGrowthLimit::Finite(growth_limit);
+        }
+    }
+
+    Ok(states)
 }
 
 fn initialize_track_sizing_states(
@@ -1350,6 +1385,108 @@ mod tests {
                 .size_for(GridAxis::Row, GridIntrinsicContributionKind::MaxContent)
                 .unwrap(),
             1.0
+        );
+    }
+
+    #[test]
+    fn non_spanning_intrinsic_state_separates_minimum_base_and_max_content_limit() {
+        let sizing = [GridTrackSizing::Auto];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(12.0, 20.0, 36.0),
+            GridAxisIntrinsicContributions::new(8.0, 14.0, 22.0),
+        )];
+
+        let states = resolve_non_spanning_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MaxContent,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 12.0);
+        assert_eq!(
+            states[0].growth_limit,
+            GridTrackGrowthLimit::Finite(36.0)
+        );
+    }
+
+    #[test]
+    fn non_spanning_intrinsic_state_uses_largest_targets_per_auto_track() {
+        let sizing = [GridTrackSizing::Auto];
+        let items = [
+            GridItem::new(LayoutNodeId(1), 0, 0),
+            GridItem::new(LayoutNodeId(2), 0, 0),
+        ];
+        let contributions = [
+            GridIntrinsicContributions::new(
+                LayoutNodeId(1),
+                GridAxisIntrinsicContributions::new(12.0, 20.0, 36.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+            GridIntrinsicContributions::new(
+                LayoutNodeId(2),
+                GridAxisIntrinsicContributions::new(18.0, 24.0, 50.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+        ];
+
+        let states = resolve_non_spanning_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MaxContent,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 18.0);
+        assert_eq!(
+            states[0].growth_limit,
+            GridTrackGrowthLimit::Finite(50.0)
+        );
+    }
+
+    #[test]
+    fn non_spanning_intrinsic_state_closes_unused_auto_growth_limit_to_base() {
+        let states = resolve_non_spanning_intrinsic_track_states(
+            &[GridTrackSizing::Auto],
+            GridAxis::Column,
+            &[],
+            &[],
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MaxContent,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 0.0);
+        assert_eq!(
+            states[0].growth_limit,
+            GridTrackGrowthLimit::Finite(0.0)
+        );
+    }
+
+    #[test]
+    fn non_spanning_intrinsic_state_preserves_fixed_track_limits() {
+        let states = resolve_non_spanning_intrinsic_track_states(
+            &[GridTrackSizing::Fixed(24.0)],
+            GridAxis::Column,
+            &[],
+            &[],
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MaxContent,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 24.0);
+        assert_eq!(
+            states[0].growth_limit,
+            GridTrackGrowthLimit::Finite(24.0)
         );
     }
 
