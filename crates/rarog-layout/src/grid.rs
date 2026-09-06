@@ -19,6 +19,22 @@ impl GridTrack {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GridTrackGroupAlignment {
+    Start,
+    End,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GridTrackGroupDistribution {
+    pub offset: f32,
+    pub gap: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GridTrackSizing {
     Fixed(f32),
@@ -1019,6 +1035,61 @@ fn validate_origin(origin: Point) -> Result<(), GridLayoutError> {
     }
 }
 
+pub(crate) fn resolve_grid_track_group_distribution(
+    tracks: &[GridTrack],
+    base_gap: f32,
+    available_space: Option<f32>,
+    axis: GridAxis,
+    alignment: GridTrackGroupAlignment,
+) -> Result<GridTrackGroupDistribution, GridLayoutError> {
+    validate_tracks(tracks, axis)?;
+    validate_gap(base_gap, axis)?;
+
+    let Some(available_space) = available_space else {
+        return Ok(GridTrackGroupDistribution {
+            offset: 0.0,
+            gap: base_gap,
+        });
+    };
+    if !available_space.is_finite() || available_space < 0.0 {
+        return Err(GridLayoutError::InvalidAvailableSize);
+    }
+
+    let extent = track_extent(tracks, base_gap)?;
+    let free_space = available_space - extent;
+    let track_count = tracks.len();
+
+    let (offset, extra_gap) = match alignment {
+        GridTrackGroupAlignment::Start => (0.0, 0.0),
+        GridTrackGroupAlignment::End => (free_space, 0.0),
+        GridTrackGroupAlignment::Center => (free_space / 2.0, 0.0),
+        GridTrackGroupAlignment::SpaceBetween if free_space > 0.0 && track_count > 1 => {
+            (0.0, free_space / (track_count - 1) as f32)
+        }
+        GridTrackGroupAlignment::SpaceAround if free_space > 0.0 && track_count > 0 => {
+            let slot = free_space / track_count as f32;
+            (slot / 2.0, slot)
+        }
+        GridTrackGroupAlignment::SpaceEvenly if free_space > 0.0 && track_count > 0 => {
+            let slot = free_space / (track_count + 1) as f32;
+            (slot, slot)
+        }
+        GridTrackGroupAlignment::SpaceBetween => (0.0, 0.0),
+        GridTrackGroupAlignment::SpaceAround | GridTrackGroupAlignment::SpaceEvenly => {
+            (0.0, 0.0)
+        }
+    };
+
+    if !offset.is_finite() || !extra_gap.is_finite() {
+        return Err(GridLayoutError::GeometryOverflow);
+    }
+
+    Ok(GridTrackGroupDistribution {
+        offset,
+        gap: finite_add(base_gap, extra_gap)?,
+    })
+}
+
 fn validate_available_size(size: Size) -> Result<(), GridLayoutError> {
     if size.width.is_finite() && size.height.is_finite() && size.width >= 0.0 && size.height >= 0.0
     {
@@ -1087,6 +1158,145 @@ mod tests {
 
     fn track(size: f32) -> GridTrack {
         GridTrack::new(size)
+    }
+
+    #[test]
+    fn track_group_start_end_and_center_resolve_offsets() {
+        let tracks = [track(20.0), track(30.0)];
+
+        let start = resolve_grid_track_group_distribution(
+            &tracks,
+            10.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::Start,
+        )
+        .unwrap();
+        let end = resolve_grid_track_group_distribution(
+            &tracks,
+            10.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::End,
+        )
+        .unwrap();
+        let center = resolve_grid_track_group_distribution(
+            &tracks,
+            10.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::Center,
+        )
+        .unwrap();
+
+        assert_eq!(start, GridTrackGroupDistribution { offset: 0.0, gap: 10.0 });
+        assert_eq!(end, GridTrackGroupDistribution { offset: 40.0, gap: 10.0 });
+        assert_eq!(center, GridTrackGroupDistribution { offset: 20.0, gap: 10.0 });
+    }
+
+    #[test]
+    fn track_group_distributed_alignment_expands_gutters() {
+        let tracks = [track(20.0), track(20.0), track(20.0)];
+
+        let between = resolve_grid_track_group_distribution(
+            &tracks,
+            0.0,
+            Some(120.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::SpaceBetween,
+        )
+        .unwrap();
+        let around = resolve_grid_track_group_distribution(
+            &tracks,
+            0.0,
+            Some(120.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::SpaceAround,
+        )
+        .unwrap();
+        let evenly = resolve_grid_track_group_distribution(
+            &tracks,
+            0.0,
+            Some(120.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::SpaceEvenly,
+        )
+        .unwrap();
+
+        assert_eq!(between, GridTrackGroupDistribution { offset: 0.0, gap: 30.0 });
+        assert_eq!(around, GridTrackGroupDistribution { offset: 10.0, gap: 20.0 });
+        assert_eq!(evenly, GridTrackGroupDistribution { offset: 15.0, gap: 15.0 });
+    }
+
+    #[test]
+    fn track_group_distribution_uses_safe_fallbacks_when_space_is_negative() {
+        let tracks = [track(80.0), track(40.0)];
+
+        let between = resolve_grid_track_group_distribution(
+            &tracks,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::SpaceBetween,
+        )
+        .unwrap();
+        let around = resolve_grid_track_group_distribution(
+            &tracks,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::SpaceAround,
+        )
+        .unwrap();
+        let end = resolve_grid_track_group_distribution(
+            &tracks,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::End,
+        )
+        .unwrap();
+        let center = resolve_grid_track_group_distribution(
+            &tracks,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::Center,
+        )
+        .unwrap();
+
+        assert_eq!(between.offset, 0.0);
+        assert_eq!(around.offset, 0.0);
+        assert_eq!(end.offset, -20.0);
+        assert_eq!(center.offset, -10.0);
+    }
+
+    #[test]
+    fn track_group_single_item_space_between_falls_back_to_start() {
+        let distribution = resolve_grid_track_group_distribution(
+            &[track(20.0)],
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            GridTrackGroupAlignment::SpaceBetween,
+        )
+        .unwrap();
+
+        assert_eq!(distribution, GridTrackGroupDistribution { offset: 0.0, gap: 0.0 });
+    }
+
+    #[test]
+    fn track_group_distribution_preserves_base_gap_for_indefinite_space() {
+        let distribution = resolve_grid_track_group_distribution(
+            &[track(20.0), track(20.0)],
+            8.0,
+            None,
+            GridAxis::Row,
+            GridTrackGroupAlignment::SpaceEvenly,
+        )
+        .unwrap();
+
+        assert_eq!(distribution, GridTrackGroupDistribution { offset: 0.0, gap: 8.0 });
     }
 
     #[test]
