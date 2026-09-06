@@ -17,7 +17,10 @@ use rarog_paint::{
     DamageRegion, DisplayList, DisplayListError, Framebuffer, FramebufferError, build_display_list,
     replace_display_items_for_fragment, replace_display_items_for_fragments,
 };
-use rarog_resources::ImageResourceStore;
+use rarog_resources::{
+    ImageDecodeOutcome, ImageDecodeQueue, ImageDecodeQueueError, ImageDecodeRequestId,
+    ImageDecodeReservation, ImageDecodeWork, ImageResourceId, ImageResourceRef, ImageResourceStore,
+};
 use rarog_types::{Color, Size};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -85,6 +88,7 @@ pub enum RenderError {
     FragmentLimitExceeded { fragments: usize, limit: usize },
     DisplayCommandLimitExceeded { commands: usize, limit: usize },
     DisplayListRevisionExhausted,
+    ImageDecode(ImageDecodeQueueError),
     DisplayList(DisplayListError),
     Framebuffer(FramebufferError),
 }
@@ -126,6 +130,7 @@ impl std::fmt::Display for RenderError {
             Self::DisplayListRevisionExhausted => {
                 formatter.write_str("display-list revision space exhausted")
             }
+            Self::ImageDecode(error) => write!(formatter, "{error}"),
             Self::DisplayList(error) => write!(formatter, "{error}"),
             Self::Framebuffer(error) => write!(formatter, "{error}"),
         }
@@ -143,6 +148,12 @@ impl From<DisplayListError> for RenderError {
 impl From<FramebufferError> for RenderError {
     fn from(error: FramebufferError) -> Self {
         Self::Framebuffer(error)
+    }
+}
+
+impl From<ImageDecodeQueueError> for RenderError {
+    fn from(error: ImageDecodeQueueError) -> Self {
+        Self::ImageDecode(error)
     }
 }
 
@@ -182,6 +193,12 @@ pub struct RenderCounters {
 pub struct RenderObservability {
     pub timings: RenderTimings,
     pub counters: RenderCounters,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImageDecodeCompletion {
+    pub reference: Option<ImageResourceRef>,
+    pub visual_change_pending: bool,
 }
 
 pub struct RenderOutput {
@@ -333,6 +350,8 @@ pub struct RenderSession {
     damage: DamageRegion,
     framebuffer: Framebuffer,
     image_resources: ImageResourceStore,
+    image_decodes: ImageDecodeQueue,
+    pending_image_refreshes: BTreeMap<ImageResourceId, ImageResourceRef>,
     dirty: DirtyState,
     observability: RenderObservability,
 }
@@ -361,6 +380,8 @@ impl RenderSession {
             damage: output.damage,
             framebuffer: output.framebuffer,
             image_resources: ImageResourceStore::default(),
+            image_decodes: ImageDecodeQueue::default(),
+            pending_image_refreshes: BTreeMap::new(),
             dirty: DirtyState::clean_at(generation),
             observability: output.observability,
         })
@@ -418,6 +439,62 @@ impl RenderSession {
         &self.image_resources
     }
 
+    pub fn image_decode_queue(&self) -> &ImageDecodeQueue {
+        &self.image_decodes
+    }
+
+    pub fn queue_image_decode(
+        &mut self,
+        encoded: Vec<u8>,
+    ) -> Result<ImageDecodeReservation, RenderError> {
+        Ok(self
+            .image_decodes
+            .enqueue(&mut self.image_resources, encoded)?)
+    }
+
+    pub fn begin_image_decode(&mut self) -> Result<Option<ImageDecodeWork>, RenderError> {
+        Ok(self.image_decodes.begin_next()?)
+    }
+
+    pub fn complete_image_decode(
+        &mut self,
+        request: ImageDecodeRequestId,
+        outcome: ImageDecodeOutcome,
+    ) -> Result<ImageDecodeCompletion, RenderError> {
+        let reference = self
+            .image_decodes
+            .complete(&mut self.image_resources, request, outcome)?;
+
+        let visual_change_pending = reference.is_some_and(|reference| {
+            let mut candidate = self.display_list.clone();
+            candidate.refresh_image_resource(reference).updated_commands > 0
+        });
+        if visual_change_pending {
+            let reference = reference.expect("visual image completion has a ready reference");
+            self.pending_image_refreshes
+                .insert(reference.id(), reference);
+        }
+
+        Ok(ImageDecodeCompletion {
+            reference,
+            visual_change_pending,
+        })
+    }
+
+    pub fn cancel_pending_image_decode(&mut self, request: ImageDecodeRequestId) -> bool {
+        self.image_decodes
+            .cancel_pending(&mut self.image_resources, request)
+    }
+
+    pub fn discard_active_image_decode(
+        &mut self,
+        request: ImageDecodeRequestId,
+    ) -> Result<(), RenderError> {
+        self.image_decodes
+            .discard_active(&mut self.image_resources, request)?;
+        Ok(())
+    }
+
     pub fn dirty_state(&self) -> &DirtyState {
         &self.dirty
     }
@@ -471,6 +548,7 @@ impl RenderSession {
         self.display_list_revision = display_list_revision;
         self.damage = damage;
         self.framebuffer = framebuffer;
+        self.pending_image_refreshes.clear();
         self.dirty = DirtyState::clean_at(generation);
         self.observability = RenderObservability {
             timings: RenderTimings {
@@ -512,13 +590,56 @@ impl RenderSession {
         let through_generation = dirty.through_generation();
         let dirty_nodes = dirty.entries().len();
 
+        let mut display_list = self.display_list.clone();
+        let resource_updates = self
+            .pending_image_refreshes
+            .values()
+            .copied()
+            .map(|reference| {
+                display_list
+                    .refresh_image_resource(reference)
+                    .updated_commands
+            })
+            .fold(0usize, usize::saturating_add);
+
         if !mutation_history_lost && (mutations.is_empty() || dirty_nodes == 0) {
-            self.damage = DamageRegion::default();
             dirty.clear();
             self.dirty = dirty;
             self.document.prune_mutations_through(through_generation);
+
+            if resource_updates == 0 {
+                self.damage = DamageRegion::default();
+                self.pending_image_refreshes.clear();
+                return Ok(IncrementalReport {
+                    mode: IncrementalMode::Unchanged,
+                    from_generation,
+                    through_generation,
+                    dirty_nodes,
+                    patched_nodes: 0,
+                    retained_display_list: true,
+                    styles_rebuilt: false,
+                    elapsed: update_started.elapsed(),
+                });
+            }
+
+            let damage = DamageRegion::between(Some(&self.display_list), &display_list);
+            let display_list_revision = next_display_list_revision(
+                self.display_list_revision,
+                &self.display_list,
+                &display_list,
+            )?;
+            self.framebuffer.rasterize_damage_with_images(
+                &display_list,
+                &damage,
+                self.options.background,
+                &self.image_resources,
+            );
+            self.display_list = display_list;
+            self.display_list_revision = display_list_revision;
+            self.damage = damage;
+            self.pending_image_refreshes.clear();
             return Ok(IncrementalReport {
-                mode: IncrementalMode::Unchanged,
+                mode: IncrementalMode::PaintOnlyReuse,
                 from_generation,
                 through_generation,
                 dirty_nodes,
@@ -530,7 +651,6 @@ impl RenderSession {
         }
 
         let mut layout = self.layout.clone();
-        let mut display_list = self.display_list.clone();
 
         let mut style_candidates = dirty
             .entries()
@@ -953,6 +1073,7 @@ impl RenderSession {
         self.display_list = display_list;
         self.display_list_revision = display_list_revision;
         self.damage = damage;
+        self.pending_image_refreshes.clear();
         dirty.clear();
         self.dirty = dirty;
         self.document.prune_mutations_through(through_generation);
@@ -1554,6 +1675,102 @@ mod tests {
         assert!(session.image_resources().image(reference).is_some());
         session.update().unwrap();
         assert!(session.image_resources().image(reference).is_some());
+    }
+
+    #[test]
+    fn completed_image_decode_becomes_damage_visible_on_next_update() {
+        let mut session = session("<div>Rarog</div>", deterministic_options());
+        session.damage = DamageRegion::default();
+
+        let reservation = session.queue_image_decode(vec![1, 2, 3]).unwrap();
+        let pending = session
+            .image_resources()
+            .revision_ref(reservation.resource())
+            .unwrap();
+        session.display_list = DisplayList::try_from_parts(
+            vec![rarog_paint::DisplayItemId {
+                source: 99,
+                fragment: 1,
+                slot: 0,
+            }],
+            vec![rarog_paint::DisplayCommand::DrawImage {
+                rect: rarog_types::Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: pending,
+            }],
+        )
+        .unwrap();
+        let revision = session.display_list_revision();
+
+        let work = session.begin_image_decode().unwrap().unwrap();
+        assert_eq!(work.request(), reservation.request());
+        let completion = session
+            .complete_image_decode(
+                work.request(),
+                ImageDecodeOutcome::Ready(
+                    rarog_resources::DecodedImage::try_new(
+                        1,
+                        1,
+                        vec![Color::rgb(0xff, 0x00, 0x00)],
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+        let ready = completion.reference.unwrap();
+
+        assert!(completion.visual_change_pending);
+        assert_eq!(
+            session.display_list.commands()[0],
+            rarog_paint::DisplayCommand::DrawImage {
+                rect: rarog_types::Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: pending,
+            }
+        );
+        assert!(session.image_resources().image(ready).is_some());
+
+        let report = session.update().unwrap();
+        assert_eq!(report.mode, IncrementalMode::PaintOnlyReuse);
+        assert_eq!(
+            session.display_list_revision(),
+            DisplayListRevision::new(revision.get() + 1)
+        );
+        assert_eq!(
+            session.damage().rects,
+            vec![rarog_types::Rect::new(0.0, 0.0, 2.0, 2.0)]
+        );
+        assert_eq!(
+            session.display_list.commands()[0],
+            rarog_paint::DisplayCommand::DrawImage {
+                rect: rarog_types::Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: ready,
+            }
+        );
+        assert_eq!(
+            &session.framebuffer().to_rgba8()[..4],
+            &[0xff, 0x00, 0x00, 0xff]
+        );
+    }
+
+    #[test]
+    fn unreferenced_image_completion_does_not_create_render_work() {
+        let mut session = session("<div>Rarog</div>", deterministic_options());
+        let reservation = session.queue_image_decode(vec![7]).unwrap();
+        let work = session.begin_image_decode().unwrap().unwrap();
+
+        let completion = session
+            .complete_image_decode(
+                work.request(),
+                ImageDecodeOutcome::Ready(
+                    rarog_resources::DecodedImage::try_new(1, 1, vec![Color::BLACK]).unwrap(),
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(completion.reference.unwrap().id(), reservation.resource());
+        assert!(!completion.visual_change_pending);
+        let report = session.update().unwrap();
+        assert_eq!(report.mode, IncrementalMode::Unchanged);
+        assert!(session.damage().rects.is_empty());
     }
 
     #[test]

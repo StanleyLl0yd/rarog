@@ -1,8 +1,8 @@
 use super::{
     DEFAULT_MAX_CSS_RULES, DEFAULT_MAX_DISPLAY_COMMANDS, DEFAULT_MAX_DOM_DEPTH,
-    DEFAULT_MAX_DOM_NODES, DEFAULT_MAX_FRAGMENTS, DEFAULT_MAX_TEXT_SCALARS, IncrementalReport,
-    RenderError, RenderLimits, RenderObservability, RenderOptions, RenderSession,
-    validate_viewport_size,
+    DEFAULT_MAX_DOM_NODES, DEFAULT_MAX_FRAGMENTS, DEFAULT_MAX_TEXT_SCALARS, ImageDecodeCompletion,
+    IncrementalReport, RenderError, RenderLimits, RenderObservability, RenderOptions,
+    RenderSession, validate_viewport_size,
 };
 use rarog_compositor::{
     DisplayListRevision, FrameCause, FrameDecision, FramePlanner, FramePlannerError,
@@ -13,7 +13,10 @@ use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
 use rarog_platform::{NullPlatformHost, PlatformCapabilities, PlatformHost};
-use rarog_resources::ImageResourceStore;
+use rarog_resources::{
+    ImageDecodeOutcome, ImageDecodeRequestId, ImageDecodeReservation, ImageDecodeWork,
+    ImageResourceStore,
+};
 use rarog_types::{Color, Size};
 use std::fmt;
 use std::sync::{
@@ -208,6 +211,7 @@ pub enum EngineError {
     DocumentSourceLimitExceeded { bytes: usize, limit: usize },
     ViewportPixelLimitExceeded { pixels: u64, limit: u64 },
     NoDocumentLoaded,
+    NoActiveRenderSession,
     ViewIdExhausted,
     FrameSchedule(FrameSchedulerError),
     Render(RenderError),
@@ -230,6 +234,7 @@ impl fmt::Display for EngineError {
                 )
             }
             Self::NoDocumentLoaded => formatter.write_str("view has no loaded document"),
+            Self::NoActiveRenderSession => formatter.write_str("view has no active render session"),
             Self::ViewIdExhausted => {
                 formatter.write_str("engine view identifier space is exhausted")
             }
@@ -438,6 +443,66 @@ impl View {
 
     pub fn discard_frame_request(&mut self, request: FrameRequestId) -> Result<(), EngineError> {
         self.frame_scheduler.discard(request)?;
+        Ok(())
+    }
+
+    pub fn queue_image_decode(
+        &mut self,
+        encoded: Vec<u8>,
+    ) -> Result<ImageDecodeReservation, EngineError> {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or(EngineError::NoActiveRenderSession)?;
+        Ok(session.queue_image_decode(encoded)?)
+    }
+
+    pub fn begin_image_decode(&mut self) -> Result<Option<ImageDecodeWork>, EngineError> {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or(EngineError::NoActiveRenderSession)?;
+        Ok(session.begin_image_decode()?)
+    }
+
+    pub fn complete_image_decode(
+        &mut self,
+        request: ImageDecodeRequestId,
+        outcome: ImageDecodeOutcome,
+    ) -> Result<ImageDecodeCompletion, EngineError> {
+        let completion = {
+            let session = self
+                .session
+                .as_mut()
+                .ok_or(EngineError::NoActiveRenderSession)?;
+            session.complete_image_decode(request, outcome)?
+        };
+        if completion.visual_change_pending {
+            self.frame_scheduler.request(FrameCause::ResourceReady);
+        }
+        Ok(completion)
+    }
+
+    pub fn cancel_pending_image_decode(
+        &mut self,
+        request: ImageDecodeRequestId,
+    ) -> Result<bool, EngineError> {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or(EngineError::NoActiveRenderSession)?;
+        Ok(session.cancel_pending_image_decode(request))
+    }
+
+    pub fn discard_active_image_decode(
+        &mut self,
+        request: ImageDecodeRequestId,
+    ) -> Result<(), EngineError> {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or(EngineError::NoActiveRenderSession)?;
+        session.discard_active_image_decode(request)?;
         Ok(())
     }
 
@@ -753,6 +818,90 @@ mod tests {
         assert_eq!(follow_up.primary_cause(), FrameCause::ResourceReady);
         assert!(follow_up.reasons().contains(FrameCause::SceneChange));
         view.discard_frame_request(follow_up.id()).unwrap();
+    }
+
+    #[test]
+    fn image_decode_requires_an_active_render_session() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+
+        assert_eq!(
+            view.queue_image_decode(vec![1]).unwrap_err(),
+            EngineError::NoActiveRenderSession
+        );
+    }
+
+    #[test]
+    fn referenced_image_completion_schedules_resource_ready_frame() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div>Rarog</div>", BaseUrl::about_blank())
+            .unwrap();
+        let initial_request = view.begin_frame_request().unwrap().unwrap();
+        view.complete_frame_request(initial_request.id()).unwrap();
+        let viewport = Size {
+            width: 160.0,
+            height: 90.0,
+        };
+        view.render(viewport).unwrap();
+
+        let reservation = view.queue_image_decode(vec![1, 2, 3]).unwrap();
+        let pending = view
+            .session
+            .as_ref()
+            .unwrap()
+            .image_resources()
+            .revision_ref(reservation.resource())
+            .unwrap();
+        view.session.as_mut().unwrap().display_list = DisplayList::try_from_parts(
+            vec![rarog_paint::DisplayItemId {
+                source: 77,
+                fragment: 1,
+                slot: 0,
+            }],
+            vec![rarog_paint::DisplayCommand::DrawImage {
+                rect: rarog_types::Rect::new(0.0, 0.0, 2.0, 2.0),
+                image: pending,
+            }],
+        )
+        .unwrap();
+
+        let work = view.begin_image_decode().unwrap().unwrap();
+        let completion = view
+            .complete_image_decode(
+                work.request(),
+                ImageDecodeOutcome::Ready(
+                    rarog_resources::DecodedImage::try_new(
+                        1,
+                        1,
+                        vec![Color::rgb(0xff, 0x00, 0x00)],
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+
+        assert!(completion.visual_change_pending);
+        assert!(
+            view.pending_frame_reasons()
+                .contains(FrameCause::ResourceReady)
+        );
+
+        let request = view.begin_frame_request().unwrap().unwrap();
+        assert_eq!(request.primary_cause(), FrameCause::ResourceReady);
+        let frame = view.render(viewport).unwrap();
+        assert!(matches!(
+            frame.status,
+            FrameStatus::Incremental(IncrementalReport {
+                mode: IncrementalMode::PaintOnlyReuse,
+                ..
+            })
+        ));
+        assert_eq!(
+            frame.damage.rects,
+            vec![rarog_types::Rect::new(0.0, 0.0, 2.0, 2.0)]
+        );
+        view.complete_frame_request(request.id()).unwrap();
     }
 
     #[test]
