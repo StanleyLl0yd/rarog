@@ -696,6 +696,161 @@ impl<E> Drop for CompositorWorker<E> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentationStatus {
+    Presented,
+    Deferred,
+}
+
+pub trait PresentingCompositorBackend: CompositorBackend {
+    fn present_retained(&mut self) -> Result<PresentationStatus, Self::Error>;
+
+    fn submit_and_present(
+        &mut self,
+        frame: FrameSubmission<'_>,
+    ) -> Result<PresentationStatus, Self::Error> {
+        self.submit(frame)?;
+        self.present_retained()
+    }
+}
+
+enum PresentingCompositorCommand {
+    SubmitAndPresent(OwnedFrameSubmission),
+    PresentRetained,
+}
+
+#[derive(Debug)]
+pub struct PresentingCompositorCompletion<E> {
+    frame: Option<FrameId>,
+    result: Result<PresentationStatus, E>,
+}
+
+impl<E> PresentingCompositorCompletion<E> {
+    pub const fn frame(&self) -> Option<FrameId> {
+        self.frame
+    }
+
+    pub fn result(self) -> Result<PresentationStatus, E> {
+        self.result
+    }
+}
+
+pub struct PresentingCompositorWorker<E> {
+    sender: Option<SyncSender<PresentingCompositorCommand>>,
+    completions: Option<Receiver<PresentingCompositorCompletion<E>>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl<E: Send + 'static> PresentingCompositorWorker<E> {
+    pub fn spawn<B>(mut backend: B) -> std::io::Result<Self>
+    where
+        B: PresentingCompositorBackend<Error = E> + Send + 'static,
+    {
+        let (sender, commands) = sync_channel::<PresentingCompositorCommand>(1);
+        let (completion_sender, completions) = sync_channel::<PresentingCompositorCompletion<E>>(1);
+        let thread = thread::Builder::new()
+            .name("rarog-compositor".into())
+            .spawn(move || {
+                while let Ok(command) = commands.recv() {
+                    let completion = match command {
+                        PresentingCompositorCommand::SubmitAndPresent(frame) => {
+                            let id = frame.frame_id();
+                            PresentingCompositorCompletion {
+                                frame: Some(id),
+                                result: backend.submit_and_present(frame.as_borrowed()),
+                            }
+                        }
+                        PresentingCompositorCommand::PresentRetained => {
+                            PresentingCompositorCompletion {
+                                frame: None,
+                                result: backend.present_retained(),
+                            }
+                        }
+                    };
+                    if completion_sender.send(completion).is_err() {
+                        break;
+                    }
+                }
+            })?;
+
+        Ok(Self {
+            sender: Some(sender),
+            completions: Some(completions),
+            thread: Some(thread),
+        })
+    }
+
+    pub fn try_submit_and_present(
+        &self,
+        frame: OwnedFrameSubmission,
+    ) -> Result<(), CompositorWorkerSendError> {
+        self.try_send(PresentingCompositorCommand::SubmitAndPresent(frame))
+    }
+
+    pub fn try_present_retained(&self) -> Result<(), CompositorWorkerSendError> {
+        self.try_send(PresentingCompositorCommand::PresentRetained)
+    }
+
+    pub fn try_completion(
+        &self,
+    ) -> Result<Option<PresentingCompositorCompletion<E>>, CompositorWorkerDisconnected> {
+        let Some(completions) = self.completions.as_ref() else {
+            return Err(CompositorWorkerDisconnected);
+        };
+        match completions.try_recv() {
+            Ok(completion) => Ok(Some(completion)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(CompositorWorkerDisconnected),
+        }
+    }
+
+    pub fn recv_completion(
+        &self,
+    ) -> Result<PresentingCompositorCompletion<E>, CompositorWorkerDisconnected> {
+        self.completions
+            .as_ref()
+            .ok_or(CompositorWorkerDisconnected)?
+            .recv()
+            .map_err(|_| CompositorWorkerDisconnected)
+    }
+
+    pub fn shutdown(mut self) -> Result<(), CompositorWorkerPanicked> {
+        self.close()
+    }
+
+    fn try_send(
+        &self,
+        command: PresentingCompositorCommand,
+    ) -> Result<(), CompositorWorkerSendError> {
+        let Some(sender) = self.sender.as_ref() else {
+            return Err(CompositorWorkerSendError::Disconnected);
+        };
+        sender.try_send(command).map_err(|error| match error {
+            TrySendError::Full(_) => CompositorWorkerSendError::QueueFull,
+            TrySendError::Disconnected(_) => CompositorWorkerSendError::Disconnected,
+        })
+    }
+
+    fn close(&mut self) -> Result<(), CompositorWorkerPanicked> {
+        self.sender.take();
+        self.completions.take();
+        if let Some(thread) = self.thread.take() {
+            thread.join().map_err(|_| CompositorWorkerPanicked)?;
+        }
+        Ok(())
+    }
+}
+
+impl<E> Drop for PresentingCompositorWorker<E> {
+    fn drop(&mut self) {
+        self.sender.take();
+        self.completions.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 fn normalize_damage(
     size: SurfaceSize,
     damage: &DamageRegion,
@@ -938,6 +1093,73 @@ mod tests {
         worker.recv_completion().unwrap().result().unwrap();
         release_tx.send(()).unwrap();
         worker.recv_completion().unwrap().result().unwrap();
+        worker.shutdown().unwrap();
+    }
+
+    #[test]
+    fn presenting_worker_distinguishes_frame_and_retained_presentation() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        struct State {
+            submits: usize,
+            presents: usize,
+            thread_name: Option<String>,
+        }
+
+        struct Backend {
+            state: Arc<Mutex<State>>,
+        }
+
+        impl CompositorBackend for Backend {
+            type Error = ();
+
+            fn submit(&mut self, _frame: FrameSubmission<'_>) -> Result<(), Self::Error> {
+                let mut state = self.state.lock().unwrap();
+                state.submits += 1;
+                state.thread_name = std::thread::current().name().map(str::to_owned);
+                Ok(())
+            }
+        }
+
+        impl PresentingCompositorBackend for Backend {
+            fn present_retained(&mut self) -> Result<PresentationStatus, Self::Error> {
+                let mut state = self.state.lock().unwrap();
+                state.presents += 1;
+                state.thread_name = std::thread::current().name().map(str::to_owned);
+                Ok(PresentationStatus::Presented)
+            }
+        }
+
+        let state = Arc::new(Mutex::new(State::default()));
+        let worker = PresentingCompositorWorker::spawn(Backend {
+            state: Arc::clone(&state),
+        })
+        .unwrap();
+        let frame = owned_test_frame(35);
+        let frame_id = frame.frame_id();
+
+        worker.try_submit_and_present(frame).unwrap();
+        let frame_completion = worker.recv_completion().unwrap();
+        assert_eq!(frame_completion.frame(), Some(frame_id));
+        assert_eq!(
+            frame_completion.result().unwrap(),
+            PresentationStatus::Presented
+        );
+
+        worker.try_present_retained().unwrap();
+        let retained_completion = worker.recv_completion().unwrap();
+        assert_eq!(retained_completion.frame(), None);
+        assert_eq!(
+            retained_completion.result().unwrap(),
+            PresentationStatus::Presented
+        );
+
+        let state = state.lock().unwrap();
+        assert_eq!(state.submits, 1);
+        assert_eq!(state.presents, 2);
+        assert_eq!(state.thread_name.as_deref(), Some("rarog-compositor"));
+        drop(state);
         worker.shutdown().unwrap();
     }
 
