@@ -160,6 +160,22 @@ impl GridIntrinsicContributions {
         }
     }
 
+    const fn from_legacy(contribution: GridItemContribution) -> Self {
+        Self {
+            node: contribution.node,
+            inline: GridAxisIntrinsicContributions::new(
+                contribution.inline_size,
+                contribution.inline_size,
+                contribution.inline_size,
+            ),
+            block: GridAxisIntrinsicContributions::new(
+                contribution.block_size,
+                contribution.block_size,
+                contribution.block_size,
+            ),
+        }
+    }
+
     pub(crate) fn size_for(
         self,
         axis: GridAxis,
@@ -517,13 +533,8 @@ pub fn resolve_content_sized_tracks(
                 node: item.node,
                 axis,
             })?;
-        let size = contribution.size_for_axis(axis);
-        if !size.is_finite() || size < 0.0 {
-            return Err(GridLayoutError::InvalidContribution {
-                node: item.node,
-                axis,
-            });
-        }
+        let size = GridIntrinsicContributions::from_legacy(contribution)
+            .size_for(axis, GridIntrinsicContributionKind::MaxContent)?;
         planned_contributions.push(GridSpanningSizeContribution::new(
             item.node, start, span, size,
         ));
@@ -1192,6 +1203,25 @@ mod tests {
         let mut intrinsic = GridTrackSizingState::intrinsic();
         intrinsic.grow_base_to(50.0);
         assert_eq!(intrinsic.base_size, 50.0);
+    }
+
+    #[test]
+    fn legacy_contribution_adapter_preserves_existing_scalar_sizes() {
+        let contributions = GridIntrinsicContributions::from_legacy(
+            GridItemContribution::new(LayoutNodeId(3), 42.0, 18.0),
+        );
+
+        for kind in [
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MinContent,
+            GridIntrinsicContributionKind::MaxContent,
+        ] {
+            assert_eq!(
+                contributions.size_for(GridAxis::Column, kind).unwrap(),
+                42.0
+            );
+            assert_eq!(contributions.size_for(GridAxis::Row, kind).unwrap(), 18.0);
+        }
     }
 
     #[test]
