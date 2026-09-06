@@ -22,7 +22,7 @@ Tracking issue: #109.
 - [x] Connect retained display-list revision/damage lifecycle to compositor updates (#153).
 - [x] Add an owned frame packet suitable for crossing execution/lifetime boundaries (#176).
 - [x] Move backend-neutral compositor execution onto a bounded worker thread with one-frame backpressure (#178).
-- [ ] Move the Windows presenting backend onto the compositor worker without leaking platform/GPU types into engine contracts.
+- [x] Move the Windows presenting backend onto the compositor worker without leaking platform/GPU types into engine contracts (#181).
 
 ## C — Async resources and scrolling
 
@@ -33,7 +33,7 @@ Tracking issue: #109.
 
 ## Current focus
 
-The retained Windows frame path now reaches real DX12/wgpu surface presentation, image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. Backend-neutral compositor execution now has a bounded worker boundary; the next compositor slice moves the Windows presenting backend onto that worker. Broader CSS overflow/nested scroll-container semantics and intrinsic Grid sizing remain separate standards work.
+The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. The next standards slice is intrinsic/content-driven Grid sizing; broader CSS overflow and nested scroll-container semantics remain separate work.
 
 ## Scope boundary
 

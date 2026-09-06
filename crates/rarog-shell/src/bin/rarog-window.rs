@@ -2,17 +2,15 @@
 mod windows {
     use pollster::block_on;
     use rarog_compositor::{
-        CompositorBackend, FrameCause, FrameDecision, FramePlanner, FrameSubmission, SurfaceId,
-        SurfaceSize,
+        FrameCause, FrameDecision, FrameId, FramePlanner, FrameSubmission, OwnedFrameSubmission,
+        PresentationStatus, PresentingCompositorWorker, SurfaceId, SurfaceSize,
     };
-    use rarog_compositor_wgpu::WgpuCompositorBackend;
     use rarog_engine::{BaseUrl, Engine, View, ViewOptions};
-    use rarog_platform_windows::{
-        WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery,
-    };
+    use rarog_platform_windows::{WindowsGpuError, WindowsPresentingCompositor};
     use rarog_types::{Point, Size};
     use std::error::Error;
     use std::fs;
+    use std::io;
     use std::sync::Arc;
     use winit::application::ApplicationHandler;
     use winit::dpi::LogicalSize;
@@ -34,9 +32,7 @@ mod windows {
             input,
             view,
             window: None,
-            gpu: None,
-            surface: None,
-            backend: None,
+            compositor: None,
             planner: FramePlanner::new(surface_id),
         };
         let event_loop = EventLoop::new()?;
@@ -44,19 +40,11 @@ mod windows {
         Ok(())
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum PresentationOutcome {
-        Presented,
-        Deferred,
-    }
-
     struct WindowApp {
         input: String,
         view: View,
         window: Option<Arc<Window>>,
-        gpu: Option<WindowsGpuDevice>,
-        surface: Option<WindowsGpuSurface>,
-        backend: Option<WgpuCompositorBackend>,
+        compositor: Option<PresentingCompositorWorker<WindowsGpuError>>,
         planner: FramePlanner,
     }
 
@@ -71,80 +59,63 @@ mod windows {
                 .with_title(format!("Rarog GPU — {}", self.input))
                 .with_inner_size(LogicalSize::new(1024.0, 768.0));
             let window = Arc::new(event_loop.create_window(attributes)?);
-            let gpu = block_on(WindowsGpuDevice::request())?;
             let size = window.inner_size();
-            let surface = gpu.create_surface(Arc::clone(&window), size.width, size.height)?;
-            let backend = gpu.compositor_backend();
+            let backend = block_on(WindowsPresentingCompositor::request(
+                Arc::clone(&window),
+                size.width,
+                size.height,
+            ))?;
+            let compositor = PresentingCompositorWorker::spawn(backend)?;
 
             self.window = Some(Arc::clone(&window));
-            self.gpu = Some(gpu);
-            self.surface = Some(surface);
-            self.backend = Some(backend);
+            self.compositor = Some(compositor);
             window.request_redraw();
             Ok(())
         }
 
-        fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn Error>> {
+        fn resize(&mut self) {
             self.view.request_frame(FrameCause::Resize);
-            let (Some(gpu), Some(surface)) = (self.gpu.as_ref(), self.surface.as_mut()) else {
-                return Ok(());
-            };
-            surface.resize(gpu, width, height)?;
-            Ok(())
         }
 
-        fn present_retained(&mut self) -> Result<PresentationOutcome, Box<dyn Error>> {
-            let result = {
-                let (Some(surface), Some(backend)) = (self.surface.as_ref(), self.backend.as_mut())
-                else {
-                    return Ok(PresentationOutcome::Deferred);
-                };
-                surface.present(backend)
+        fn present_retained(&mut self) -> Result<PresentationStatus, Box<dyn Error>> {
+            let Some(compositor) = self.compositor.as_ref() else {
+                return Ok(PresentationStatus::Deferred);
             };
-            match result {
-                Ok(()) => Ok(PresentationOutcome::Presented),
-                Err(error) => self.recover_presentation(error),
+            compositor.try_present_retained()?;
+            let completion = compositor.recv_completion()?;
+            if completion.frame().is_some() {
+                return Err(
+                    io::Error::other("retained presentation returned a frame completion").into(),
+                );
             }
+            let status = completion.result()?;
+            self.request_redraw_if_deferred(status);
+            Ok(status)
         }
 
-        fn recover_presentation(
+        fn submit_and_present(
             &mut self,
-            error: WindowsGpuError,
-        ) -> Result<PresentationOutcome, Box<dyn Error>> {
-            if matches!(error, WindowsGpuError::SuspendedSurface) {
-                return Ok(PresentationOutcome::Deferred);
+            submission: OwnedFrameSubmission,
+        ) -> Result<PresentationStatus, Box<dyn Error>> {
+            let expected = submission.frame_id();
+            let Some(compositor) = self.compositor.as_ref() else {
+                return Ok(PresentationStatus::Deferred);
+            };
+            compositor.try_submit_and_present(submission)?;
+            let completion = compositor.recv_completion()?;
+            if completion.frame() != Some(expected) {
+                return Err(completion_mismatch(expected, completion.frame()).into());
             }
+            let status = completion.result()?;
+            self.request_redraw_if_deferred(status);
+            Ok(status)
+        }
 
-            match error.surface_recovery() {
-                Some(WindowsSurfaceRecovery::Retry) => {
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
-                    Ok(PresentationOutcome::Deferred)
-                }
-                Some(WindowsSurfaceRecovery::Reconfigure) => {
-                    let (Some(gpu), Some(surface)) = (self.gpu.as_ref(), self.surface.as_mut())
-                    else {
-                        return Ok(PresentationOutcome::Deferred);
-                    };
-                    surface.reconfigure(gpu)?;
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
-                    Ok(PresentationOutcome::Deferred)
-                }
-                Some(WindowsSurfaceRecovery::Recreate) => {
-                    let (Some(window), Some(gpu)) = (self.window.as_ref(), self.gpu.as_ref())
-                    else {
-                        return Ok(PresentationOutcome::Deferred);
-                    };
-                    let size = window.inner_size();
-                    self.surface =
-                        Some(gpu.create_surface(Arc::clone(window), size.width, size.height)?);
+        fn request_redraw_if_deferred(&self, status: PresentationStatus) {
+            if status == PresentationStatus::Deferred {
+                if let Some(window) = &self.window {
                     window.request_redraw();
-                    Ok(PresentationOutcome::Deferred)
                 }
-                Some(WindowsSurfaceRecovery::Fatal) | None => Err(Box::new(error)),
             }
         }
 
@@ -165,11 +136,11 @@ mod windows {
             let outcome = self.render_scheduled(size.width, size.height, request.primary_cause());
 
             match outcome {
-                Ok(PresentationOutcome::Presented) => {
+                Ok(PresentationStatus::Presented) => {
                     self.view.complete_frame_request(request_id)?;
                     Ok(())
                 }
-                Ok(PresentationOutcome::Deferred) => {
+                Ok(PresentationStatus::Deferred) => {
                     self.view.discard_frame_request(request_id)?;
                     Ok(())
                 }
@@ -185,7 +156,7 @@ mod windows {
             width: u32,
             height: u32,
             cause: FrameCause,
-        ) -> Result<PresentationOutcome, Box<dyn Error>> {
+        ) -> Result<PresentationStatus, Box<dyn Error>> {
             let surface_size = SurfaceSize::new(width, height);
             let frame = self.view.render(Size {
                 width: width as f32,
@@ -196,34 +167,30 @@ mod windows {
 
             match decision {
                 FrameDecision::Noop => self.present_retained(),
-                FrameDecision::Suspended { .. } => Ok(PresentationOutcome::Deferred),
+                FrameDecision::Suspended { .. } => Ok(PresentationStatus::Deferred),
                 FrameDecision::Submit(plan) => {
                     let id = plan.id();
-                    {
-                        let Some(backend) = self.backend.as_mut() else {
-                            self.planner.discard(id)?;
-                            return Ok(PresentationOutcome::Deferred);
-                        };
-                        if let Err(error) = backend.submit(FrameSubmission {
-                            plan: &plan,
-                            display_list: frame.display_list,
-                            image_resources: Some(frame.image_resources),
-                            viewport_translation: frame.viewport_translation,
-                            clear_color: frame.clear_color,
-                        }) {
-                            self.planner.discard(id)?;
-                            return Err(Box::new(error));
-                        }
-                    }
+                    let submission = OwnedFrameSubmission::from_borrowed(FrameSubmission {
+                        plan: &plan,
+                        display_list: frame.display_list,
+                        image_resources: Some(frame.image_resources),
+                        viewport_translation: frame.viewport_translation,
+                        clear_color: frame.clear_color,
+                    });
+                    let outcome = self.submit_and_present(submission);
 
-                    match self.present_retained()? {
-                        PresentationOutcome::Presented => {
+                    match outcome {
+                        Ok(PresentationStatus::Presented) => {
                             self.planner.complete(id)?;
-                            Ok(PresentationOutcome::Presented)
+                            Ok(PresentationStatus::Presented)
                         }
-                        PresentationOutcome::Deferred => {
+                        Ok(PresentationStatus::Deferred) => {
                             self.planner.discard(id)?;
-                            Ok(PresentationOutcome::Deferred)
+                            Ok(PresentationStatus::Deferred)
+                        }
+                        Err(error) => {
+                            self.planner.discard(id)?;
+                            Err(error)
                         }
                     }
                 }
@@ -260,6 +227,12 @@ mod windows {
         }
     }
 
+    fn completion_mismatch(expected: FrameId, actual: Option<FrameId>) -> io::Error {
+        io::Error::other(format!(
+            "compositor completion mismatch: expected {expected:?}, got {actual:?}"
+        ))
+    }
+
     impl ApplicationHandler for WindowApp {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             if let Err(error) = self.initialize(event_loop) {
@@ -279,11 +252,8 @@ mod windows {
 
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),
-                WindowEvent::Resized(size) => {
-                    if let Err(error) = self.resize(size.width, size.height) {
-                        self.fail(event_loop, error.as_ref());
-                        return;
-                    }
+                WindowEvent::Resized(_) => {
+                    self.resize();
                     if let Some(window) = &self.window {
                         window.request_redraw();
                     }

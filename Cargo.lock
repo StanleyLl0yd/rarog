@@ -2301,6 +2301,7 @@ version = "0.1.0"
 dependencies = [
  "clipboard-win",
  "font-kit",
+ "rarog-compositor",
  "rarog-compositor-wgpu",
  "rarog-layout",
  "rarog-platform",
@@ -2344,7 +2345,6 @@ version = "0.1.0"
 dependencies = [
  "pollster",
  "rarog-compositor",
- "rarog-compositor-wgpu",
  "rarog-engine",
  "rarog-platform-windows",
  "rarog-types",

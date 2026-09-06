@@ -3,6 +3,8 @@ mod gpu;
 mod input;
 
 pub use clipboard::WindowsClipboardService;
+#[cfg(target_os = "windows")]
+pub use gpu::WindowsPresentingCompositor;
 pub use gpu::{WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery};
 pub use input::WindowsInputService;
 
