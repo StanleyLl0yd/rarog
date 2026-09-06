@@ -3,9 +3,7 @@ use rarog_resources::ImageResourceStore;
 use rarog_types::{Color, Point, Rect};
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::mpsc::{
-    Receiver, SyncSender, TryRecvError, TrySendError, sync_channel,
-};
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -643,10 +641,7 @@ impl<E: Send + 'static> CompositorWorker<E> {
         })
     }
 
-    pub fn try_submit(
-        &self,
-        frame: OwnedFrameSubmission,
-    ) -> Result<(), CompositorWorkerSendError> {
+    pub fn try_submit(&self, frame: OwnedFrameSubmission) -> Result<(), CompositorWorkerSendError> {
         let Some(sender) = self.sender.as_ref() else {
             return Err(CompositorWorkerSendError::Disconnected);
         };
@@ -669,9 +664,7 @@ impl<E: Send + 'static> CompositorWorker<E> {
         }
     }
 
-    pub fn recv_completion(
-        &self,
-    ) -> Result<CompositorCompletion<E>, CompositorWorkerDisconnected> {
+    pub fn recv_completion(&self) -> Result<CompositorCompletion<E>, CompositorWorkerDisconnected> {
         self.completions
             .as_ref()
             .ok_or(CompositorWorkerDisconnected)?
