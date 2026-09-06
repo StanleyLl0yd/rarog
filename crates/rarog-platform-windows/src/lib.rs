@@ -3,9 +3,9 @@ mod gpu;
 mod input;
 
 pub use clipboard::WindowsClipboardService;
-pub use gpu::{WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery};
 #[cfg(target_os = "windows")]
 pub use gpu::WindowsPresentingCompositor;
+pub use gpu::{WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery};
 pub use input::WindowsInputService;
 
 use rarog_platform::{
