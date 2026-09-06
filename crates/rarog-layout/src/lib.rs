@@ -3749,9 +3749,7 @@ impl FragmentBuilder {
     }
 }
 
-fn grid_inline_intrinsic_contributions(
-    node: &LayoutNode,
-) -> GridAxisIntrinsicContributions {
+fn grid_inline_intrinsic_contributions(node: &LayoutNode) -> GridAxisIntrinsicContributions {
     let margin = node.style.margin.horizontal();
     let min_content = node.intrinsic.min_content + margin;
     let max_content = node.intrinsic.max_content + margin;
