@@ -747,8 +747,7 @@ impl<E: Send + 'static> PresentingCompositorWorker<E> {
         B: PresentingCompositorBackend<Error = E> + Send + 'static,
     {
         let (sender, commands) = sync_channel::<PresentingCompositorCommand>(1);
-        let (completion_sender, completions) =
-            sync_channel::<PresentingCompositorCompletion<E>>(1);
+        let (completion_sender, completions) = sync_channel::<PresentingCompositorCompletion<E>>(1);
         let thread = thread::Builder::new()
             .name("rarog-compositor".into())
             .spawn(move || {
