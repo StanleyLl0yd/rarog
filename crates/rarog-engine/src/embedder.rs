@@ -17,7 +17,8 @@ use rarog_resources::{
     ImageDecodeOutcome, ImageDecodeRequestId, ImageDecodeReservation, ImageDecodeWork,
     ImageResourceStore,
 };
-use rarog_types::{Color, Size};
+use rarog_scroll::{ScrollDelta, ScrollNodeId, ScrollTree, ScrollTreeError};
+use rarog_types::{Color, Point, Rect, Size};
 use std::fmt;
 use std::sync::{
     Arc,
@@ -214,6 +215,7 @@ pub enum EngineError {
     NoActiveRenderSession,
     ViewIdExhausted,
     FrameSchedule(FrameSchedulerError),
+    Scroll(ScrollTreeError),
     Render(RenderError),
 }
 
@@ -239,6 +241,7 @@ impl fmt::Display for EngineError {
                 formatter.write_str("engine view identifier space is exhausted")
             }
             Self::FrameSchedule(error) => write!(formatter, "{error}"),
+            Self::Scroll(error) => write!(formatter, "{error}"),
             Self::Render(error) => write!(formatter, "{error}"),
         }
     }
@@ -255,6 +258,12 @@ impl From<RenderError> for EngineError {
 impl From<FrameSchedulerError> for EngineError {
     fn from(error: FrameSchedulerError) -> Self {
         Self::FrameSchedule(error)
+    }
+}
+
+impl From<ScrollTreeError> for EngineError {
+    fn from(error: ScrollTreeError) -> Self {
+        Self::Scroll(error)
     }
 }
 
@@ -378,6 +387,8 @@ impl Engine {
             loaded: None,
             viewport: None,
             session: None,
+            scroll_tree: None,
+            pending_scroll_damage: DamageRegion::default(),
             frame_scheduler: FrameScheduler::new(),
         })
     }
@@ -408,6 +419,8 @@ pub struct View {
     loaded: Option<LoadedDocument>,
     viewport: Option<Size>,
     session: Option<RenderSession>,
+    scroll_tree: Option<ScrollTree>,
+    pending_scroll_damage: DamageRegion,
     frame_scheduler: FrameScheduler,
 }
 
@@ -443,6 +456,62 @@ impl View {
 
     pub fn discard_frame_request(&mut self, request: FrameRequestId) -> Result<(), EngineError> {
         self.frame_scheduler.discard(request)?;
+        Ok(())
+    }
+
+    pub fn root_scroll_node(&self) -> Option<ScrollNodeId> {
+        self.scroll_tree.as_ref().map(ScrollTree::root)
+    }
+
+    pub fn root_scroll_offset(&self) -> Point {
+        let Some(tree) = self.scroll_tree.as_ref() else {
+            return Point::default();
+        };
+        tree.snapshot(tree.root())
+            .map(|snapshot| snapshot.offset)
+            .unwrap_or_default()
+    }
+
+    pub fn scroll_root_by(&mut self, delta: Point) -> Result<ScrollDelta, EngineError> {
+        let changed = {
+            let tree = self
+                .scroll_tree
+                .as_mut()
+                .ok_or(EngineError::NoActiveRenderSession)?;
+            tree.scroll_by(tree.root(), delta)?
+        };
+        self.apply_root_scroll_delta(changed)?;
+        Ok(changed)
+    }
+
+    pub fn scroll_root_to(&mut self, offset: Point) -> Result<ScrollDelta, EngineError> {
+        let changed = {
+            let tree = self
+                .scroll_tree
+                .as_mut()
+                .ok_or(EngineError::NoActiveRenderSession)?;
+            tree.scroll_to(tree.root(), offset)?
+        };
+        self.apply_root_scroll_delta(changed)?;
+        Ok(changed)
+    }
+
+    fn apply_root_scroll_delta(&mut self, delta: ScrollDelta) -> Result<(), EngineError> {
+        if !delta.changed() {
+            return Ok(());
+        }
+        let session = self
+            .session
+            .as_mut()
+            .ok_or(EngineError::NoActiveRenderSession)?;
+        session.set_viewport_translation(Point {
+            x: -delta.current.x,
+            y: -delta.current.y,
+        })?;
+        if let Some(damage) = delta.damage {
+            self.pending_scroll_damage.rects.push(damage);
+        }
+        self.frame_scheduler.request(FrameCause::Scroll);
         Ok(())
     }
 
@@ -529,6 +598,8 @@ impl View {
         self.loaded = Some(LoadedDocument { source, base_url });
         self.viewport = None;
         self.session = None;
+        self.scroll_tree = None;
+        self.pending_scroll_damage = DamageRegion::default();
         self.frame_scheduler = FrameScheduler::new();
         self.frame_scheduler.request(FrameCause::Initial);
         Ok(())
@@ -613,11 +684,59 @@ impl View {
         };
         self.viewport = Some(viewport);
 
+        let viewport_rect = Rect::new(0.0, 0.0, viewport.width, viewport.height);
+        let content_size = self
+            .session
+            .as_ref()
+            .expect("successful render establishes an active session")
+            .layout()
+            .fragments
+            .scrollable_content_size();
+
+        let geometry_delta = match self.scroll_tree.as_mut() {
+            Some(tree) => {
+                let root = tree.root();
+                Some(tree.set_geometry(root, viewport_rect, content_size)?)
+            }
+            None => {
+                self.scroll_tree = Some(ScrollTree::with_defaults(viewport_rect, content_size)?);
+                None
+            }
+        };
+
+        if let Some(delta) = geometry_delta {
+            if delta.changed() {
+                if let Some(damage) = delta.damage {
+                    self.pending_scroll_damage.rects.push(damage);
+                }
+            }
+        }
+
+        let scroll_offset = self.root_scroll_offset();
+        let viewport_translation = Point {
+            x: -scroll_offset.x,
+            y: -scroll_offset.y,
+        };
+        self.session
+            .as_mut()
+            .expect("successful render establishes an active session")
+            .set_viewport_translation(viewport_translation)?;
+
         self.shared.event_sink.on_event(&ViewEvent::FrameRendered {
             view: self.id,
             viewport,
             status,
         });
+
+        let mut damage = self
+            .session
+            .as_ref()
+            .expect("successful render establishes an active session")
+            .damage()
+            .translated(viewport_translation);
+        damage
+            .rects
+            .extend(std::mem::take(&mut self.pending_scroll_damage).rects);
 
         let session = self
             .session
@@ -632,7 +751,8 @@ impl View {
             display_list: session.display_list(),
             image_resources: session.image_resources(),
             display_list_revision: session.display_list_revision(),
-            damage: session.damage(),
+            damage,
+            viewport_translation,
             clear_color: self.options.background,
             status,
             full_observability,
@@ -654,7 +774,8 @@ pub struct ViewFrame<'a> {
     pub display_list: &'a DisplayList,
     pub image_resources: &'a ImageResourceStore,
     pub display_list_revision: DisplayListRevision,
-    pub damage: &'a DamageRegion,
+    pub damage: DamageRegion,
+    pub viewport_translation: Point,
     pub clear_color: Color,
     pub status: FrameStatus,
     pub full_observability: Option<RenderObservability>,
@@ -683,7 +804,12 @@ impl ViewFrame<'_> {
         surface_size: SurfaceSize,
         cause: FrameCause,
     ) -> Result<FrameDecision, FramePlannerError> {
-        planner.plan(surface_size, self.display_list_revision, self.damage, cause)
+        planner.plan(
+            surface_size,
+            self.display_list_revision,
+            &self.damage,
+            cause,
+        )
     }
 }
 
@@ -902,6 +1028,77 @@ mod tests {
             vec![rarog_types::Rect::new(0.0, 0.0, 2.0, 2.0)]
         );
         view.complete_frame_request(request.id()).unwrap();
+    }
+
+    #[test]
+    fn root_scroll_schedules_scroll_frame_without_changing_scene_revision() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html(
+            "<div style=\"height:40px;background:#ff0000\"></div><div style=\"height:100px;background:#0000ff\"></div>",
+            BaseUrl::about_blank(),
+        )
+        .unwrap();
+        let viewport = Size {
+            width: 100.0,
+            height: 80.0,
+        };
+
+        let initial_request = view.begin_frame_request().unwrap().unwrap();
+        let initial_revision = {
+            let frame = view.render(viewport).unwrap();
+            assert_eq!(frame.viewport_translation, Point::default());
+            assert_eq!(&frame.framebuffer.to_rgba8()[..4], &[0xff, 0x00, 0x00, 0xff]);
+            frame.display_list_revision
+        };
+        view.complete_frame_request(initial_request.id()).unwrap();
+
+        let root = view.root_scroll_node().expect("render creates a root scroll node");
+        assert_eq!(
+            view.scroll_tree.as_ref().unwrap().snapshot(root).unwrap().content_size.height,
+            140.0
+        );
+
+        let delta = view.scroll_root_by(Point { x: 0.0, y: 50.0 }).unwrap();
+        assert!(delta.changed());
+        assert_eq!(delta.current, Point { x: 0.0, y: 50.0 });
+        assert!(view.pending_frame_reasons().contains(FrameCause::Scroll));
+
+        let request = view.begin_frame_request().unwrap().unwrap();
+        assert_eq!(request.primary_cause(), FrameCause::Scroll);
+        let frame = view.render(viewport).unwrap();
+        assert_eq!(frame.display_list_revision, initial_revision);
+        assert_eq!(frame.viewport_translation, Point { x: 0.0, y: -50.0 });
+        assert_eq!(frame.damage.rects, vec![Rect::new(0.0, 0.0, 100.0, 80.0)]);
+        assert_eq!(&frame.framebuffer.to_rgba8()[..4], &[0x00, 0x00, 0xff, 0xff]);
+        view.complete_frame_request(request.id()).unwrap();
+    }
+
+    #[test]
+    fn clamped_root_scroll_does_not_schedule_redundant_frame() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<div style=\"height:120px\"></div>", BaseUrl::about_blank())
+            .unwrap();
+        let viewport = Size {
+            width: 100.0,
+            height: 80.0,
+        };
+
+        let initial = view.begin_frame_request().unwrap().unwrap();
+        view.render(viewport).unwrap();
+        view.complete_frame_request(initial.id()).unwrap();
+
+        let first = view.scroll_root_to(Point { x: 0.0, y: 1000.0 }).unwrap();
+        assert_eq!(first.current, Point { x: 0.0, y: 40.0 });
+        let scroll = view.begin_frame_request().unwrap().unwrap();
+        view.render(viewport).unwrap();
+        view.complete_frame_request(scroll.id()).unwrap();
+
+        let clamped = view.scroll_root_by(Point { x: 0.0, y: 10.0 }).unwrap();
+        assert!(!clamped.changed());
+        assert!(view.pending_frame_reasons().is_empty());
+        assert!(view.begin_frame_request().unwrap().is_none());
     }
 
     #[test]

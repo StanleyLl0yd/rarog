@@ -10,13 +10,13 @@ mod windows {
     use rarog_platform_windows::{
         WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery,
     };
-    use rarog_types::Size;
+    use rarog_types::{Point, Size};
     use std::error::Error;
     use std::fs;
     use std::sync::Arc;
     use winit::application::ApplicationHandler;
     use winit::dpi::LogicalSize;
-    use winit::event::WindowEvent;
+    use winit::event::{MouseScrollDelta, WindowEvent};
     use winit::event_loop::{ActiveEventLoop, EventLoop};
     use winit::window::{Window, WindowId};
 
@@ -208,7 +208,7 @@ mod windows {
                             plan: &plan,
                             display_list: frame.display_list,
                             image_resources: Some(frame.image_resources),
-                            viewport_translation: rarog_types::Point::default(),
+                            viewport_translation: frame.viewport_translation,
                             clear_color: frame.clear_color,
                         }) {
                             self.planner.discard(id)?;
@@ -228,6 +228,30 @@ mod windows {
                     }
                 }
             }
+        }
+
+        fn scroll(&mut self, delta: MouseScrollDelta) -> Result<(), Box<dyn Error>> {
+            if self.view.root_scroll_node().is_none() {
+                return Ok(());
+            }
+
+            let delta = match delta {
+                MouseScrollDelta::LineDelta(x, y) => Point {
+                    x: -x * 40.0,
+                    y: -y * 40.0,
+                },
+                MouseScrollDelta::PixelDelta(position) => Point {
+                    x: -(position.x as f32),
+                    y: -(position.y as f32),
+                },
+            };
+            let changed = self.view.scroll_root_by(delta)?;
+            if changed.changed() {
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            Ok(())
         }
 
         fn fail(&self, event_loop: &ActiveEventLoop, error: &dyn std::fmt::Display) {
@@ -262,6 +286,11 @@ mod windows {
                     }
                     if let Some(window) = &self.window {
                         window.request_redraw();
+                    }
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    if let Err(error) = self.scroll(delta) {
+                        self.fail(event_loop, error.as_ref());
                     }
                 }
                 WindowEvent::RedrawRequested => {
