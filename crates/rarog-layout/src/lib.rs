@@ -3089,10 +3089,8 @@ impl FragmentBuilder {
             };
 
             let mut contributions = Vec::with_capacity(nodes.len());
-            for ((child, placement), item) in nodes
-                .iter()
-                .zip(&column_resolved_grid.items)
-                .zip(&items)
+            for ((child, placement), item) in
+                nodes.iter().zip(&column_resolved_grid.items).zip(&items)
             {
                 let row_end = item.row_start + item.row_span;
                 if !row_sizing[item.row_start..row_end]
