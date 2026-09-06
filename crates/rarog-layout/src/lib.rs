@@ -3089,7 +3089,18 @@ impl FragmentBuilder {
             };
 
             let mut contributions = Vec::with_capacity(nodes.len());
-            for (child, placement) in nodes.iter().zip(&column_resolved_grid.items) {
+            for ((child, placement), item) in nodes
+                .iter()
+                .zip(&column_resolved_grid.items)
+                .zip(&items)
+            {
+                let row_end = item.row_start + item.row_span;
+                if !row_sizing[item.row_start..row_end]
+                    .iter()
+                    .any(|track| matches!(track, GridTrackSizing::Auto))
+                {
+                    continue;
+                }
                 let resolved_border_width =
                     (placement.area.size.width - child.style.margin.horizontal()).max(0.0);
                 let Some(border_height) = self.measure_item_natural_border_height(
