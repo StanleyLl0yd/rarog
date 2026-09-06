@@ -18,7 +18,8 @@ Tracking issue: #109.
 - [x] Introduce explicit layout-owned Grid track sizing state with base sizes and growth limits (#185).
 - [x] Add an order-independent, gap-aware spanning base-size distribution primitive without wiring incomplete contribution semantics into CSS layout (#186).
 - [x] Add explicit layout-owned Grid intrinsic contribution classes for minimum/min-content/max-content values (#187).
-- [ ] Add bounded contribution derivation and phase ordering before enabling spanning intrinsic layout.
+- [x] Add span-ordered intrinsic sizing rounds over synthetic Grid contributions (#188).
+- [ ] Add bounded contribution derivation before enabling spanning intrinsic layout.
 - [ ] Continue Grid fractional/max-track sizing without coupling CSS parser AST types to layout.
 
 ## B — Compositor and GPU
@@ -40,7 +41,7 @@ Tracking issue: #109.
 
 ## Current focus
 
-The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. Grid now supports bounded single-span `auto` track sizing (#182), intrinsic automatic sizing for non-stretch items (#183), container default inline alignment through `justify-items` (#184), and an explicit internal base-size/growth-limit sizing state (#185). The first order-independent, gap-aware spanning distribution primitive now exists on that state (#186) but is intentionally not wired into CSS layout yet. Minimum/min-content/max-content contribution classes are now explicit layout-owned data (#187). The next Grid work must derive those contributions from retained layout measurements and add phase ordering before enabling spanning intrinsic layout; broader CSS overflow and nested scroll-container semantics remain separate work.
+The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. Grid now supports bounded single-span `auto` track sizing (#182), intrinsic automatic sizing for non-stretch items (#183), container default inline alignment through `justify-items` (#184), and an explicit internal base-size/growth-limit sizing state (#185). The first order-independent, gap-aware spanning distribution primitive now exists on that state (#186) but is intentionally not wired into CSS layout yet. Minimum/min-content/max-content contribution classes are now explicit layout-owned data (#187). Span-ordered sizing rounds now compose synthetic distribution state in increasing-span phases (#188). The next Grid work must derive the correct contribution classes from retained layout measurements before enabling spanning intrinsic layout; broader CSS overflow and nested scroll-container semantics remain separate work.
 
 ## Scope boundary
 
