@@ -3921,16 +3921,10 @@ mod tests {
     #[test]
     fn scrollable_content_size_tracks_positive_overflow_beyond_viewport() {
         let mut doc = Document::new();
-        doc.append_new(
-            doc.root(),
-            element("div", Some("width:150px;height:60px")),
-        )
-        .unwrap();
-        doc.append_new(
-            doc.root(),
-            element("div", Some("height:70px")),
-        )
-        .unwrap();
+        doc.append_new(doc.root(), element("div", Some("width:150px;height:60px")))
+            .unwrap();
+        doc.append_new(doc.root(), element("div", Some("height:70px")))
+            .unwrap();
 
         let output = layout_document(
             &doc,
