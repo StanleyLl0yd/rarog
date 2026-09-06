@@ -728,6 +728,17 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
 }
 
 impl DamageRegion {
+    pub fn translated(&self, translation: Point) -> Self {
+        Self {
+            rects: self
+                .rects
+                .iter()
+                .copied()
+                .map(|rect| translate_rect(rect, translation))
+                .collect(),
+        }
+    }
+
     pub fn between(previous: Option<&DisplayList>, current: &DisplayList) -> Self {
         let current_items = effective_indexed_paint(current);
         let mut damage = Self::default();
@@ -811,6 +822,15 @@ impl DisplayList {
             damage,
         }
     }
+}
+
+fn translate_rect(rect: Rect, translation: Point) -> Rect {
+    Rect::new(
+        rect.origin.x + translation.x,
+        rect.origin.y + translation.y,
+        rect.size.width,
+        rect.size.height,
+    )
 }
 
 fn canonical_float_bits(value: f32) -> u32 {
@@ -934,16 +954,34 @@ impl Framebuffer {
     }
 
     pub fn rasterize(&mut self, list: &DisplayList) {
-        self.rasterize_internal(list, None);
+        self.rasterize_internal(list, None, Point::default());
     }
 
     pub fn rasterize_with_images(&mut self, list: &DisplayList, images: &ImageResourceStore) {
-        self.rasterize_internal(list, Some(images));
+        self.rasterize_internal(list, Some(images), Point::default());
     }
 
-    fn rasterize_internal(&mut self, list: &DisplayList, images: Option<&ImageResourceStore>) {
+    pub fn rasterize_with_translation(&mut self, list: &DisplayList, translation: Point) {
+        self.rasterize_internal(list, None, translation);
+    }
+
+    pub fn rasterize_with_images_and_translation(
+        &mut self,
+        list: &DisplayList,
+        images: &ImageResourceStore,
+        translation: Point,
+    ) {
+        self.rasterize_internal(list, Some(images), translation);
+    }
+
+    fn rasterize_internal(
+        &mut self,
+        list: &DisplayList,
+        images: Option<&ImageResourceStore>,
+        translation: Point,
+    ) {
         let framebuffer_clip = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
-        self.rasterize_clipped_internal(list, images, framebuffer_clip);
+        self.rasterize_clipped_internal(list, images, framebuffer_clip, translation);
     }
 
     fn rasterize_clipped_internal(
@@ -951,6 +989,7 @@ impl Framebuffer {
         list: &DisplayList,
         images: Option<&ImageResourceStore>,
         initial_clip: Rect,
+        translation: Point,
     ) {
         let framebuffer = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
         let framebuffer_clip =
@@ -962,14 +1001,15 @@ impl Framebuffer {
             match *command {
                 DisplayCommand::FillRect { rect, color }
                 | DisplayCommand::TextPlaceholder { rect, color } => {
-                    let rect = transform_rect(rect, &transforms);
+                    let rect = translate_rect(transform_rect(rect, &transforms), translation);
                     if let Some(clipped) = intersection(rect, *clips.last().expect("clip stack")) {
                         let color = apply_opacity(color, *opacities.last().expect("opacity stack"));
                         self.fill_rect(clipped, color);
                     }
                 }
                 DisplayCommand::DrawImage { rect, image } => {
-                    let destination = transform_rect(rect, &transforms);
+                    let destination =
+                        translate_rect(transform_rect(rect, &transforms), translation);
                     let decoded = images.and_then(|store| store.image(image));
                     if let (Some(decoded), Some(clipped)) = (
                         decoded,
@@ -984,7 +1024,7 @@ impl Framebuffer {
                     }
                 }
                 DisplayCommand::PushClip { rect } => {
-                    let rect = transform_rect(rect, &transforms);
+                    let rect = translate_rect(transform_rect(rect, &transforms), translation);
                     let current = *clips.last().expect("clip stack");
                     clips
                         .push(intersection(current, rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)));
@@ -1015,7 +1055,7 @@ impl Framebuffer {
         damage: &DamageRegion,
         background: Color,
     ) {
-        self.rasterize_damage_internal(list, damage, background, None);
+        self.rasterize_damage_internal(list, damage, background, None, Point::default());
     }
 
     pub fn rasterize_damage_with_images(
@@ -1025,7 +1065,28 @@ impl Framebuffer {
         background: Color,
         images: &ImageResourceStore,
     ) {
-        self.rasterize_damage_internal(list, damage, background, Some(images));
+        self.rasterize_damage_internal(list, damage, background, Some(images), Point::default());
+    }
+
+    pub fn rasterize_damage_with_translation(
+        &mut self,
+        list: &DisplayList,
+        damage: &DamageRegion,
+        background: Color,
+        translation: Point,
+    ) {
+        self.rasterize_damage_internal(list, damage, background, None, translation);
+    }
+
+    pub fn rasterize_damage_with_images_and_translation(
+        &mut self,
+        list: &DisplayList,
+        damage: &DamageRegion,
+        background: Color,
+        images: &ImageResourceStore,
+        translation: Point,
+    ) {
+        self.rasterize_damage_internal(list, damage, background, Some(images), translation);
     }
 
     fn rasterize_damage_internal(
@@ -1034,6 +1095,7 @@ impl Framebuffer {
         damage: &DamageRegion,
         background: Color,
         images: Option<&ImageResourceStore>,
+        translation: Point,
     ) {
         let framebuffer = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
         for damaged in &damage.rects {
@@ -1041,7 +1103,7 @@ impl Framebuffer {
                 continue;
             };
             self.clear_rect(damaged, background);
-            self.rasterize_clipped_internal(list, images, damaged);
+            self.rasterize_clipped_internal(list, images, damaged, translation);
         }
     }
 
@@ -1429,6 +1491,58 @@ mod tests {
         );
         full.rasterize_with_images(&after, &images);
         assert_eq!(incremental.stable_hash64(), full.stable_hash64());
+    }
+
+    #[test]
+    fn damage_translation_projects_document_rects_into_viewport_space() {
+        let damage = DamageRegion {
+            rects: vec![Rect::new(10.0, 20.0, 30.0, 40.0)],
+        };
+
+        assert_eq!(
+            damage.translated(Point { x: -3.0, y: -5.0 }).rects,
+            vec![Rect::new(7.0, 15.0, 30.0, 40.0)]
+        );
+        assert_eq!(damage.rects, vec![Rect::new(10.0, 20.0, 30.0, 40.0)]);
+    }
+
+    #[test]
+    fn viewport_translation_applies_after_local_display_transforms() {
+        let list = DisplayList::try_from_parts(
+            vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+            ],
+            vec![
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::scale(2.0, 2.0),
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(1.0, 1.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::PopTransform,
+            ],
+        )
+        .unwrap();
+        let mut framebuffer = Framebuffer::new(
+            Size {
+                width: 4.0,
+                height: 5.0,
+            },
+            Color::TRANSPARENT,
+        );
+
+        framebuffer.rasterize_with_translation(&list, Point { x: -1.0, y: 0.0 });
+
+        let pixel = |x: u32, y: u32| framebuffer.pixels[(y * framebuffer.width + x) as usize];
+        assert_eq!(pixel(0, 2), Color::TRANSPARENT);
+        assert_eq!(pixel(1, 2), Color::BLACK);
+        assert_eq!(pixel(2, 2), Color::BLACK);
+        assert_eq!(pixel(3, 2), Color::TRANSPARENT);
+        assert_eq!(pixel(1, 3), Color::BLACK);
+        assert_eq!(pixel(2, 3), Color::BLACK);
     }
 
     #[test]
