@@ -450,13 +450,8 @@ pub fn resolve_content_sized_tracks(
         ));
     }
 
-    let planned = plan_auto_track_base_size_increases(
-        &states,
-        sizing,
-        0.0,
-        axis,
-        &planned_contributions,
-    )?;
+    let planned =
+        plan_auto_track_base_size_increases(&states, sizing, 0.0, axis, &planned_contributions)?;
     apply_planned_base_size_increases(&mut states, &planned)?;
 
     Ok(states
