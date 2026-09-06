@@ -205,12 +205,6 @@ impl GridItemContribution {
         }
     }
 
-    const fn size_for_axis(self, axis: GridAxis) -> f32 {
-        match axis {
-            GridAxis::Column => self.inline_size,
-            GridAxis::Row => self.block_size,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1207,9 +1201,11 @@ mod tests {
 
     #[test]
     fn legacy_contribution_adapter_preserves_existing_scalar_sizes() {
-        let contributions = GridIntrinsicContributions::from_legacy(
-            GridItemContribution::new(LayoutNodeId(3), 42.0, 18.0),
-        );
+        let contributions = GridIntrinsicContributions::from_legacy(GridItemContribution::new(
+            LayoutNodeId(3),
+            42.0,
+            18.0,
+        ));
 
         for kind in [
             GridIntrinsicContributionKind::Minimum,
@@ -1273,10 +1269,7 @@ mod tests {
         );
 
         assert_eq!(
-            contributions.size_for(
-                GridAxis::Column,
-                GridIntrinsicContributionKind::MinContent,
-            ),
+            contributions.size_for(GridAxis::Column, GridIntrinsicContributionKind::MinContent,),
             Err(GridLayoutError::InvalidContribution {
                 node: LayoutNodeId(7),
                 axis: GridAxis::Column,
@@ -1299,10 +1292,7 @@ mod tests {
         );
 
         assert_eq!(
-            contributions.size_for(
-                GridAxis::Column,
-                GridIntrinsicContributionKind::Minimum,
-            ),
+            contributions.size_for(GridAxis::Column, GridIntrinsicContributionKind::Minimum,),
             Err(GridLayoutError::InvalidContribution {
                 node: LayoutNodeId(9),
                 axis: GridAxis::Column,
