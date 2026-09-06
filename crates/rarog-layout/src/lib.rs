@@ -14,13 +14,15 @@ pub use flex::{
 };
 
 pub use grid::{
-    GridAxis, GridItem, GridLayout, GridLayoutError, GridPlacement, GridPlacementRequest,
-    GridTrack, layout_fixed_grid, layout_fixed_grid_with_auto_placement,
+    GridAxis, GridItem, GridItemContribution, GridLayout, GridLayoutError, GridPlacement,
+    GridPlacementRequest, GridTrack, GridTrackSizing, layout_fixed_grid,
+    layout_fixed_grid_with_auto_placement, resolve_content_sized_tracks, resolve_grid_placements,
 };
 
 use rarog_css::{
-    AlignContent, AlignItems, AlignSelf, ComputedStyle, FlexDirection, FlexWrap, JustifyContent,
-    JustifySelf, StyleSet, VerticalAlign, computed_style_with_parent,
+    AlignContent, AlignItems, AlignSelf, ComputedStyle, FlexDirection, FlexWrap,
+    GridTrackSize as CssGridTrackSize, JustifyContent, JustifySelf, StyleSet, VerticalAlign,
+    computed_style_with_parent,
 };
 use rarog_dom::{Document, NodeId, NodeKind};
 use rarog_types::{Point, Rect, Size};
@@ -2961,35 +2963,57 @@ impl FragmentBuilder {
         container: &LayoutNode,
         containing_block: ContainingBlock,
     ) -> (Vec<Fragment>, Size) {
-        let columns = container
+        let column_sizing = container
             .style
             .grid_template_columns
             .as_slice()
             .iter()
             .copied()
-            .map(GridTrack::new)
+            .map(|track| match track {
+                CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
+                CssGridTrackSize::Auto => GridTrackSizing::Auto,
+            })
             .collect::<Vec<_>>();
-        let rows = container
+        let row_sizing = container
             .style
             .grid_template_rows
             .as_slice()
             .iter()
             .copied()
-            .map(GridTrack::new)
+            .map(|track| match track {
+                CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
+                CssGridTrackSize::Auto => GridTrackSizing::Auto,
+            })
+            .collect::<Vec<_>>();
+        let fallback_columns = column_sizing
+            .iter()
+            .copied()
+            .map(|track| match track {
+                GridTrackSizing::Fixed(size) => GridTrack::new(size),
+                GridTrackSizing::Auto => GridTrack::new(0.0),
+            })
+            .collect::<Vec<_>>();
+        let fallback_rows = row_sizing
+            .iter()
+            .copied()
+            .map(|track| match track {
+                GridTrackSizing::Fixed(size) => GridTrack::new(size),
+                GridTrackSizing::Auto => GridTrack::new(0.0),
+            })
             .collect::<Vec<_>>();
 
-        let Ok(explicit_grid) = layout_fixed_grid(
+        let Ok(fallback_grid) = layout_fixed_grid(
             containing_block.origin,
             containing_block.available,
-            &columns,
-            &rows,
+            &fallback_columns,
+            &fallback_rows,
             container.style.column_gap,
             container.style.row_gap,
             &[],
         ) else {
             return (Vec::new(), Size::default());
         };
-        let explicit_content_size = explicit_grid.content_size;
+        let fallback_content_size = fallback_grid.content_size;
 
         let mut nodes = Vec::new();
         let mut requests = Vec::new();
@@ -3019,22 +3043,83 @@ impl FragmentBuilder {
                     nodes.push(child);
                 }
                 LayoutNodeKind::Text(_) | LayoutNodeKind::Root => {
-                    return (Vec::new(), explicit_content_size);
+                    return (Vec::new(), fallback_content_size);
                 }
             }
         }
 
-        let Ok(layout) = layout_fixed_grid_with_auto_placement(
+        let Ok(items) =
+            resolve_grid_placements(column_sizing.len(), row_sizing.len(), &requests)
+        else {
+            return (Vec::new(), fallback_content_size);
+        };
+
+        let inline_contributions = nodes
+            .iter()
+            .map(|child| {
+                GridItemContribution::new(
+                    child.id,
+                    child.intrinsic.max_content + child.style.margin.horizontal(),
+                    0.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let Ok(columns) = resolve_content_sized_tracks(
+            &column_sizing,
+            GridAxis::Column,
+            &items,
+            &inline_contributions,
+        ) else {
+            return (Vec::new(), fallback_content_size);
+        };
+
+        let Ok(column_resolved_grid) = layout_fixed_grid(
+            containing_block.origin,
+            containing_block.available,
+            &columns,
+            &fallback_rows,
+            container.style.column_gap,
+            container.style.row_gap,
+            &items,
+        ) else {
+            return (Vec::new(), fallback_content_size);
+        };
+
+        let mut contributions = Vec::with_capacity(nodes.len());
+        for (child, placement) in nodes.iter().zip(&column_resolved_grid.items) {
+            let resolved_border_width =
+                (placement.area.size.width - child.style.margin.horizontal()).max(0.0);
+            let Some(border_height) = self.measure_item_natural_border_height(
+                child,
+                containing_block.available.height,
+                resolved_border_width,
+            ) else {
+                return (Vec::new(), fallback_content_size);
+            };
+            contributions.push(GridItemContribution::new(
+                child.id,
+                child.intrinsic.max_content + child.style.margin.horizontal(),
+                border_height + child.style.margin.vertical(),
+            ));
+        }
+
+        let Ok(rows) =
+            resolve_content_sized_tracks(&row_sizing, GridAxis::Row, &items, &contributions)
+        else {
+            return (Vec::new(), fallback_content_size);
+        };
+        let Ok(layout) = layout_fixed_grid(
             containing_block.origin,
             containing_block.available,
             &columns,
             &rows,
             container.style.column_gap,
             container.style.row_gap,
-            &requests,
+            &items,
         ) else {
-            return (Vec::new(), explicit_content_size);
+            return (Vec::new(), fallback_content_size);
         };
+        let resolved_content_size = layout.content_size;
 
         let mut fragments = Vec::with_capacity(nodes.len());
         for (child, placement) in nodes.into_iter().zip(&layout.items) {
@@ -3045,7 +3130,7 @@ impl FragmentBuilder {
             if (style.width.is_none() && inline_alignment != GridSelfAlignment::Stretch)
                 || (style.height.is_none() && block_alignment != GridSelfAlignment::Stretch)
             {
-                return (Vec::new(), explicit_content_size);
+                return (Vec::new(), resolved_content_size);
             }
 
             let horizontal_noncontent =
@@ -3122,7 +3207,7 @@ impl FragmentBuilder {
             fragments.push(fragment);
         }
 
-        (fragments, layout.content_size)
+        (fragments, resolved_content_size)
     }
 
     fn layout_flex_box(
@@ -3235,7 +3320,7 @@ impl FragmentBuilder {
         }
     }
 
-    fn measure_flex_item_natural_border_height(
+    fn measure_item_natural_border_height(
         &self,
         child: &LayoutNode,
         available_height: f32,
@@ -3403,7 +3488,7 @@ impl FragmentBuilder {
                 if !item_cross_metadata[index].auto {
                     continue;
                 }
-                let Some(border_height) = self.measure_flex_item_natural_border_height(
+                let Some(border_height) = self.measure_item_natural_border_height(
                     child,
                     containing_block.available.height,
                     placement.border_box.size.width,
@@ -4225,6 +4310,68 @@ mod tests {
                 height: 20.0
             }
         );
+    }
+
+    #[test]
+    fn css_grid_auto_columns_use_max_content_contributions() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:grid;grid-template-columns:auto 20px;grid-template-rows:20px"),
+                ),
+            )
+            .unwrap();
+        let first = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(first, NodeKind::Text("hello".into())).unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.size.width, 40.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.x, 40.0);
+        assert_eq!(grid.boxes.content_box.size.width, 320.0);
+    }
+
+    #[test]
+    fn css_grid_auto_rows_measure_natural_block_content_after_column_sizing() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some("display:grid;width:40px;grid-template-columns:40px;grid-template-rows:auto auto"),
+                ),
+            )
+            .unwrap();
+        let first = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(first, element("div", Some("height:12px"))).unwrap();
+        let second = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(second, element("div", Some("height:18px"))).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.size.height, 12.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.y, 12.0);
+        assert_eq!(grid.children[1].boxes.border_box.size.height, 18.0);
+        assert_eq!(grid.boxes.content_box.size.height, 30.0);
     }
 
     #[test]
