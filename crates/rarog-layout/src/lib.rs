@@ -3048,8 +3048,7 @@ impl FragmentBuilder {
             }
         }
 
-        let Ok(items) =
-            resolve_grid_placements(column_sizing.len(), row_sizing.len(), &requests)
+        let Ok(items) = resolve_grid_placements(column_sizing.len(), row_sizing.len(), &requests)
         else {
             return (Vec::new(), fallback_content_size);
         };
@@ -3073,40 +3072,48 @@ impl FragmentBuilder {
             return (Vec::new(), fallback_content_size);
         };
 
-        let Ok(column_resolved_grid) = layout_fixed_grid(
-            containing_block.origin,
-            containing_block.available,
-            &columns,
-            &fallback_rows,
-            container.style.column_gap,
-            container.style.row_gap,
-            &items,
-        ) else {
-            return (Vec::new(), fallback_content_size);
-        };
-
-        let mut contributions = Vec::with_capacity(nodes.len());
-        for (child, placement) in nodes.iter().zip(&column_resolved_grid.items) {
-            let resolved_border_width =
-                (placement.area.size.width - child.style.margin.horizontal()).max(0.0);
-            let Some(border_height) = self.measure_item_natural_border_height(
-                child,
-                containing_block.available.height,
-                resolved_border_width,
+        let rows = if row_sizing
+            .iter()
+            .any(|track| matches!(track, GridTrackSizing::Auto))
+        {
+            let Ok(column_resolved_grid) = layout_fixed_grid(
+                containing_block.origin,
+                containing_block.available,
+                &columns,
+                &fallback_rows,
+                container.style.column_gap,
+                container.style.row_gap,
+                &items,
             ) else {
                 return (Vec::new(), fallback_content_size);
             };
-            contributions.push(GridItemContribution::new(
-                child.id,
-                child.intrinsic.max_content + child.style.margin.horizontal(),
-                border_height + child.style.margin.vertical(),
-            ));
-        }
 
-        let Ok(rows) =
-            resolve_content_sized_tracks(&row_sizing, GridAxis::Row, &items, &contributions)
-        else {
-            return (Vec::new(), fallback_content_size);
+            let mut contributions = Vec::with_capacity(nodes.len());
+            for (child, placement) in nodes.iter().zip(&column_resolved_grid.items) {
+                let resolved_border_width =
+                    (placement.area.size.width - child.style.margin.horizontal()).max(0.0);
+                let Some(border_height) = self.measure_item_natural_border_height(
+                    child,
+                    containing_block.available.height,
+                    resolved_border_width,
+                ) else {
+                    return (Vec::new(), fallback_content_size);
+                };
+                contributions.push(GridItemContribution::new(
+                    child.id,
+                    child.intrinsic.max_content + child.style.margin.horizontal(),
+                    border_height + child.style.margin.vertical(),
+                ));
+            }
+
+            let Ok(rows) =
+                resolve_content_sized_tracks(&row_sizing, GridAxis::Row, &items, &contributions)
+            else {
+                return (Vec::new(), fallback_content_size);
+            };
+            rows
+        } else {
+            fallback_rows
         };
         let Ok(layout) = layout_fixed_grid(
             containing_block.origin,
@@ -4325,7 +4332,8 @@ mod tests {
             )
             .unwrap();
         let first = doc.append_new(container, element("div", None)).unwrap();
-        doc.append_new(first, NodeKind::Text("hello".into())).unwrap();
+        doc.append_new(first, NodeKind::Text("hello".into()))
+            .unwrap();
         doc.append_new(container, element("div", None)).unwrap();
 
         let output = layout_document(
@@ -4355,9 +4363,11 @@ mod tests {
             )
             .unwrap();
         let first = doc.append_new(container, element("div", None)).unwrap();
-        doc.append_new(first, element("div", Some("height:12px"))).unwrap();
+        doc.append_new(first, element("div", Some("height:12px")))
+            .unwrap();
         let second = doc.append_new(container, element("div", None)).unwrap();
-        doc.append_new(second, element("div", Some("height:18px"))).unwrap();
+        doc.append_new(second, element("div", Some("height:18px")))
+            .unwrap();
 
         let output = layout_document(
             &doc,
