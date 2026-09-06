@@ -533,9 +533,13 @@ pub fn resolve_content_sized_tracks(
         ));
     }
 
-    let planned =
-        plan_auto_track_base_size_increases(&states, sizing, 0.0, axis, &planned_contributions)?;
-    apply_planned_base_size_increases(&mut states, &planned)?;
+    apply_spanning_base_size_rounds(
+        &mut states,
+        sizing,
+        0.0,
+        axis,
+        &planned_contributions,
+    )?;
 
     Ok(states
         .into_iter()
@@ -642,6 +646,34 @@ pub(crate) fn apply_planned_base_size_increases(
         }
         state.grow_base_to(finite_add(state.base_size, increase)?);
     }
+    Ok(())
+}
+
+pub(crate) fn apply_spanning_base_size_rounds(
+    states: &mut [GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+    gap: f32,
+    axis: GridAxis,
+    contributions: &[GridSpanningSizeContribution],
+) -> Result<(), GridLayoutError> {
+    let mut spans = contributions
+        .iter()
+        .map(|contribution| contribution.span)
+        .collect::<Vec<_>>();
+    spans.sort_unstable();
+    spans.dedup();
+
+    for span in spans {
+        let round = contributions
+            .iter()
+            .copied()
+            .filter(|contribution| contribution.span == span)
+            .collect::<Vec<_>>();
+        let planned =
+            plan_auto_track_base_size_increases(states, sizing, gap, axis, &round)?;
+        apply_planned_base_size_increases(states, &planned)?;
+    }
+
     Ok(())
 }
 
@@ -1302,6 +1334,110 @@ mod tests {
                 .size_for(GridAxis::Row, GridIntrinsicContributionKind::MaxContent)
                 .unwrap(),
             1.0
+        );
+    }
+
+    #[test]
+    fn spanning_rounds_process_items_by_increasing_span() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let mut states = initialize_track_sizing_states(&sizing, GridAxis::Column).unwrap();
+        let contributions = [
+            GridSpanningSizeContribution::new(LayoutNodeId(2), 0, 2, 60.0),
+            GridSpanningSizeContribution::new(LayoutNodeId(1), 0, 1, 20.0),
+        ];
+
+        apply_spanning_base_size_rounds(
+            &mut states,
+            &sizing,
+            0.0,
+            GridAxis::Column,
+            &contributions,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 40.0);
+        assert_eq!(states[1].base_size, 20.0);
+    }
+
+    #[test]
+    fn spanning_rounds_are_independent_of_input_item_order() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let first = [
+            GridSpanningSizeContribution::new(LayoutNodeId(1), 0, 1, 20.0),
+            GridSpanningSizeContribution::new(LayoutNodeId(2), 0, 2, 60.0),
+        ];
+        let second = [first[1], first[0]];
+        let mut first_states =
+            initialize_track_sizing_states(&sizing, GridAxis::Column).unwrap();
+        let mut second_states =
+            initialize_track_sizing_states(&sizing, GridAxis::Column).unwrap();
+
+        apply_spanning_base_size_rounds(
+            &mut first_states,
+            &sizing,
+            0.0,
+            GridAxis::Column,
+            &first,
+        )
+        .unwrap();
+        apply_spanning_base_size_rounds(
+            &mut second_states,
+            &sizing,
+            0.0,
+            GridAxis::Column,
+            &second,
+        )
+        .unwrap();
+
+        assert_eq!(first_states, second_states);
+        assert_eq!(first_states[0].base_size, 40.0);
+        assert_eq!(first_states[1].base_size, 20.0);
+    }
+
+    #[test]
+    fn spanning_rounds_recompute_gap_aware_space_after_each_span() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let mut states = initialize_track_sizing_states(&sizing, GridAxis::Column).unwrap();
+        let contributions = [
+            GridSpanningSizeContribution::new(LayoutNodeId(1), 0, 1, 20.0),
+            GridSpanningSizeContribution::new(LayoutNodeId(2), 0, 2, 64.0),
+        ];
+
+        apply_spanning_base_size_rounds(
+            &mut states,
+            &sizing,
+            4.0,
+            GridAxis::Column,
+            &contributions,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 40.0);
+        assert_eq!(states[1].base_size, 20.0);
+    }
+
+    #[test]
+    fn spanning_rounds_reject_invalid_zero_span_contributions() {
+        let sizing = [GridTrackSizing::Auto];
+        let mut states = initialize_track_sizing_states(&sizing, GridAxis::Column).unwrap();
+
+        assert_eq!(
+            apply_spanning_base_size_rounds(
+                &mut states,
+                &sizing,
+                0.0,
+                GridAxis::Column,
+                &[GridSpanningSizeContribution::new(
+                    LayoutNodeId(4),
+                    0,
+                    0,
+                    10.0,
+                )],
+            ),
+            Err(GridLayoutError::InvalidContribution {
+                node: LayoutNodeId(4),
+                axis: GridAxis::Column,
+            })
         );
     }
 
