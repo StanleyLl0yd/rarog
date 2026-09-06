@@ -12,7 +12,8 @@ Tracking issue: #109.
 - [x] Add flex alignment, wrapping and reverse directions in measured slices (main-axis `justify-content`: #138; single-row `gap`: #139; container cross-axis `align-items`: #140; per-item `align-self`: #141; definite-row auto-height stretch: #142; bounded multi-line `flex-wrap`: #143; wrapped-line `align-content`: #144; measured wrapped auto-height stretch: #145; cross-axis `wrap-reverse`: #146; main-axis `row-reverse`: #147).
 - [x] Introduce Rarog-owned grid track/item metadata and a first measured grid layout slice (#148).
 - [x] Expand the first bounded Grid slices through fixed CSS Grid, explicit-grid auto-placement and item self-alignment (#149–#151).
-- [ ] Continue Grid sizing/placement with intrinsic and content-driven track sizing without coupling CSS parser AST types to layout.
+- [x] Add the first bounded intrinsic/content-driven Grid track-sizing slice with single-span `auto` tracks (#182).
+- [ ] Continue Grid intrinsic item sizing and spanning/fractional track sizing without coupling CSS parser AST types to layout.
 
 ## B — Compositor and GPU
 
@@ -33,7 +34,7 @@ Tracking issue: #109.
 
 ## Current focus
 
-The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. The next standards slice is intrinsic/content-driven Grid sizing; broader CSS overflow and nested scroll-container semantics remain separate work.
+The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. Grid now has a first bounded content-driven track-sizing phase for single-span `auto` rows and columns (#182). The next Grid slice is intrinsic sizing for non-stretch automatic items, followed by spanning/fractional track work; broader CSS overflow and nested scroll-container semantics remain separate work.
 
 ## Scope boundary
 
