@@ -1536,6 +1536,8 @@ fn flex_item_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool
 fn grid_container_layout_changed(before: ComputedStyle, after: ComputedStyle) -> bool {
     before.grid_template_columns != after.grid_template_columns
         || before.grid_template_rows != after.grid_template_rows
+        || before.justify_content != after.justify_content
+        || before.align_content != after.align_content
         || before.align_items != after.align_items
         || before.justify_items != after.justify_items
         || before.row_gap != after.row_gap
@@ -2097,6 +2099,34 @@ mod tests {
             item_origin.y,
             grid_fragment.boxes.content_box.origin.y + 30.0
         );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn grid_content_distribution_change_relayouts_parent_and_matches_fresh_render() {
+        let source = r#"<div id="grid" style="display:grid;width:60px;grid-template-columns:auto;grid-template-rows:20px"><div id="item">hello</div></div>"#;
+        let expected_source = r#"<div id="grid" style="display:grid;width:60px;grid-template-columns:auto;grid-template-rows:20px;justify-content:flex-start"><div id="item">hello</div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let grid = element_with_id(session.document(), "grid");
+
+        session
+            .document_mut()
+            .set_attribute(
+                grid,
+                "style",
+                "display:grid;width:60px;grid-template-columns:auto;grid-template-rows:20px;justify-content:flex-start",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("grid content-distribution update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+
         assert_eq!(
             session.framebuffer().stable_hash64(),
             expected.framebuffer.stable_hash64()
