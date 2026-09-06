@@ -1488,6 +1488,45 @@ mod tests {
     }
 
     #[test]
+    fn viewport_translation_applies_after_local_display_transforms() {
+        let list = DisplayList::try_from_parts(
+            vec![
+                DisplayItemId::test(1),
+                DisplayItemId::test(2),
+                DisplayItemId::test(3),
+            ],
+            vec![
+                DisplayCommand::PushTransform {
+                    transform: Transform2D::scale(2.0, 2.0),
+                },
+                DisplayCommand::FillRect {
+                    rect: Rect::new(1.0, 1.0, 1.0, 1.0),
+                    color: Color::BLACK,
+                },
+                DisplayCommand::PopTransform,
+            ],
+        )
+        .unwrap();
+        let mut framebuffer = Framebuffer::new(
+            Size {
+                width: 4.0,
+                height: 5.0,
+            },
+            Color::TRANSPARENT,
+        );
+
+        framebuffer.rasterize_with_translation(&list, Point { x: -1.0, y: 0.0 });
+
+        let pixel = |x: u32, y: u32| framebuffer.pixels[(y * framebuffer.width + x) as usize];
+        assert_eq!(pixel(0, 2), Color::TRANSPARENT);
+        assert_eq!(pixel(1, 2), Color::BLACK);
+        assert_eq!(pixel(2, 2), Color::BLACK);
+        assert_eq!(pixel(3, 2), Color::TRANSPARENT);
+        assert_eq!(pixel(1, 3), Color::BLACK);
+        assert_eq!(pixel(2, 3), Color::BLACK);
+    }
+
+    #[test]
     fn transform_and_opacity_scopes_are_balanced_and_rasterized() {
         let mut list = DisplayList::default();
         list.push(
