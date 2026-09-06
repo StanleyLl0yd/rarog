@@ -100,6 +100,15 @@ pub enum JustifySelf {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JustifyItems {
+    Normal,
+    Stretch,
+    Start,
+    End,
+    Center,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AlignContent {
     Stretch,
     FlexStart,
@@ -216,6 +225,7 @@ pub struct ComputedStyle {
     pub align_items: AlignItems,
     pub align_self: AlignSelf,
     pub justify_self: JustifySelf,
+    pub justify_items: JustifyItems,
     pub align_content: AlignContent,
     pub flex_wrap: FlexWrap,
     pub flex_direction: FlexDirection,
@@ -256,6 +266,7 @@ impl Default for ComputedStyle {
             align_items: AlignItems::Stretch,
             align_self: AlignSelf::Auto,
             justify_self: JustifySelf::Auto,
+            justify_items: JustifyItems::Normal,
             align_content: AlignContent::Stretch,
             flex_wrap: FlexWrap::NoWrap,
             flex_direction: FlexDirection::Row,
@@ -450,6 +461,7 @@ pub enum PropertyId {
     AlignItems,
     AlignSelf,
     JustifySelf,
+    JustifyItems,
     AlignContent,
     FlexWrap,
     FlexDirection,
@@ -492,6 +504,7 @@ pub enum PropertyValue {
     AlignItems(AlignItems),
     AlignSelf(AlignSelf),
     JustifySelf(JustifySelf),
+    JustifyItems(JustifyItems),
     AlignContent(AlignContent),
     FlexWrap(FlexWrap),
     FlexDirection(FlexDirection),
@@ -919,6 +932,7 @@ fn copy_property_from_style(
         PropertyId::AlignItems => style.align_items = source.align_items,
         PropertyId::AlignSelf => style.align_self = source.align_self,
         PropertyId::JustifySelf => style.justify_self = source.justify_self,
+        PropertyId::JustifyItems => style.justify_items = source.justify_items,
         PropertyId::AlignContent => style.align_content = source.align_content,
         PropertyId::FlexWrap => style.flex_wrap = source.flex_wrap,
         PropertyId::FlexDirection => style.flex_direction = source.flex_direction,
@@ -1012,6 +1026,9 @@ fn apply_property_value(style: &mut ComputedStyle, property: PropertyId, value: 
         (PropertyId::AlignItems, PropertyValue::AlignItems(value)) => style.align_items = value,
         (PropertyId::AlignSelf, PropertyValue::AlignSelf(value)) => style.align_self = value,
         (PropertyId::JustifySelf, PropertyValue::JustifySelf(value)) => style.justify_self = value,
+        (PropertyId::JustifyItems, PropertyValue::JustifyItems(value)) => {
+            style.justify_items = value
+        }
         (PropertyId::AlignContent, PropertyValue::AlignContent(value)) => {
             style.align_content = value
         }
@@ -1353,6 +1370,31 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
                 });
             }
         }
+        "justify-items" => {
+            let value = value.trim();
+            let value = if value.eq_ignore_ascii_case("normal") {
+                Some(JustifyItems::Normal)
+            } else if value.eq_ignore_ascii_case("stretch") {
+                Some(JustifyItems::Stretch)
+            } else if value.eq_ignore_ascii_case("start")
+                || value.eq_ignore_ascii_case("flex-start")
+            {
+                Some(JustifyItems::Start)
+            } else if value.eq_ignore_ascii_case("end") || value.eq_ignore_ascii_case("flex-end") {
+                Some(JustifyItems::End)
+            } else if value.eq_ignore_ascii_case("center") {
+                Some(JustifyItems::Center)
+            } else {
+                None
+            };
+            if let Some(value) = value {
+                output.push(Declaration {
+                    property: PropertyId::JustifyItems,
+                    value: PropertyValue::JustifyItems(value),
+                    important,
+                });
+            }
+        }
         "justify-content" => {
             let value = value.trim();
             let value = if value.eq_ignore_ascii_case("flex-start")
@@ -1503,6 +1545,7 @@ fn push_css_wide(
         "align-items" => &[PropertyId::AlignItems],
         "align-self" => &[PropertyId::AlignSelf],
         "justify-self" => &[PropertyId::JustifySelf],
+        "justify-items" => &[PropertyId::JustifyItems],
         "align-content" => &[PropertyId::AlignContent],
         "flex-wrap" => &[PropertyId::FlexWrap],
         "flex-direction" => &[PropertyId::FlexDirection],
@@ -2548,6 +2591,37 @@ mod finite_geometry_tests {
             PropertyValue::JustifySelf(JustifySelf::Center),
         );
         assert_eq!(style.justify_self, JustifySelf::Center);
+    }
+
+    #[test]
+    fn grid_justify_items_parses_bounded_default_alignment() {
+        let declarations = parse_declarations(
+            "justify-items:normal;justify-items:stretch;justify-items:start;justify-items:end;justify-items:center",
+        );
+        for value in [
+            JustifyItems::Normal,
+            JustifyItems::Stretch,
+            JustifyItems::Start,
+            JustifyItems::End,
+            JustifyItems::Center,
+        ] {
+            assert!(declarations.contains(&Declaration {
+                property: PropertyId::JustifyItems,
+                value: PropertyValue::JustifyItems(value),
+                important: false,
+            }));
+        }
+        assert!(parse_declarations("justify-items:legacy").is_empty());
+        assert!(parse_declarations("justify-items:baseline").is_empty());
+
+        let mut style = ComputedStyle::default();
+        assert_eq!(style.justify_items, JustifyItems::Normal);
+        apply_property_value(
+            &mut style,
+            PropertyId::JustifyItems,
+            PropertyValue::JustifyItems(JustifyItems::Center),
+        );
+        assert_eq!(style.justify_items, JustifyItems::Center);
     }
 
     #[test]
