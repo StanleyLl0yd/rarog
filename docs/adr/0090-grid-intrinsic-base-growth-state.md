@@ -21,7 +21,7 @@ Rarog adds a layout-internal non-spanning intrinsic state resolver with independ
 
 The base-size phase continues to use the span-ordered planned-increase mechanism from ADR-0086/ADR-0088. This keeps one order-independent base growth path instead of introducing a second special-case algorithm.
 
-For each supported single-track `auto` item, the resolver also records the selected growth contribution. After the base-size round completes:
+For each supported single-track `auto` item, the resolver also records the selected growth contribution. This follows the Grid intrinsic-sizing rule that an `auto` max track sizing function is treated as `max-content` during intrinsic resolution. After the base-size round completes:
 
 - an `auto` track's finite growth limit becomes the largest selected growth target for that track;
 - the growth limit is never allowed below the resolved base size;
