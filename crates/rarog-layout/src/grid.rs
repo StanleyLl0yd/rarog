@@ -204,7 +204,6 @@ impl GridItemContribution {
             block_size,
         }
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
