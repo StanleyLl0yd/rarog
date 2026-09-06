@@ -1110,15 +1110,12 @@ mod tests {
             let mut stack = vec![document.root()];
             let mut found = None;
             while let Some(node) = stack.pop() {
-                if document
-                    .node(node)
-                    .and_then(|current| match &current.kind {
-                        rarog_dom::NodeKind::Element(element) => {
-                            element.attributes.get("id").map(String::as_str)
-                        }
-                        _ => None,
-                    })
-                    == Some("hero")
+                if document.node(node).and_then(|current| match &current.kind {
+                    rarog_dom::NodeKind::Element(element) => {
+                        element.attributes.get("id").map(String::as_str)
+                    }
+                    _ => None,
+                }) == Some("hero")
                 {
                     found = Some(node);
                     break;
