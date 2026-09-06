@@ -21,7 +21,7 @@ pub use grid::{
 
 use grid::{
     GridAxisIntrinsicContributions, GridIntrinsicContributionKind, GridIntrinsicContributions,
-    resolve_intrinsic_content_sized_tracks,
+    resolve_intrinsic_content_sized_tracks, resolve_intrinsic_tracks_with_space,
 };
 
 use rarog_css::{
@@ -2913,7 +2913,7 @@ impl FragmentBuilder {
             },
         };
         let (children, natural_content_size) =
-            self.layout_grid_children(node, child_containing_block);
+            self.layout_grid_children(node, child_containing_block, definite_content_height);
         let content_height = content_height_override.unwrap_or_else(|| {
             clamp_used_dimension(
                 style.height.unwrap_or(natural_content_size.height),
@@ -2967,6 +2967,7 @@ impl FragmentBuilder {
         &mut self,
         container: &LayoutNode,
         containing_block: ContainingBlock,
+        definite_content_height: Option<f32>,
     ) -> (Vec<Fragment>, Size) {
         let column_sizing = container
             .style
@@ -3068,12 +3069,41 @@ impl FragmentBuilder {
                 )
             })
             .collect::<Vec<_>>();
-        let Ok(columns) = resolve_intrinsic_content_sized_tracks(
+        let (column_base_kind, column_growth_kind, column_available, stretch_columns) =
+            match container.style.justify_content {
+                JustifyContent::Normal | JustifyContent::Stretch => (
+                    GridIntrinsicContributionKind::Minimum,
+                    GridIntrinsicContributionKind::MaxContent,
+                    Some(containing_block.available.width),
+                    true,
+                ),
+                JustifyContent::FlexStart => (
+                    GridIntrinsicContributionKind::Minimum,
+                    GridIntrinsicContributionKind::MaxContent,
+                    Some(containing_block.available.width),
+                    false,
+                ),
+                JustifyContent::FlexEnd
+                | JustifyContent::Center
+                | JustifyContent::SpaceBetween
+                | JustifyContent::SpaceAround
+                | JustifyContent::SpaceEvenly => (
+                    GridIntrinsicContributionKind::MaxContent,
+                    GridIntrinsicContributionKind::MaxContent,
+                    None,
+                    false,
+                ),
+            };
+        let Ok(columns) = resolve_intrinsic_tracks_with_space(
             &column_sizing,
             GridAxis::Column,
             &items,
             &inline_contributions,
-            GridIntrinsicContributionKind::MaxContent,
+            column_base_kind,
+            column_growth_kind,
+            container.style.column_gap,
+            column_available,
+            stretch_columns,
         ) else {
             return (Vec::new(), fallback_content_size);
         };
@@ -3131,12 +3161,41 @@ impl FragmentBuilder {
                 ));
             }
 
-            let Ok(rows) = resolve_intrinsic_content_sized_tracks(
+            let (row_base_kind, row_growth_kind, row_available, stretch_rows) =
+                match container.style.align_content {
+                    AlignContent::Normal | AlignContent::Stretch => (
+                        GridIntrinsicContributionKind::Minimum,
+                        GridIntrinsicContributionKind::MaxContent,
+                        definite_content_height,
+                        true,
+                    ),
+                    AlignContent::FlexStart => (
+                        GridIntrinsicContributionKind::Minimum,
+                        GridIntrinsicContributionKind::MaxContent,
+                        definite_content_height,
+                        false,
+                    ),
+                    AlignContent::FlexEnd
+                    | AlignContent::Center
+                    | AlignContent::SpaceBetween
+                    | AlignContent::SpaceAround
+                    | AlignContent::SpaceEvenly => (
+                        GridIntrinsicContributionKind::MaxContent,
+                        GridIntrinsicContributionKind::MaxContent,
+                        None,
+                        false,
+                    ),
+                };
+            let Ok(rows) = resolve_intrinsic_tracks_with_space(
                 &row_sizing,
                 GridAxis::Row,
                 &items,
                 &contributions,
-                GridIntrinsicContributionKind::MaxContent,
+                row_base_kind,
+                row_growth_kind,
+                container.style.row_gap,
+                row_available,
+                stretch_rows,
             ) else {
                 return (Vec::new(), fallback_content_size);
             };
