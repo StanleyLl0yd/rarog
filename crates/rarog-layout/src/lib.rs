@@ -4802,6 +4802,130 @@ mod tests {
     }
 
     #[test]
+    fn css_grid_justify_content_positions_and_distributes_track_group() {
+        for (value, first_x, second_x) in [
+            ("flex-start", 0.0, 20.0),
+            ("flex-end", 60.0, 80.0),
+            ("center", 30.0, 50.0),
+            ("space-between", 0.0, 80.0),
+            ("space-around", 15.0, 65.0),
+            ("space-evenly", 20.0, 60.0),
+        ] {
+            let mut doc = Document::new();
+            let container = doc
+                .append_new(
+                    doc.root(),
+                    element(
+                        "div",
+                        Some(&format!(
+                            "display:grid;width:100px;justify-content:{value};grid-template-columns:20px 20px;grid-template-rows:20px"
+                        )),
+                    ),
+                )
+                .unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+
+            let output = layout_document(
+                &doc,
+                Size {
+                    width: 320.0,
+                    height: 200.0,
+                },
+            );
+            let grid = &output.fragments.root.children[0];
+
+            assert_eq!(
+                grid.children[0].boxes.border_box.origin.x,
+                first_x,
+                "justify-content:{value}"
+            );
+            assert_eq!(
+                grid.children[1].boxes.border_box.origin.x,
+                second_x,
+                "justify-content:{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn css_grid_align_content_positions_and_distributes_track_group() {
+        for (value, first_y, second_y) in [
+            ("flex-start", 0.0, 20.0),
+            ("flex-end", 60.0, 80.0),
+            ("center", 30.0, 50.0),
+            ("space-between", 0.0, 80.0),
+            ("space-around", 15.0, 65.0),
+            ("space-evenly", 20.0, 60.0),
+        ] {
+            let mut doc = Document::new();
+            let container = doc
+                .append_new(
+                    doc.root(),
+                    element(
+                        "div",
+                        Some(&format!(
+                            "display:grid;width:20px;height:100px;align-content:{value};grid-template-columns:20px;grid-template-rows:20px 20px"
+                        )),
+                    ),
+                )
+                .unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+
+            let output = layout_document(
+                &doc,
+                Size {
+                    width: 320.0,
+                    height: 200.0,
+                },
+            );
+            let grid = &output.fragments.root.children[0];
+
+            assert_eq!(
+                grid.children[0].boxes.border_box.origin.y,
+                first_y,
+                "align-content:{value}"
+            );
+            assert_eq!(
+                grid.children[1].boxes.border_box.origin.y,
+                second_y,
+                "align-content:{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn css_grid_space_between_adds_distributed_space_to_declared_gap() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:100px;justify-content:space-between;column-gap:10px;grid-template-columns:20px 20px;grid-template-rows:20px",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.origin.x, 0.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.x, 80.0);
+    }
+
+    #[test]
     fn css_grid_justify_items_sets_default_inline_self_alignment() {
         let mut doc = Document::new();
         let container = doc
