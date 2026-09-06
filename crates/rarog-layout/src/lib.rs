@@ -21,6 +21,7 @@ pub use grid::{
 
 use grid::{
     GridAxisIntrinsicContributions, GridIntrinsicContributionKind, GridIntrinsicContributions,
+    GridTrackGroupAlignment, resolve_grid_track_group_distribution,
     resolve_intrinsic_content_sized_tracks, resolve_intrinsic_tracks_with_space,
 };
 
@@ -3069,41 +3070,39 @@ impl FragmentBuilder {
                 )
             })
             .collect::<Vec<_>>();
-        let (column_base_kind, column_growth_kind, column_available, stretch_columns) =
-            match container.style.justify_content {
-                JustifyContent::Normal | JustifyContent::Stretch => (
-                    GridIntrinsicContributionKind::Minimum,
-                    GridIntrinsicContributionKind::MaxContent,
-                    Some(containing_block.available.width),
-                    true,
-                ),
-                JustifyContent::FlexStart => (
-                    GridIntrinsicContributionKind::Minimum,
-                    GridIntrinsicContributionKind::MaxContent,
-                    Some(containing_block.available.width),
-                    false,
-                ),
-                JustifyContent::FlexEnd
-                | JustifyContent::Center
-                | JustifyContent::SpaceBetween
-                | JustifyContent::SpaceAround
-                | JustifyContent::SpaceEvenly => (
-                    GridIntrinsicContributionKind::MaxContent,
-                    GridIntrinsicContributionKind::MaxContent,
-                    None,
-                    false,
-                ),
-            };
+        let stretch_columns = matches!(
+            container.style.justify_content,
+            JustifyContent::Normal | JustifyContent::Stretch
+        );
+        let column_alignment = match container.style.justify_content {
+            JustifyContent::Normal | JustifyContent::Stretch | JustifyContent::FlexStart => {
+                GridTrackGroupAlignment::Start
+            }
+            JustifyContent::FlexEnd => GridTrackGroupAlignment::End,
+            JustifyContent::Center => GridTrackGroupAlignment::Center,
+            JustifyContent::SpaceBetween => GridTrackGroupAlignment::SpaceBetween,
+            JustifyContent::SpaceAround => GridTrackGroupAlignment::SpaceAround,
+            JustifyContent::SpaceEvenly => GridTrackGroupAlignment::SpaceEvenly,
+        };
         let Ok(columns) = resolve_intrinsic_tracks_with_space(
             &column_sizing,
             GridAxis::Column,
             &items,
             &inline_contributions,
-            column_base_kind,
-            column_growth_kind,
+            GridIntrinsicContributionKind::Minimum,
+            GridIntrinsicContributionKind::MaxContent,
             container.style.column_gap,
-            column_available,
+            Some(containing_block.available.width),
             stretch_columns,
+        ) else {
+            return (Vec::new(), fallback_content_size);
+        };
+        let Ok(column_distribution) = resolve_grid_track_group_distribution(
+            &columns,
+            container.style.column_gap,
+            Some(containing_block.available.width),
+            GridAxis::Column,
+            column_alignment,
         ) else {
             return (Vec::new(), fallback_content_size);
         };
@@ -3113,11 +3112,14 @@ impl FragmentBuilder {
             .any(|track| matches!(track, GridTrackSizing::Auto))
         {
             let Ok(column_resolved_grid) = layout_fixed_grid(
-                containing_block.origin,
+                Point {
+                    x: containing_block.origin.x + column_distribution.offset,
+                    y: containing_block.origin.y,
+                },
                 containing_block.available,
                 &columns,
                 &fallback_rows,
-                container.style.column_gap,
+                column_distribution.gap,
                 container.style.row_gap,
                 &items,
             ) else {
@@ -3161,40 +3163,19 @@ impl FragmentBuilder {
                 ));
             }
 
-            let (row_base_kind, row_growth_kind, row_available, stretch_rows) =
-                match container.style.align_content {
-                    AlignContent::Normal | AlignContent::Stretch => (
-                        GridIntrinsicContributionKind::Minimum,
-                        GridIntrinsicContributionKind::MaxContent,
-                        definite_content_height,
-                        true,
-                    ),
-                    AlignContent::FlexStart => (
-                        GridIntrinsicContributionKind::Minimum,
-                        GridIntrinsicContributionKind::MaxContent,
-                        definite_content_height,
-                        false,
-                    ),
-                    AlignContent::FlexEnd
-                    | AlignContent::Center
-                    | AlignContent::SpaceBetween
-                    | AlignContent::SpaceAround
-                    | AlignContent::SpaceEvenly => (
-                        GridIntrinsicContributionKind::MaxContent,
-                        GridIntrinsicContributionKind::MaxContent,
-                        None,
-                        false,
-                    ),
-                };
+            let stretch_rows = matches!(
+                container.style.align_content,
+                AlignContent::Normal | AlignContent::Stretch
+            );
             let Ok(rows) = resolve_intrinsic_tracks_with_space(
                 &row_sizing,
                 GridAxis::Row,
                 &items,
                 &contributions,
-                row_base_kind,
-                row_growth_kind,
+                GridIntrinsicContributionKind::Minimum,
+                GridIntrinsicContributionKind::MaxContent,
                 container.style.row_gap,
-                row_available,
+                definite_content_height,
                 stretch_rows,
             ) else {
                 return (Vec::new(), fallback_content_size);
@@ -3203,13 +3184,35 @@ impl FragmentBuilder {
         } else {
             fallback_rows
         };
+        let row_alignment = match container.style.align_content {
+            AlignContent::Normal | AlignContent::Stretch | AlignContent::FlexStart => {
+                GridTrackGroupAlignment::Start
+            }
+            AlignContent::FlexEnd => GridTrackGroupAlignment::End,
+            AlignContent::Center => GridTrackGroupAlignment::Center,
+            AlignContent::SpaceBetween => GridTrackGroupAlignment::SpaceBetween,
+            AlignContent::SpaceAround => GridTrackGroupAlignment::SpaceAround,
+            AlignContent::SpaceEvenly => GridTrackGroupAlignment::SpaceEvenly,
+        };
+        let Ok(row_distribution) = resolve_grid_track_group_distribution(
+            &rows,
+            container.style.row_gap,
+            definite_content_height,
+            GridAxis::Row,
+            row_alignment,
+        ) else {
+            return (Vec::new(), fallback_content_size);
+        };
         let Ok(layout) = layout_fixed_grid(
-            containing_block.origin,
+            Point {
+                x: containing_block.origin.x + column_distribution.offset,
+                y: containing_block.origin.y + row_distribution.offset,
+            },
             containing_block.available,
             &columns,
             &rows,
-            container.style.column_gap,
-            container.style.row_gap,
+            column_distribution.gap,
+            row_distribution.gap,
             &items,
         ) else {
             return (Vec::new(), fallback_content_size);
@@ -4796,6 +4799,130 @@ mod tests {
             flex_content_alignment(AlignContent::Stretch),
             FlexContentAlignment::Stretch
         );
+    }
+
+    #[test]
+    fn css_grid_justify_content_positions_and_distributes_track_group() {
+        for (value, first_x, second_x) in [
+            ("flex-start", 0.0, 20.0),
+            ("flex-end", 60.0, 80.0),
+            ("center", 30.0, 50.0),
+            ("space-between", 0.0, 80.0),
+            ("space-around", 15.0, 65.0),
+            ("space-evenly", 20.0, 60.0),
+        ] {
+            let mut doc = Document::new();
+            let container = doc
+                .append_new(
+                    doc.root(),
+                    element(
+                        "div",
+                        Some(&format!(
+                            "display:grid;width:100px;justify-content:{value};grid-template-columns:20px 20px;grid-template-rows:20px"
+                        )),
+                    ),
+                )
+                .unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+
+            let output = layout_document(
+                &doc,
+                Size {
+                    width: 320.0,
+                    height: 200.0,
+                },
+            );
+            let grid = &output.fragments.root.children[0];
+
+            assert_eq!(
+                grid.children[0].boxes.border_box.origin.x,
+                first_x,
+                "justify-content:{value}"
+            );
+            assert_eq!(
+                grid.children[1].boxes.border_box.origin.x,
+                second_x,
+                "justify-content:{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn css_grid_align_content_positions_and_distributes_track_group() {
+        for (value, first_y, second_y) in [
+            ("flex-start", 0.0, 20.0),
+            ("flex-end", 60.0, 80.0),
+            ("center", 30.0, 50.0),
+            ("space-between", 0.0, 80.0),
+            ("space-around", 15.0, 65.0),
+            ("space-evenly", 20.0, 60.0),
+        ] {
+            let mut doc = Document::new();
+            let container = doc
+                .append_new(
+                    doc.root(),
+                    element(
+                        "div",
+                        Some(&format!(
+                            "display:grid;width:20px;height:100px;align-content:{value};grid-template-columns:20px;grid-template-rows:20px 20px"
+                        )),
+                    ),
+                )
+                .unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+            doc.append_new(container, element("div", None)).unwrap();
+
+            let output = layout_document(
+                &doc,
+                Size {
+                    width: 320.0,
+                    height: 200.0,
+                },
+            );
+            let grid = &output.fragments.root.children[0];
+
+            assert_eq!(
+                grid.children[0].boxes.border_box.origin.y,
+                first_y,
+                "align-content:{value}"
+            );
+            assert_eq!(
+                grid.children[1].boxes.border_box.origin.y,
+                second_y,
+                "align-content:{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn css_grid_space_between_adds_distributed_space_to_declared_gap() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:100px;justify-content:space-between;column-gap:10px;grid-template-columns:20px 20px;grid-template-rows:20px",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.origin.x, 0.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.x, 80.0);
     }
 
     #[test]
