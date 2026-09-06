@@ -258,9 +258,9 @@ where
             Some(WindowsSurfaceRecovery::Recreate) => {
                 let width = self.surface.width();
                 let height = self.surface.height();
-                self.surface =
-                    self.gpu
-                        .create_surface(self.target.clone(), width, height)?;
+                self.surface = self
+                    .gpu
+                    .create_surface(self.target.clone(), width, height)?;
                 Ok(PresentationStatus::Deferred)
             }
             Some(WindowsSurfaceRecovery::Fatal) | None => Err(error),
