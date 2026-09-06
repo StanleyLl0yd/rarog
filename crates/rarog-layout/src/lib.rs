@@ -3835,7 +3835,7 @@ fn flex_item_cross_alignment(align_self: AlignSelf) -> Option<FlexCrossAlignment
 
 fn flex_content_alignment(align_content: AlignContent) -> FlexContentAlignment {
     match align_content {
-        AlignContent::Stretch => FlexContentAlignment::Stretch,
+        AlignContent::Normal | AlignContent::Stretch => FlexContentAlignment::Stretch,
         AlignContent::FlexStart => FlexContentAlignment::Start,
         AlignContent::FlexEnd => FlexContentAlignment::End,
         AlignContent::Center => FlexContentAlignment::Center,
@@ -3856,7 +3856,9 @@ fn flex_cross_alignment(align_items: AlignItems) -> FlexCrossAlignment {
 
 fn flex_main_alignment(justify_content: JustifyContent) -> FlexMainAlignment {
     match justify_content {
-        JustifyContent::FlexStart => FlexMainAlignment::Start,
+        JustifyContent::Normal | JustifyContent::Stretch | JustifyContent::FlexStart => {
+            FlexMainAlignment::Start
+        }
         JustifyContent::FlexEnd => FlexMainAlignment::End,
         JustifyContent::Center => FlexMainAlignment::Center,
         JustifyContent::SpaceBetween => FlexMainAlignment::SpaceBetween,
@@ -4580,6 +4582,26 @@ mod tests {
         let item = &output.fragments.root.children[0].children[0];
 
         assert_eq!(item.boxes.border_box, Rect::new(10.0, 11.0, 40.0, 18.0));
+    }
+
+    #[test]
+    fn flex_normal_and_stretch_content_distribution_keep_previous_used_behavior() {
+        assert_eq!(
+            flex_main_alignment(JustifyContent::Normal),
+            FlexMainAlignment::Start
+        );
+        assert_eq!(
+            flex_main_alignment(JustifyContent::Stretch),
+            FlexMainAlignment::Start
+        );
+        assert_eq!(
+            flex_content_alignment(AlignContent::Normal),
+            FlexContentAlignment::Stretch
+        );
+        assert_eq!(
+            flex_content_alignment(AlignContent::Stretch),
+            FlexContentAlignment::Stretch
+        );
     }
 
     #[test]
