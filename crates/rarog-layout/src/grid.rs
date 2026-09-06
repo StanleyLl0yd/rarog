@@ -531,6 +531,31 @@ pub(crate) fn resolve_intrinsic_content_sized_tracks(
         .collect())
 }
 
+pub(crate) fn resolve_intrinsic_content_sized_tracks_with_available_space(
+    sizing: &[GridTrackSizing],
+    axis: GridAxis,
+    items: &[GridItem],
+    contributions: &[GridIntrinsicContributions],
+    kind: GridIntrinsicContributionKind,
+    available_space: f32,
+    gap: f32,
+) -> Result<Vec<GridTrack>, GridLayoutError> {
+    let mut states = resolve_non_spanning_intrinsic_track_states(
+        sizing,
+        axis,
+        items,
+        contributions,
+        kind,
+        kind,
+    )?;
+    maximize_track_base_sizes(&mut states, available_space, gap, axis)?;
+
+    Ok(states
+        .into_iter()
+        .map(GridTrackSizingState::resolved_track)
+        .collect())
+}
+
 pub(crate) fn resolve_non_spanning_intrinsic_track_states(
     sizing: &[GridTrackSizing],
     axis: GridAxis,
@@ -595,6 +620,39 @@ pub(crate) fn resolve_non_spanning_intrinsic_track_states(
     }
 
     Ok(states)
+}
+
+pub(crate) fn maximize_track_base_sizes(
+    states: &mut [GridTrackSizingState],
+    available_space: f32,
+    gap: f32,
+    axis: GridAxis,
+) -> Result<(), GridLayoutError> {
+    if !available_space.is_finite() || available_space < 0.0 {
+        return Err(GridLayoutError::InvalidAvailableSize);
+    }
+    validate_gap(gap, axis)?;
+
+    let mut occupied = 0.0_f32;
+    for (index, state) in states.iter().enumerate() {
+        occupied = finite_add(occupied, state.base_size)?;
+        if index + 1 < states.len() {
+            occupied = finite_add(occupied, gap)?;
+        }
+    }
+
+    let free_space = (available_space - occupied).max(0.0);
+    if free_space == 0.0 || states.is_empty() {
+        return Ok(());
+    }
+
+    let affected = (0..states.len()).collect::<Vec<_>>();
+    let planned = distribute_base_size_space(states, &affected, free_space)?;
+    let mut increases = vec![0.0_f32; states.len()];
+    for (index, increase) in planned {
+        increases[index] = increase;
+    }
+    apply_planned_base_size_increases(states, &increases)
 }
 
 fn initialize_track_sizing_states(
@@ -1384,6 +1442,101 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[test]
+    fn maximize_tracks_distributes_positive_free_space_equally() {
+        let mut states = [
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(50.0),
+            },
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(50.0),
+            },
+        ];
+
+        maximize_track_base_sizes(&mut states, 70.0, 10.0, GridAxis::Column).unwrap();
+
+        assert_eq!(states[0].base_size, 30.0);
+        assert_eq!(states[1].base_size, 30.0);
+    }
+
+    #[test]
+    fn maximize_tracks_freezes_tracks_at_growth_limits() {
+        let mut states = [
+            GridTrackSizingState::fixed(20.0),
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(50.0),
+            },
+        ];
+
+        maximize_track_base_sizes(&mut states, 100.0, 10.0, GridAxis::Column).unwrap();
+
+        assert_eq!(states[0].base_size, 20.0);
+        assert_eq!(states[1].base_size, 50.0);
+    }
+
+    #[test]
+    fn maximize_tracks_leaves_non_positive_free_space_unchanged() {
+        let mut states = [
+            GridTrackSizingState {
+                base_size: 30.0,
+                growth_limit: GridTrackGrowthLimit::Finite(60.0),
+            },
+            GridTrackSizingState {
+                base_size: 20.0,
+                growth_limit: GridTrackGrowthLimit::Finite(60.0),
+            },
+        ];
+        let original = states;
+
+        maximize_track_base_sizes(&mut states, 55.0, 5.0, GridAxis::Column).unwrap();
+
+        assert_eq!(states, original);
+    }
+
+    #[test]
+    fn maximize_tracks_validates_available_space_and_gap() {
+        let mut states = [GridTrackSizingState::intrinsic()];
+
+        assert_eq!(
+            maximize_track_base_sizes(&mut states, f32::NAN, 0.0, GridAxis::Column),
+            Err(GridLayoutError::InvalidAvailableSize)
+        );
+        assert_eq!(
+            maximize_track_base_sizes(&mut states, 20.0, -1.0, GridAxis::Column),
+            Err(GridLayoutError::InvalidGap {
+                axis: GridAxis::Column,
+            })
+        );
+    }
+
+    #[test]
+    fn available_space_resolver_preserves_max_content_compatibility_geometry() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Fixed(20.0)];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(12.0, 20.0, 40.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        let tracks = resolve_intrinsic_content_sized_tracks_with_available_space(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::MaxContent,
+            320.0,
+            10.0,
+        )
+        .unwrap();
+
+        assert_eq!(tracks[0].base_size, 40.0);
+        assert_eq!(tracks[1].base_size, 20.0);
     }
 
     #[test]
