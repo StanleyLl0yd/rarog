@@ -13,7 +13,9 @@ Tracking issue: #109.
 - [x] Introduce Rarog-owned grid track/item metadata and a first measured grid layout slice (#148).
 - [x] Expand the first bounded Grid slices through fixed CSS Grid, explicit-grid auto-placement and item self-alignment (#149–#151).
 - [x] Add the first bounded intrinsic/content-driven Grid track-sizing slice with single-span `auto` tracks (#182).
-- [x] Add intrinsic automatic sizing for non-stretch Grid items (#183).\n- [ ] Continue Grid spanning/fractional track sizing without coupling CSS parser AST types to layout.
+- [x] Add intrinsic automatic sizing for non-stretch Grid items (#183).
+- [x] Add bounded Grid container default inline alignment through `justify-items` (#184).
+- [ ] Continue Grid spanning/fractional track sizing without coupling CSS parser AST types to layout.
 
 ## B — Compositor and GPU
 
@@ -34,7 +36,7 @@ Tracking issue: #109.
 
 ## Current focus
 
-The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. Grid now supports bounded single-span `auto` track sizing (#182) plus intrinsic automatic sizing for non-stretch items (#183). The next Grid work must introduce enough track-sizing state to handle spanning/fractional sizing without silently approximating the CSS Grid algorithm; broader CSS overflow and nested scroll-container semantics remain separate work.
+The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. Grid now supports bounded single-span `auto` track sizing (#182), intrinsic automatic sizing for non-stretch items (#183), and container default inline alignment through `justify-items` (#184). The next Grid work must introduce enough track-sizing state to handle spanning/fractional sizing without silently approximating the CSS Grid algorithm; broader CSS overflow and nested scroll-container semantics remain separate work.
 
 ## Scope boundary
 
