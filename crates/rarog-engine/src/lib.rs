@@ -1537,6 +1537,7 @@ fn grid_container_layout_changed(before: ComputedStyle, after: ComputedStyle) ->
     before.grid_template_columns != after.grid_template_columns
         || before.grid_template_rows != after.grid_template_rows
         || before.align_items != after.align_items
+        || before.justify_items != after.justify_items
         || before.row_gap != after.row_gap
         || before.column_gap != after.column_gap
 }
@@ -2095,6 +2096,46 @@ mod tests {
         assert_eq!(
             item_origin.y,
             grid_fragment.boxes.content_box.origin.y + 30.0
+        );
+        assert_eq!(
+            session.framebuffer().stable_hash64(),
+            expected.framebuffer.stable_hash64()
+        );
+        assert_eq!(report.mode, IncrementalMode::FlowRelayout);
+        assert!(report.retained_display_list);
+    }
+
+    #[test]
+    fn grid_justify_items_change_relayouts_auto_justified_item_and_matches_fresh_render() {
+        let source = r#"<div id="grid" style="display:grid;width:60px;grid-template-columns:60px;grid-template-rows:40px;justify-items:start"><div id="item" style="width:20px;height:10px;background:#112233"></div></div>"#;
+        let expected_source = r#"<div id="grid" style="display:grid;width:60px;grid-template-columns:60px;grid-template-rows:40px;justify-items:end"><div id="item" style="width:20px;height:10px;background:#112233"></div></div>"#;
+        let mut session = session(source, deterministic_options());
+        let grid = element_with_id(session.document(), "grid");
+        let item = element_with_id(session.document(), "item");
+
+        session
+            .document_mut()
+            .set_attribute(
+                grid,
+                "style",
+                "display:grid;width:60px;grid-template-columns:60px;grid-template-rows:40px;justify-items:end",
+            )
+            .unwrap();
+        let report = session
+            .update()
+            .expect("grid justify-items update succeeds");
+        let expected = render_ok(expected_source, deterministic_options());
+        let grid_fragment =
+            fragment_for_dom(&session.layout().fragments, grid).expect("grid container remains");
+
+        assert_eq!(
+            fragment_for_dom(&session.layout().fragments, item)
+                .expect("grid item remains")
+                .boxes
+                .border_box
+                .origin
+                .x,
+            grid_fragment.boxes.content_box.origin.x + 40.0
         );
         assert_eq!(
             session.framebuffer().stable_hash64(),
