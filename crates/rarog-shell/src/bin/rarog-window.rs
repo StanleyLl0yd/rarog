@@ -208,6 +208,7 @@ mod windows {
                             plan: &plan,
                             display_list: frame.display_list,
                             image_resources: Some(frame.image_resources),
+                            viewport_translation: rarog_types::Point::default(),
                             clear_color: frame.clear_color,
                         }) {
                             self.planner.discard(id)?;

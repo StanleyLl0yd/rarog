@@ -340,8 +340,13 @@ fn update_cpu_stage(
                 frame.clear_color,
             )?;
             match frame.image_resources {
-                Some(images) => framebuffer.rasterize_with_images(frame.display_list, images),
-                None => framebuffer.rasterize(frame.display_list),
+                Some(images) => framebuffer.rasterize_with_images_and_translation(
+                    frame.display_list,
+                    images,
+                    frame.viewport_translation,
+                ),
+                None => framebuffer
+                    .rasterize_with_translation(frame.display_list, frame.viewport_translation),
             }
             *stage = Some(CpuStage { size, framebuffer });
         }
@@ -354,16 +359,20 @@ fn update_cpu_stage(
                 rects: frame.plan.damage().to_vec(),
             };
             match frame.image_resources {
-                Some(images) => retained.framebuffer.rasterize_damage_with_images(
+                Some(images) => retained
+                    .framebuffer
+                    .rasterize_damage_with_images_and_translation(
+                        frame.display_list,
+                        &damage,
+                        frame.clear_color,
+                        images,
+                        frame.viewport_translation,
+                    ),
+                None => retained.framebuffer.rasterize_damage_with_translation(
                     frame.display_list,
                     &damage,
                     frame.clear_color,
-                    images,
-                ),
-                None => retained.framebuffer.rasterize_damage(
-                    frame.display_list,
-                    &damage,
-                    frame.clear_color,
+                    frame.viewport_translation,
                 ),
             }
         }
@@ -424,7 +433,7 @@ mod tests {
     };
     use rarog_paint::{DisplayCommand, DisplayItemId, DisplayList};
     use rarog_resources::{DecodedImage, ImageResourceStore};
-    use rarog_types::{Color, Rect};
+    use rarog_types::{Color, Point, Rect};
 
     #[test]
     fn cpu_stage_applies_partial_damage_without_repainting_unchanged_pixels() {
@@ -451,6 +460,7 @@ mod tests {
                 plan: &initial,
                 display_list: &list,
                 image_resources: None,
+                viewport_translation: Point::default(),
                 clear_color: Color::BLACK,
             },
         )
@@ -477,6 +487,7 @@ mod tests {
                 plan: &partial,
                 display_list: &list,
                 image_resources: None,
+                viewport_translation: Point::default(),
                 clear_color: Color::WHITE,
             },
         )
@@ -490,6 +501,62 @@ mod tests {
         assert_eq!(&bytes[8..12], &white);
         assert_eq!(&bytes[12..16], &black);
         assert!(bytes[16..].chunks_exact(4).all(|pixel| pixel == black));
+    }
+
+    #[test]
+    fn cpu_stage_applies_viewport_translation_without_scene_revision_change() {
+        let surface = SurfaceId::new(14).unwrap();
+        let size = SurfaceSize::new(2, 2);
+        let mut planner = FramePlanner::new(surface);
+        let list = DisplayList::try_from_parts(
+            vec![DisplayItemId {
+                source: 1,
+                fragment: 1,
+                slot: 0,
+            }],
+            vec![DisplayCommand::FillRect {
+                rect: Rect::new(0.0, 1.0, 2.0, 1.0),
+                color: Color::WHITE,
+            }],
+        )
+        .unwrap();
+        let FrameDecision::Submit(plan) = planner
+            .plan(
+                size,
+                DisplayListRevision::new(1),
+                &DamageRegion::default(),
+                FrameCause::Scroll,
+            )
+            .unwrap()
+        else {
+            panic!("initial translated frame must submit");
+        };
+        let mut stage = None;
+
+        update_cpu_stage(
+            &mut stage,
+            &FrameSubmission {
+                plan: &plan,
+                display_list: &list,
+                image_resources: None,
+                viewport_translation: Point { x: 0.0, y: -1.0 },
+                clear_color: Color::BLACK,
+            },
+        )
+        .unwrap();
+
+        let bytes = stage.unwrap().framebuffer.to_rgba8();
+        assert!(
+            bytes[..8]
+                .chunks_exact(4)
+                .all(|pixel| pixel == [255, 255, 255, 255])
+        );
+        assert!(
+            bytes[8..]
+                .chunks_exact(4)
+                .all(|pixel| pixel == [0, 0, 0, 255])
+        );
+        assert_eq!(plan.revision(), DisplayListRevision::new(1));
     }
 
     #[test]
@@ -538,6 +605,7 @@ mod tests {
                 plan: &plan,
                 display_list: &list,
                 image_resources: Some(&images),
+                viewport_translation: Point::default(),
                 clear_color: Color::TRANSPARENT,
             },
         )
@@ -588,6 +656,7 @@ mod tests {
                     plan: &partial,
                     display_list: &list,
                     image_resources: None,
+                    viewport_translation: Point::default(),
                     clear_color: Color::WHITE,
                 },
             ),
