@@ -21,7 +21,7 @@ use rarog_resources::{
     ImageDecodeOutcome, ImageDecodeQueue, ImageDecodeQueueError, ImageDecodeRequestId,
     ImageDecodeReservation, ImageDecodeWork, ImageResourceId, ImageResourceRef, ImageResourceStore,
 };
-use rarog_types::{Color, Size};
+use rarog_types::{Color, Point, Size};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -88,6 +88,7 @@ pub enum RenderError {
     FragmentLimitExceeded { fragments: usize, limit: usize },
     DisplayCommandLimitExceeded { commands: usize, limit: usize },
     DisplayListRevisionExhausted,
+    InvalidViewportTranslation,
     ImageDecode(ImageDecodeQueueError),
     DisplayList(DisplayListError),
     Framebuffer(FramebufferError),
@@ -129,6 +130,9 @@ impl std::fmt::Display for RenderError {
             ),
             Self::DisplayListRevisionExhausted => {
                 formatter.write_str("display-list revision space exhausted")
+            }
+            Self::InvalidViewportTranslation => {
+                formatter.write_str("viewport translation must be finite")
             }
             Self::ImageDecode(error) => write!(formatter, "{error}"),
             Self::DisplayList(error) => write!(formatter, "{error}"),
@@ -349,6 +353,7 @@ pub struct RenderSession {
     display_list_revision: DisplayListRevision,
     damage: DamageRegion,
     framebuffer: Framebuffer,
+    viewport_translation: Point,
     image_resources: ImageResourceStore,
     image_decodes: ImageDecodeQueue,
     pending_image_refreshes: BTreeMap<ImageResourceId, ImageResourceRef>,
@@ -379,6 +384,7 @@ impl RenderSession {
             display_list_revision: DisplayListRevision::new(1),
             damage: output.damage,
             framebuffer: output.framebuffer,
+            viewport_translation: Point::default(),
             image_resources: ImageResourceStore::default(),
             image_decodes: ImageDecodeQueue::default(),
             pending_image_refreshes: BTreeMap::new(),
@@ -423,16 +429,35 @@ impl RenderSession {
         surface_size: SurfaceSize,
         cause: FrameCause,
     ) -> Result<FrameDecision, FramePlannerError> {
-        planner.plan(
-            surface_size,
-            self.display_list_revision,
-            &self.damage,
-            cause,
-        )
+        let damage = self.damage.translated(self.viewport_translation);
+        planner.plan(surface_size, self.display_list_revision, &damage, cause)
     }
 
     pub fn framebuffer(&self) -> &Framebuffer {
         &self.framebuffer
+    }
+
+    pub const fn viewport_translation(&self) -> Point {
+        self.viewport_translation
+    }
+
+    pub fn set_viewport_translation(&mut self, translation: Point) -> Result<bool, RenderError> {
+        if !translation.x.is_finite() || !translation.y.is_finite() {
+            return Err(RenderError::InvalidViewportTranslation);
+        }
+        if self.viewport_translation == translation {
+            return Ok(false);
+        }
+
+        let mut framebuffer = Framebuffer::try_new(self.options.viewport, self.options.background)?;
+        framebuffer.rasterize_with_images_and_translation(
+            &self.display_list,
+            &self.image_resources,
+            translation,
+        );
+        self.viewport_translation = translation;
+        self.framebuffer = framebuffer;
+        Ok(true)
     }
 
     pub fn image_resources(&self) -> &ImageResourceStore {
@@ -536,7 +561,11 @@ impl RenderSession {
 
         let stage_started = Instant::now();
         let mut framebuffer = Framebuffer::try_new(viewport, self.options.background)?;
-        framebuffer.rasterize_with_images(&display_list, &self.image_resources);
+        framebuffer.rasterize_with_images_and_translation(
+            &display_list,
+            &self.image_resources,
+            self.viewport_translation,
+        );
         let raster = stage_started.elapsed();
 
         let generation = self.document.generation();
@@ -628,12 +657,15 @@ impl RenderSession {
                 &self.display_list,
                 &display_list,
             )?;
-            self.framebuffer.rasterize_damage_with_images(
-                &display_list,
-                &damage,
-                self.options.background,
-                &self.image_resources,
-            );
+            let viewport_damage = damage.translated(self.viewport_translation);
+            self.framebuffer
+                .rasterize_damage_with_images_and_translation(
+                    &display_list,
+                    &viewport_damage,
+                    self.options.background,
+                    &self.image_resources,
+                    self.viewport_translation,
+                );
             self.display_list = display_list;
             self.display_list_revision = display_list_revision;
             self.damage = damage;
@@ -1060,12 +1092,15 @@ impl RenderSession {
             &display_list,
         )?;
 
-        self.framebuffer.rasterize_damage_with_images(
-            &display_list,
-            &damage,
-            self.options.background,
-            &self.image_resources,
-        );
+        let viewport_damage = damage.translated(self.viewport_translation);
+        self.framebuffer
+            .rasterize_damage_with_images_and_translation(
+                &display_list,
+                &viewport_damage,
+                self.options.background,
+                &self.image_resources,
+                self.viewport_translation,
+            );
         if let Some(styles) = rebuilt_styles {
             self.styles = styles;
         }

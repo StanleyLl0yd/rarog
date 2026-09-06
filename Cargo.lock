@@ -2246,6 +2246,7 @@ dependencies = [
  "rarog-platform",
  "rarog-resources",
  "rarog-scheduler",
+ "rarog-scroll",
  "rarog-types",
 ]
 
