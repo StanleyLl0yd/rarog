@@ -495,6 +495,27 @@ pub fn resolve_content_sized_tracks(
     items: &[GridItem],
     contributions: &[GridItemContribution],
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
+    let intrinsic = contributions
+        .iter()
+        .copied()
+        .map(GridIntrinsicContributions::from_legacy)
+        .collect::<Vec<_>>();
+    resolve_intrinsic_content_sized_tracks(
+        sizing,
+        axis,
+        items,
+        &intrinsic,
+        GridIntrinsicContributionKind::MaxContent,
+    )
+}
+
+pub(crate) fn resolve_intrinsic_content_sized_tracks(
+    sizing: &[GridTrackSizing],
+    axis: GridAxis,
+    items: &[GridItem],
+    contributions: &[GridIntrinsicContributions],
+    kind: GridIntrinsicContributionKind,
+) -> Result<Vec<GridTrack>, GridLayoutError> {
     let mut states = initialize_track_sizing_states(sizing, axis)?;
     let mut planned_contributions = Vec::new();
 
@@ -529,8 +550,7 @@ pub fn resolve_content_sized_tracks(
                 node: item.node,
                 axis,
             })?;
-        let size = GridIntrinsicContributions::from_legacy(contribution)
-            .size_for(axis, GridIntrinsicContributionKind::MaxContent)?;
+        let size = contribution.size_for(axis, kind)?;
         planned_contributions.push(GridSpanningSizeContribution::new(
             item.node, start, span, size,
         ));
@@ -1331,6 +1351,46 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[test]
+    fn semantic_resolver_can_select_each_intrinsic_contribution_kind() {
+        let sizing = [GridTrackSizing::Auto];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(12.0, 20.0, 36.0),
+            GridAxisIntrinsicContributions::new(8.0, 14.0, 22.0),
+        )];
+
+        let minimum = resolve_intrinsic_content_sized_tracks(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::Minimum,
+        )
+        .unwrap();
+        let min_content = resolve_intrinsic_content_sized_tracks(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::MinContent,
+        )
+        .unwrap();
+        let max_content = resolve_intrinsic_content_sized_tracks(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicContributionKind::MaxContent,
+        )
+        .unwrap();
+
+        assert_eq!(minimum[0].base_size, 12.0);
+        assert_eq!(min_content[0].base_size, 20.0);
+        assert_eq!(max_content[0].base_size, 36.0);
     }
 
     #[test]
