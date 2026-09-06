@@ -562,7 +562,7 @@ impl<E> CompositorCompletion<E> {
         self.frame
     }
 
-    pub fn result(self) -> Result<(), E> {
+    pub fn result(self) -> Result<PresentationStatus, E> {
         self.result
     }
 }
@@ -696,10 +696,19 @@ impl<E> Drop for CompositorWorker<E> {
     }
 }
 
-pub trait PresentingCompositorBackend: CompositorBackend {
-    fn present_retained(&mut self) -> Result<(), Self::Error>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentationStatus {
+    Presented,
+    Deferred,
+}
 
-    fn submit_and_present(&mut self, frame: FrameSubmission<'_>) -> Result<(), Self::Error> {
+pub trait PresentingCompositorBackend: CompositorBackend {
+    fn present_retained(&mut self) -> Result<PresentationStatus, Self::Error>;
+
+    fn submit_and_present(
+        &mut self,
+        frame: FrameSubmission<'_>,
+    ) -> Result<PresentationStatus, Self::Error> {
         self.submit(frame)?;
         self.present_retained()
     }
@@ -713,7 +722,7 @@ enum PresentingCompositorCommand {
 #[derive(Debug)]
 pub struct PresentingCompositorCompletion<E> {
     frame: Option<FrameId>,
-    result: Result<(), E>,
+    result: Result<PresentationStatus, E>,
 }
 
 impl<E> PresentingCompositorCompletion<E> {
@@ -1115,11 +1124,11 @@ mod tests {
         }
 
         impl PresentingCompositorBackend for Backend {
-            fn present_retained(&mut self) -> Result<(), Self::Error> {
+            fn present_retained(&mut self) -> Result<PresentationStatus, Self::Error> {
                 let mut state = self.state.lock().unwrap();
                 state.presents += 1;
                 state.thread_name = std::thread::current().name().map(str::to_owned);
-                Ok(())
+                Ok(PresentationStatus::Presented)
             }
         }
 
@@ -1134,12 +1143,18 @@ mod tests {
         worker.try_submit_and_present(frame).unwrap();
         let frame_completion = worker.recv_completion().unwrap();
         assert_eq!(frame_completion.frame(), Some(frame_id));
-        frame_completion.result().unwrap();
+        assert_eq!(
+            frame_completion.result().unwrap(),
+            PresentationStatus::Presented
+        );
 
         worker.try_present_retained().unwrap();
         let retained_completion = worker.recv_completion().unwrap();
         assert_eq!(retained_completion.frame(), None);
-        retained_completion.result().unwrap();
+        assert_eq!(
+            retained_completion.result().unwrap(),
+            PresentationStatus::Presented
+        );
 
         let state = state.lock().unwrap();
         assert_eq!(state.submits, 1);
