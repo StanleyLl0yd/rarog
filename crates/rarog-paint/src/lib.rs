@@ -997,7 +997,8 @@ impl Framebuffer {
                     }
                 }
                 DisplayCommand::DrawImage { rect, image } => {
-                    let destination = translate_rect(transform_rect(rect, &transforms), translation);
+                    let destination =
+                        translate_rect(transform_rect(rect, &transforms), translation);
                     let decoded = images.and_then(|store| store.image(image));
                     if let (Some(decoded), Some(clipped)) = (
                         decoded,
@@ -1053,13 +1054,7 @@ impl Framebuffer {
         background: Color,
         images: &ImageResourceStore,
     ) {
-        self.rasterize_damage_internal(
-            list,
-            damage,
-            background,
-            Some(images),
-            Point::default(),
-        );
+        self.rasterize_damage_internal(list, damage, background, Some(images), Point::default());
     }
 
     pub fn rasterize_damage_with_translation(
