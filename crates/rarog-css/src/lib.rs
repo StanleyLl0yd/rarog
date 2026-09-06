@@ -65,6 +65,8 @@ pub enum VerticalAlign {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JustifyContent {
+    Normal,
+    Stretch,
     FlexStart,
     FlexEnd,
     Center,
@@ -110,6 +112,7 @@ pub enum JustifyItems {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AlignContent {
+    Normal,
     Stretch,
     FlexStart,
     FlexEnd,
@@ -262,12 +265,12 @@ impl Default for ComputedStyle {
             grid_row_span: 1,
             flex_grow: 0.0,
             flex_shrink: 1.0,
-            justify_content: JustifyContent::FlexStart,
+            justify_content: JustifyContent::Normal,
             align_items: AlignItems::Stretch,
             align_self: AlignSelf::Auto,
             justify_self: JustifySelf::Auto,
             justify_items: JustifyItems::Normal,
-            align_content: AlignContent::Stretch,
+            align_content: AlignContent::Normal,
             flex_wrap: FlexWrap::NoWrap,
             flex_direction: FlexDirection::Row,
             row_gap: 0.0,
@@ -1253,24 +1256,25 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         "gap" => push_gap_shorthand(output, value, important),
         "align-content" => {
             let value = value.trim();
-            let value =
-                if value.eq_ignore_ascii_case("stretch") || value.eq_ignore_ascii_case("normal") {
-                    Some(AlignContent::Stretch)
-                } else if value.eq_ignore_ascii_case("flex-start") {
-                    Some(AlignContent::FlexStart)
-                } else if value.eq_ignore_ascii_case("flex-end") {
-                    Some(AlignContent::FlexEnd)
-                } else if value.eq_ignore_ascii_case("center") {
-                    Some(AlignContent::Center)
-                } else if value.eq_ignore_ascii_case("space-between") {
-                    Some(AlignContent::SpaceBetween)
-                } else if value.eq_ignore_ascii_case("space-around") {
-                    Some(AlignContent::SpaceAround)
-                } else if value.eq_ignore_ascii_case("space-evenly") {
-                    Some(AlignContent::SpaceEvenly)
-                } else {
-                    None
-                };
+            let value = if value.eq_ignore_ascii_case("normal") {
+                Some(AlignContent::Normal)
+            } else if value.eq_ignore_ascii_case("stretch") {
+                Some(AlignContent::Stretch)
+            } else if value.eq_ignore_ascii_case("flex-start") {
+                Some(AlignContent::FlexStart)
+            } else if value.eq_ignore_ascii_case("flex-end") {
+                Some(AlignContent::FlexEnd)
+            } else if value.eq_ignore_ascii_case("center") {
+                Some(AlignContent::Center)
+            } else if value.eq_ignore_ascii_case("space-between") {
+                Some(AlignContent::SpaceBetween)
+            } else if value.eq_ignore_ascii_case("space-around") {
+                Some(AlignContent::SpaceAround)
+            } else if value.eq_ignore_ascii_case("space-evenly") {
+                Some(AlignContent::SpaceEvenly)
+            } else {
+                None
+            };
             if let Some(value) = value {
                 output.push(Declaration {
                     property: PropertyId::AlignContent,
@@ -1397,9 +1401,11 @@ fn append_property(output: &mut Vec<Declaration>, name: &str, value: &str, impor
         }
         "justify-content" => {
             let value = value.trim();
-            let value = if value.eq_ignore_ascii_case("flex-start")
-                || value.eq_ignore_ascii_case("normal")
-            {
+            let value = if value.eq_ignore_ascii_case("normal") {
+                Some(JustifyContent::Normal)
+            } else if value.eq_ignore_ascii_case("stretch") {
+                Some(JustifyContent::Stretch)
+            } else if value.eq_ignore_ascii_case("flex-start") {
                 Some(JustifyContent::FlexStart)
             } else if value.eq_ignore_ascii_case("flex-end") {
                 Some(JustifyContent::FlexEnd)
@@ -2484,9 +2490,10 @@ mod finite_geometry_tests {
     #[test]
     fn align_content_parses_bounded_flex_line_distribution_values() {
         let declarations = parse_declarations(
-            "align-content:stretch;align-content:flex-start;align-content:flex-end;align-content:center;align-content:space-between;align-content:space-around;align-content:space-evenly",
+            "align-content:normal;align-content:stretch;align-content:flex-start;align-content:flex-end;align-content:center;align-content:space-between;align-content:space-around;align-content:space-evenly",
         );
         for value in [
+            AlignContent::Normal,
             AlignContent::Stretch,
             AlignContent::FlexStart,
             AlignContent::FlexEnd,
@@ -2506,14 +2513,14 @@ mod finite_geometry_tests {
             parse_declarations("align-content:NoRmAl"),
             vec![Declaration {
                 property: PropertyId::AlignContent,
-                value: PropertyValue::AlignContent(AlignContent::Stretch),
+                value: PropertyValue::AlignContent(AlignContent::Normal),
                 important: false,
             }]
         );
         assert!(parse_declarations("align-content:baseline").is_empty());
 
         let mut style = ComputedStyle::default();
-        assert_eq!(style.align_content, AlignContent::Stretch);
+        assert_eq!(style.align_content, AlignContent::Normal);
         apply_property_value(
             &mut style,
             PropertyId::AlignContent,
@@ -2848,9 +2855,12 @@ mod finite_geometry_tests {
     #[test]
     fn justify_content_parses_supported_main_axis_values() {
         let declarations = parse_declarations(
-            "justify-content:flex-end;justify-content:center;justify-content:space-between;justify-content:space-around;justify-content:space-evenly",
+            "justify-content:normal;justify-content:stretch;justify-content:flex-start;justify-content:flex-end;justify-content:center;justify-content:space-between;justify-content:space-around;justify-content:space-evenly",
         );
         for value in [
+            JustifyContent::Normal,
+            JustifyContent::Stretch,
+            JustifyContent::FlexStart,
             JustifyContent::FlexEnd,
             JustifyContent::Center,
             JustifyContent::SpaceBetween,
@@ -2869,14 +2879,13 @@ mod finite_geometry_tests {
             normal,
             vec![Declaration {
                 property: PropertyId::JustifyContent,
-                value: PropertyValue::JustifyContent(JustifyContent::FlexStart),
+                value: PropertyValue::JustifyContent(JustifyContent::Normal),
                 important: false,
             }]
         );
-        assert!(parse_declarations("justify-content:stretch").is_empty());
 
         let mut style = ComputedStyle::default();
-        assert_eq!(style.justify_content, JustifyContent::FlexStart);
+        assert_eq!(style.justify_content, JustifyContent::Normal);
         apply_property_value(
             &mut style,
             PropertyId::JustifyContent,
