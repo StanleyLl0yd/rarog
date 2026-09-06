@@ -126,15 +126,21 @@ pub enum FlexDirection {
 pub const MAX_EXPLICIT_GRID_TRACKS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GridTrackSize {
+    Fixed(f32),
+    Auto,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GridTrackList {
-    sizes: [f32; MAX_EXPLICIT_GRID_TRACKS],
+    tracks: [GridTrackSize; MAX_EXPLICIT_GRID_TRACKS],
     len: u8,
 }
 
 impl Default for GridTrackList {
     fn default() -> Self {
         Self {
-            sizes: [0.0; MAX_EXPLICIT_GRID_TRACKS],
+            tracks: [GridTrackSize::Fixed(0.0); MAX_EXPLICIT_GRID_TRACKS],
             len: 0,
         }
     }
@@ -142,14 +148,28 @@ impl Default for GridTrackList {
 
 impl GridTrackList {
     pub fn from_sizes(sizes: &[f32]) -> Option<Self> {
-        if sizes.len() > MAX_EXPLICIT_GRID_TRACKS
-            || sizes.iter().any(|size| !size.is_finite() || *size < 0.0)
+        if sizes.iter().any(|size| !size.is_finite() || *size < 0.0) {
+            return None;
+        }
+        let tracks = sizes
+            .iter()
+            .copied()
+            .map(GridTrackSize::Fixed)
+            .collect::<Vec<_>>();
+        Self::from_tracks(&tracks)
+    }
+
+    pub fn from_tracks(tracks: &[GridTrackSize]) -> Option<Self> {
+        if tracks.len() > MAX_EXPLICIT_GRID_TRACKS
+            || tracks.iter().any(|track| {
+                matches!(track, GridTrackSize::Fixed(size) if !size.is_finite() || *size < 0.0)
+            })
         {
             return None;
         }
         let mut result = Self::default();
-        result.sizes[..sizes.len()].copy_from_slice(sizes);
-        result.len = sizes.len() as u8;
+        result.tracks[..tracks.len()].copy_from_slice(tracks);
+        result.len = tracks.len() as u8;
         Some(result)
     }
 
@@ -161,8 +181,8 @@ impl GridTrackList {
         self.len == 0
     }
 
-    pub fn as_slice(&self) -> &[f32] {
-        &self.sizes[..self.len as usize]
+    pub fn as_slice(&self) -> &[GridTrackSize] {
+        &self.tracks[..self.len as usize]
     }
 }
 
@@ -1534,14 +1554,22 @@ fn parse_grid_track_list(value: &str) -> Option<GridTrackList> {
     if value.eq_ignore_ascii_case("none") {
         return Some(GridTrackList::default());
     }
-    let sizes = value
+    let tracks = value
         .split_whitespace()
-        .map(|part| parse_px(part).filter(|size| *size >= 0.0))
+        .map(|part| {
+            if part.eq_ignore_ascii_case("auto") {
+                Some(GridTrackSize::Auto)
+            } else {
+                parse_px(part)
+                    .filter(|size| *size >= 0.0)
+                    .map(GridTrackSize::Fixed)
+            }
+        })
         .collect::<Option<Vec<_>>>()?;
-    if sizes.is_empty() {
+    if tracks.is_empty() {
         return None;
     }
-    GridTrackList::from_sizes(&sizes)
+    GridTrackList::from_tracks(&tracks)
 }
 
 fn push_grid_line_start(
@@ -2557,6 +2585,25 @@ mod finite_geometry_tests {
             value: PropertyValue::GridSpan(1),
             important: false,
         }));
+    }
+
+    #[test]
+    fn bounded_grid_auto_tracks_parse_into_computed_track_metadata() {
+        assert_eq!(
+            parse_declarations("grid-template-columns:auto 40px AUTO"),
+            vec![Declaration {
+                property: PropertyId::GridTemplateColumns,
+                value: PropertyValue::GridTracks(
+                    GridTrackList::from_tracks(&[
+                        GridTrackSize::Auto,
+                        GridTrackSize::Fixed(40.0),
+                        GridTrackSize::Auto,
+                    ])
+                    .unwrap(),
+                ),
+                important: false,
+            }]
+        );
     }
 
     #[test]

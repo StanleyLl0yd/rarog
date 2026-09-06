@@ -19,6 +19,46 @@ impl GridTrack {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GridTrackSizing {
+    Fixed(f32),
+    Auto,
+}
+
+impl GridTrackSizing {
+    pub const fn fixed(size: f32) -> Self {
+        Self::Fixed(size)
+    }
+
+    pub const fn auto() -> Self {
+        Self::Auto
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GridItemContribution {
+    pub node: LayoutNodeId,
+    pub inline_size: f32,
+    pub block_size: f32,
+}
+
+impl GridItemContribution {
+    pub const fn new(node: LayoutNodeId, inline_size: f32, block_size: f32) -> Self {
+        Self {
+            node,
+            inline_size,
+            block_size,
+        }
+    }
+
+    const fn size_for_axis(self, axis: GridAxis) -> f32 {
+        match axis {
+            GridAxis::Column => self.inline_size,
+            GridAxis::Row => self.block_size,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GridItem {
     pub node: LayoutNodeId,
@@ -112,6 +152,9 @@ pub enum GridLayoutError {
     InvalidOrigin,
     InvalidAvailableSize,
     InvalidTrackSize { axis: GridAxis, index: usize },
+    InvalidContribution { node: LayoutNodeId, axis: GridAxis },
+    MissingContribution { node: LayoutNodeId, axis: GridAxis },
+    UnsupportedIntrinsicSpan { node: LayoutNodeId, axis: GridAxis },
     InvalidGap { axis: GridAxis },
     InvalidSpan { node: LayoutNodeId },
     PlacementOutsideGrid { node: LayoutNodeId },
@@ -130,6 +173,24 @@ impl fmt::Display for GridLayoutError {
                 write!(
                     formatter,
                     "grid {axis:?} track {index} must be finite and non-negative"
+                )
+            }
+            Self::InvalidContribution { node, axis } => {
+                write!(
+                    formatter,
+                    "grid item {node:?} has an invalid intrinsic {axis:?} contribution"
+                )
+            }
+            Self::MissingContribution { node, axis } => {
+                write!(
+                    formatter,
+                    "grid item {node:?} is missing an intrinsic {axis:?} contribution"
+                )
+            }
+            Self::UnsupportedIntrinsicSpan { node, axis } => {
+                write!(
+                    formatter,
+                    "grid item {node:?} spans multiple tracks including an intrinsic {axis:?} track"
                 )
             }
             Self::InvalidGap { axis } => {
@@ -230,35 +291,7 @@ pub fn layout_fixed_grid_with_auto_placement(
         &[],
     )?;
 
-    let mut resolved = vec![None; requests.len()];
-    let mut occupied = Vec::new();
-
-    for (index, request) in requests.iter().copied().enumerate() {
-        validate_request_span(request)?;
-        if let (Some(row_start), Some(column_start)) = (request.row_start, request.column_start) {
-            let item = GridItem::new(request.node, row_start, column_start)
-                .with_span(request.row_span, request.column_span);
-            validate_concrete_item(item, columns.len(), rows.len())?;
-            resolved[index] = Some(item);
-            occupied.push(item);
-        }
-    }
-
-    for (index, request) in requests.iter().copied().enumerate() {
-        if resolved[index].is_some() {
-            continue;
-        }
-        let Some(item) = find_auto_placement(request, columns.len(), rows.len(), &occupied) else {
-            return Err(GridLayoutError::AutoPlacementUnavailable { node: request.node });
-        };
-        resolved[index] = Some(item);
-        occupied.push(item);
-    }
-
-    let items = resolved
-        .into_iter()
-        .map(|item| item.expect("every grid placement request was resolved"))
-        .collect::<Vec<_>>();
+    let items = resolve_grid_placements(columns.len(), rows.len(), requests)?;
     layout_fixed_grid(
         origin,
         available_size,
@@ -268,6 +301,105 @@ pub fn layout_fixed_grid_with_auto_placement(
         row_gap,
         &items,
     )
+}
+
+pub fn resolve_grid_placements(
+    column_count: usize,
+    row_count: usize,
+    requests: &[GridPlacementRequest],
+) -> Result<Vec<GridItem>, GridLayoutError> {
+    let mut resolved = vec![None; requests.len()];
+    let mut occupied = Vec::new();
+
+    for (index, request) in requests.iter().copied().enumerate() {
+        validate_request_span(request)?;
+        if let (Some(row_start), Some(column_start)) = (request.row_start, request.column_start) {
+            let item = GridItem::new(request.node, row_start, column_start)
+                .with_span(request.row_span, request.column_span);
+            validate_concrete_item(item, column_count, row_count)?;
+            resolved[index] = Some(item);
+            occupied.push(item);
+        }
+    }
+
+    for (index, request) in requests.iter().copied().enumerate() {
+        if resolved[index].is_some() {
+            continue;
+        }
+        let Some(item) = find_auto_placement(request, column_count, row_count, &occupied) else {
+            return Err(GridLayoutError::AutoPlacementUnavailable { node: request.node });
+        };
+        resolved[index] = Some(item);
+        occupied.push(item);
+    }
+
+    Ok(resolved
+        .into_iter()
+        .map(|item| item.expect("every grid placement request was resolved"))
+        .collect())
+}
+
+pub fn resolve_content_sized_tracks(
+    sizing: &[GridTrackSizing],
+    axis: GridAxis,
+    items: &[GridItem],
+    contributions: &[GridItemContribution],
+) -> Result<Vec<GridTrack>, GridLayoutError> {
+    let mut tracks = sizing
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, track)| match track {
+            GridTrackSizing::Fixed(size) if size.is_finite() && size >= 0.0 => {
+                Ok(GridTrack::new(size))
+            }
+            GridTrackSizing::Auto => Ok(GridTrack::new(0.0)),
+            GridTrackSizing::Fixed(_) => Err(GridLayoutError::InvalidTrackSize { axis, index }),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for item in items.iter().copied() {
+        let (start, span) = match axis {
+            GridAxis::Column => (item.column_start, item.column_span),
+            GridAxis::Row => (item.row_start, item.row_span),
+        };
+        let end = start
+            .checked_add(span)
+            .ok_or(GridLayoutError::PlacementOutsideGrid { node: item.node })?;
+        let Some(track_slice) = sizing.get(start..end) else {
+            return Err(GridLayoutError::PlacementOutsideGrid { node: item.node });
+        };
+        if !track_slice
+            .iter()
+            .any(|track| matches!(track, GridTrackSizing::Auto))
+        {
+            continue;
+        }
+        if span != 1 {
+            return Err(GridLayoutError::UnsupportedIntrinsicSpan {
+                node: item.node,
+                axis,
+            });
+        }
+        let contribution = contributions
+            .iter()
+            .copied()
+            .find(|contribution| contribution.node == item.node)
+            .ok_or(GridLayoutError::MissingContribution {
+                node: item.node,
+                axis,
+            })?;
+        let size = contribution.size_for_axis(axis);
+        if !size.is_finite() || size < 0.0 {
+            return Err(GridLayoutError::InvalidContribution {
+                node: item.node,
+                axis,
+            });
+        }
+        tracks[start].base_size = tracks[start].base_size.max(size);
+    }
+
+    Ok(tracks)
 }
 
 fn validate_request_span(request: GridPlacementRequest) -> Result<(), GridLayoutError> {
@@ -728,6 +860,55 @@ mod tests {
             ),
             Err(GridLayoutError::PlacementOutsideGrid {
                 node: LayoutNodeId(2),
+            })
+        );
+    }
+
+    #[test]
+    fn auto_tracks_use_largest_single_span_intrinsic_contribution() {
+        let items = [
+            GridItem::new(LayoutNodeId(1), 0, 0),
+            GridItem::new(LayoutNodeId(2), 0, 0),
+            GridItem::new(LayoutNodeId(3), 0, 1),
+        ];
+        let contributions = [
+            GridItemContribution::new(LayoutNodeId(1), 30.0, 12.0),
+            GridItemContribution::new(LayoutNodeId(2), 45.0, 18.0),
+            GridItemContribution::new(LayoutNodeId(3), 80.0, 20.0),
+        ];
+
+        let columns = resolve_content_sized_tracks(
+            &[GridTrackSizing::Auto, GridTrackSizing::Fixed(20.0)],
+            GridAxis::Column,
+            &items,
+            &contributions,
+        )
+        .unwrap();
+        let rows = resolve_content_sized_tracks(
+            &[GridTrackSizing::Auto],
+            GridAxis::Row,
+            &items,
+            &contributions,
+        )
+        .unwrap();
+
+        assert_eq!(columns, vec![track(45.0), track(20.0)]);
+        assert_eq!(rows, vec![track(20.0)]);
+    }
+
+    #[test]
+    fn spanning_intrinsic_track_contribution_fails_closed() {
+        let item = GridItem::new(LayoutNodeId(1), 0, 0).with_span(1, 2);
+        assert_eq!(
+            resolve_content_sized_tracks(
+                &[GridTrackSizing::Auto, GridTrackSizing::Fixed(20.0)],
+                GridAxis::Column,
+                &[item],
+                &[GridItemContribution::new(LayoutNodeId(1), 50.0, 10.0)],
+            ),
+            Err(GridLayoutError::UnsupportedIntrinsicSpan {
+                node: LayoutNodeId(1),
+                axis: GridAxis::Column,
             })
         );
     }
