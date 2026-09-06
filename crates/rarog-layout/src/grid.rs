@@ -516,7 +516,7 @@ pub(crate) fn resolve_intrinsic_content_sized_tracks(
     contributions: &[GridIntrinsicContributions],
     kind: GridIntrinsicContributionKind,
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
-    let states = resolve_non_spanning_intrinsic_track_states(
+    let mut states = resolve_non_spanning_intrinsic_track_states(
         sizing,
         axis,
         items,
@@ -524,6 +524,7 @@ pub(crate) fn resolve_intrinsic_content_sized_tracks(
         kind,
         kind,
     )?;
+    finalize_track_sizing_phases(&mut states, sizing, 0.0, None, axis, false)?;
 
     Ok(states
         .into_iter()
@@ -613,6 +614,99 @@ fn initialize_track_sizing_states(
             GridTrackSizing::Fixed(_) => Err(GridLayoutError::InvalidTrackSize { axis, index }),
         })
         .collect()
+}
+
+pub(crate) fn finalize_track_sizing_phases(
+    states: &mut [GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+    gap: f32,
+    available_space: Option<f32>,
+    axis: GridAxis,
+    stretch_auto: bool,
+) -> Result<(), GridLayoutError> {
+    if states.len() != sizing.len() {
+        return Err(GridLayoutError::GeometryOverflow);
+    }
+    validate_gap(gap, axis)?;
+    let Some(available_space) = available_space else {
+        return Ok(());
+    };
+    if !available_space.is_finite() || available_space < 0.0 {
+        return Err(GridLayoutError::InvalidAvailableSize);
+    }
+
+    maximize_track_base_sizes(states, gap, available_space)?;
+    if stretch_auto {
+        stretch_auto_track_base_sizes(states, sizing, gap, available_space)?;
+    }
+    Ok(())
+}
+
+fn maximize_track_base_sizes(
+    states: &mut [GridTrackSizingState],
+    gap: f32,
+    available_space: f32,
+) -> Result<(), GridLayoutError> {
+    let free_space = remaining_track_free_space(states, gap, available_space)?;
+    if free_space == 0.0 || states.is_empty() {
+        return Ok(());
+    }
+
+    let affected = (0..states.len()).collect::<Vec<_>>();
+    let increases = distribute_base_size_space(states, &affected, free_space)?;
+    let mut planned = vec![0.0_f32; states.len()];
+    for (index, increase) in increases {
+        planned[index] = increase;
+    }
+    apply_planned_base_size_increases(states, &planned)
+}
+
+fn stretch_auto_track_base_sizes(
+    states: &mut [GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+    gap: f32,
+    available_space: f32,
+) -> Result<(), GridLayoutError> {
+    let affected = sizing
+        .iter()
+        .enumerate()
+        .filter_map(|(index, track)| matches!(track, GridTrackSizing::Auto).then_some(index))
+        .collect::<Vec<_>>();
+    if affected.is_empty() {
+        return Ok(());
+    }
+
+    let free_space = remaining_track_free_space(states, gap, available_space)?;
+    if free_space == 0.0 {
+        return Ok(());
+    }
+    let share = free_space / affected.len() as f32;
+    if !share.is_finite() {
+        return Err(GridLayoutError::GeometryOverflow);
+    }
+    if share == 0.0 {
+        return Ok(());
+    }
+
+    for index in affected {
+        states[index].base_size = finite_add(states[index].base_size, share)?;
+    }
+    Ok(())
+}
+
+fn remaining_track_free_space(
+    states: &[GridTrackSizingState],
+    gap: f32,
+    available_space: f32,
+) -> Result<f32, GridLayoutError> {
+    let mut occupied = 0.0;
+    for (index, state) in states.iter().enumerate() {
+        occupied = finite_add(occupied, state.base_size)?;
+        if index + 1 < states.len() {
+            occupied = finite_add(occupied, gap)?;
+        }
+    }
+    Ok((available_space - occupied).max(0.0))
 }
 
 pub(crate) fn plan_auto_track_base_size_increases(
@@ -1383,6 +1477,158 @@ mod tests {
                 .size_for(GridAxis::Row, GridIntrinsicContributionKind::MaxContent)
                 .unwrap(),
             1.0
+        );
+    }
+
+    #[test]
+    fn maximize_tracks_distributes_definite_free_space_to_growth_limits() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let mut states = [
+            GridTrackSizingState {
+                base_size: 20.0,
+                growth_limit: GridTrackGrowthLimit::Finite(40.0),
+            },
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(50.0),
+            },
+        ];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 40.0);
+        assert_eq!(states[1].base_size, 50.0);
+    }
+
+    #[test]
+    fn maximize_tracks_accounts_for_fixed_gutters() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let mut states = [
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(40.0),
+            },
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(40.0),
+            },
+        ];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            10.0,
+            Some(70.0),
+            GridAxis::Column,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 30.0);
+        assert_eq!(states[1].base_size, 30.0);
+    }
+
+    #[test]
+    fn stretch_auto_tracks_divides_remaining_space_beyond_intrinsic_limits() {
+        let sizing = [
+            GridTrackSizing::Fixed(20.0),
+            GridTrackSizing::Auto,
+            GridTrackSizing::Auto,
+        ];
+        let mut states = [
+            GridTrackSizingState::fixed(20.0),
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(30.0),
+            },
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(40.0),
+            },
+        ];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 20.0);
+        assert_eq!(states[1].base_size, 35.0);
+        assert_eq!(states[2].base_size, 45.0);
+    }
+
+    #[test]
+    fn stretch_auto_tracks_leaves_fixed_only_free_space_unconsumed() {
+        let sizing = [GridTrackSizing::Fixed(20.0), GridTrackSizing::Fixed(30.0)];
+        let mut states = [
+            GridTrackSizingState::fixed(20.0),
+            GridTrackSizingState::fixed(30.0),
+        ];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 20.0);
+        assert_eq!(states[1].base_size, 30.0);
+    }
+
+    #[test]
+    fn indefinite_available_space_preserves_intrinsic_state() {
+        let sizing = [GridTrackSizing::Auto];
+        let mut states = [GridTrackSizingState {
+            base_size: 12.0,
+            growth_limit: GridTrackGrowthLimit::Finite(36.0),
+        }];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            0.0,
+            None,
+            GridAxis::Column,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 12.0);
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(36.0));
+    }
+
+    #[test]
+    fn definite_track_phases_reject_invalid_available_space() {
+        let sizing = [GridTrackSizing::Auto];
+        let mut states = [GridTrackSizingState::intrinsic()];
+
+        assert_eq!(
+            finalize_track_sizing_phases(
+                &mut states,
+                &sizing,
+                0.0,
+                Some(f32::NAN),
+                GridAxis::Column,
+                true,
+            ),
+            Err(GridLayoutError::InvalidAvailableSize)
         );
     }
 
