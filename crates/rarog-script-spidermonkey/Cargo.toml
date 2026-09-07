@@ -14,5 +14,3 @@ spidermonkey = ["dep:mozjs"]
 rarog-script = { path = "../rarog-script" }
 mozjs = { version = "=0.21.6", optional = true }
 
-[lib]
-path = "src/lib.rs"
