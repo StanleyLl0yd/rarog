@@ -1,5 +1,7 @@
 # Repository-wide audit report — 2026-09-03
 
+> Historical report for issue #81. It remains as an audit record; the R3 → R4 repository-wide audit is tracked independently by `PRE-R4-AUDIT.md` and `PRE-R4-AUDIT-REPORT.md`.
+
 ## Status and scope
 
 This report records the repository-wide behavior-preserving audit/refactor tracked by #81.
