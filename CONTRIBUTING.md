@@ -20,7 +20,7 @@ Before adding a subsystem:
 
 Changes that knowingly reduce site isolation, origin isolation or capability boundaries for performance are not accepted as normal optimizations.
 
-When changing invalidation or incremental rendering, add tests for both the retained path and the conservative fallback. A paint-only mutation should prove which derived state was reused; text, geometry and structural mutations should prove retained identities where the implementation claims reuse and deterministic equivalence when a fallback is required. The dedicated `r01_correctness` integration target remains the high-level render-correctness gate, while `r1_exit` protects the current R1 standards-oriented path; unit tests remain the place for narrow subsystem invariants.
+When changing invalidation or incremental rendering, add tests for both the retained path and the conservative fallback. A paint-only mutation should prove which derived state was reused; text, geometry and structural mutations should prove retained identities where the implementation claims reuse and deterministic equivalence when a fallback is required. The dedicated `r01_correctness` integration target remains the high-level render-correctness gate, while the R1, R2 and R3 exit targets protect their completed milestone contracts; unit tests remain the place for narrow subsystem invariants.
 
 Before opening a PR, run:
 
@@ -33,11 +33,14 @@ cargo test -p rarog-engine --test r0_exit
 cargo test -p rarog-engine --test p1_exit
 cargo test -p rarog-engine --test r01_correctness
 cargo test -p rarog-engine --test r1_exit
+cargo test -p rarog-engine --test r2_exit
+cargo test -p rarog-engine --test r3_exit
+cargo check --manifest-path fuzz/Cargo.toml --bins
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 
 If a change intentionally alters the deterministic R0 render signature, explain which DOM/style/layout/fragment/display-list behavior changed and why. Do not update a golden hash only to silence CI without understanding the pipeline difference.
 
-GitHub Actions runs the full quality path on Windows and a portability path on Linux. Push CI runs only for `main`; pull requests run the same gates before merge.
+GitHub Actions runs the full quality path on Windows, a portability and fuzz-build path on Linux, an explicit Rust 1.85 MSRV check, dedicated SpiderMonkey feature lanes on both platforms, and a separate RustSec advisory workflow. Push CI runs only for `main`; pull requests run the same gates before merge.
 
-Post-R0 hardening and R1 preflight work is tracked in `docs/R0.1-BACKLOG.md` and issue #32. Do not reopen the historical R0 backlog for later milestone work unless an actual Ember invariant is found to be incorrect.
+Historical milestone backlogs remain records of completed scope. Do not reopen an earlier backlog for later milestone work unless an invariant owned by that milestone is actually incorrect. The R3 → R4 transition is governed by `docs/PRE-R4-AUDIT.md` until that gate is complete.

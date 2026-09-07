@@ -15,12 +15,12 @@ No new product functionality is added during this phase.
 ## Required sequence
 
 - [x] Capture the post-R3 baseline: repository structure, crate/dependency graph, test/CI state and practical size/count metrics (`PRE-R4-AUDIT-REPORT.md`).
-- [ ] Complete repository-wide audit pass 1.
-- [ ] Apply high-confidence behavior-preserving deletion, consolidation, simplification and dependency cleanup in focused PRs.
-- [ ] Run the relevant full verification after every meaningful refactor group.
-- [ ] Complete mandatory repository-wide audit pass 2 over the already-refactored tree.
-- [ ] Resolve or explicitly record every remaining candidate that cannot be proven safe.
-- [ ] Reconcile architecture docs, roadmap, ADRs, README, AGENTS and CI with the resulting implementation.
+- [x] Complete repository-wide audit pass 1.
+- [x] Apply high-confidence behavior-preserving deletion, consolidation, simplification and dependency cleanup in focused PRs.
+- [x] Run the relevant full verification after every meaningful refactor group.
+- [x] Complete mandatory repository-wide audit pass 2 over the already-refactored tree.
+- [x] Resolve or explicitly record every remaining candidate that cannot be proven safe.
+- [x] Reconcile architecture docs, roadmap, ADRs, README, AGENTS and CI with the resulting implementation.
 - [ ] Run the final stabilization suite on Windows-primary, Linux portability, MSRV and SpiderMonkey gates.
 - [ ] Produce the final audit report with before/after metrics, changes made, preserved deferrals and any accepted residual debt.
 - [ ] Mark this gate complete before opening the first R4 implementation PR.

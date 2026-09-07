@@ -1,6 +1,6 @@
 # R3 — Wings exit gate
 
-Status: **complete** when this document and the automated `r3_exit` gate are merged to `main` with all required CI green.
+Status: **complete**.
 
 ## Purpose
 
