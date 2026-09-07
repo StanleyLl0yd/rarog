@@ -166,7 +166,7 @@ The current cascade priority is deterministic and compares:
 origin → layer → specificity → sheet order → rule order → declaration order
 ```
 
-The bootstrap document style set contains a tiny Rarog user-agent sheet, author `<style>` elements in document order and inline `style` declarations. This is an architectural foundation, **not CSS Cascade compliance**. Importance, inheritance, CSS-wide values, selector combinators, pseudo-classes, namespaces and standards parsing remain later work.
+The original R0 style-source/cascade boundary remains the ownership model, while R1 added standards-oriented CSS syntax parsing, importance, inheritance, CSS-wide values, selector combinators, attribute selectors, pseudo-classes and namespace-aware matching. This remains a bounded implementation rather than a claim of CSS Cascade or selector completeness.
 
 ### Invalidation primitives
 
@@ -193,7 +193,7 @@ R0 now has an explicit `SelectorInvalidationDependencies` boundary for selector 
 
 Attribute invalidation deliberately keys on the changed attribute category (`id` or `class`) rather than only the post-mutation value. This is necessary because the R0 mutation journal does not retain old attribute values: removing a trigger must invalidate the same dependent nodes as adding it. Structural insert/reparent operations conservatively invalidate affected descendant or sibling subtrees when the corresponding dependency scope exists.
 
-`StyleSharingKey` captures the local inputs that are sufficient for the current bootstrap selector/cascade model: namespace, tag, ID, canonicalized classes and inline style. Local style sharing is considered safe only while the active rule set has no relational dependencies. R0 does not install a process-global computed-style cache; any future cache must be bounded to a document/style-set lifetime and must expand or disable its key when inheritance, pseudo-state, relational selectors or other contextual inputs become observable. See ADR-0026.
+`StyleSharingKey` captures local selector/cascade inputs such as namespace, tag, ID, canonicalized classes and inline style. Local style sharing is considered safe only while the active rule set has no relational dependencies that invalidate the key. Rarog does not install a process-global computed-style cache; any future broader cache must be bounded to a document/style-set lifetime and must expand or disable its key when additional contextual inputs become observable. See ADR-0026.
 
 ## R0 observability and benchmark harness
 
@@ -249,7 +249,7 @@ See ADR-0007.
 
 R0 now passes an explicit `ContainingBlock` through fragment construction instead of coupling layout to raw x/available-width arguments. A containing block carries an origin and available size, and nested block content becomes the containing block for descendants. This is a bootstrap foundation for later formatting-context-specific containing-block rules, not CSS containing-block compliance.
 
-Layout nodes also expose `IntrinsicSizes { min_content, max_content }`. Text is represented as a backend-neutral `TextRun` carrying bootstrap advance and line-height metrics; its intrinsic sizes distinguish the longest unbreakable word from the full run advance. No shaping backend, font selection or Unicode line-breaking contract is implied yet.
+Layout nodes expose `IntrinsicSizes { min_content, max_content }`. Text is represented as a backend-neutral `TextRun`; R1 connects production OpenType shaping, Windows font selection, Unicode-aware line breaking, grapheme boundaries and bidi/fallback metadata behind Rarog-owned contracts. These remain scoped foundations rather than claims of complete CSS text layout or Unicode conformance.
 
 ## Box model foundation
 
@@ -272,7 +272,7 @@ R0 supports bootstrap values for:
 - background color;
 - `display: none` / `display: block` for bootstrap cascade decisions.
 
-This is a geometry foundation, **not** a claim of CSS box-model compliance. Margin collapsing, intrinsic sizing, min/max constraints, percentages, writing modes and formatting-context-specific behavior remain later work.
+This remains a geometry foundation, **not** a claim of CSS box-model compliance. R1 added scoped margin-collapsing, intrinsic-size and min/max sizing behavior plus explicit formatting-context boundaries; percentages, writing modes and broader formatting-context completeness remain later work.
 
 ## Image resource boundary
 
@@ -280,7 +280,7 @@ R1 introduces `rarog-resources` as the platform-neutral ownership boundary for d
 
 A ready reference includes both resource ID and revision. Replacing decoded pixels advances the revision and invalidates older references. This makes image content identity explicit in backend-neutral paint commands instead of relying on hidden mutable cache state. `rarog-paint` carries only `ImageResourceRef` plus destination geometry in `DisplayCommand::DrawImage`; software rasterization receives the resource store explicitly and treats missing, stale, pending or failed references as transparent/no-op content. Image revision changes therefore participate in ordinary display-list equality and damage tracking.
 
-The DOM and Layout Tree do not own decoded pixel buffers, and no process-global image cache is introduced. R1 does not claim URL resolution, Fetch, image format decoding, HTML replaced-element semantics, responsive images or asynchronous decode. Network/URL loading remains on the R2 roadmap and asynchronous image decoding remains R3 work; those layers must feed this bounded decoded-image boundary rather than leaking transport or decoder-specific types into layout/paint.
+The DOM and Layout Tree do not own decoded pixel buffers, and no process-global image cache is introduced. R2 added Rarog-owned URL/origin/Fetch boundaries, and R3 added a bounded asynchronous image-decode queue that feeds this resource store. Image-format codec integration, HTML replaced-element semantics and responsive images remain future work; transport and decoder-specific types still do not leak into layout/paint.
 
 ## Paint identity and damage tracking
 
@@ -352,7 +352,7 @@ R0 isolates host-platform integration behind two crate layers. `rarog-platform` 
 
 `EngineBuilder` accepts a platform host and defaults to `NullPlatformHost`, so headless tests and portability lanes do not need to impersonate a desktop integration. The engine exposes only the host name and capability data. No Win32, WinRT, DirectWrite, Direct3D, HWND, COM, or other Windows-specific type enters DOM/HTML/CSS/layout/paint or the embedder API.
 
-The Windows boundary deliberately advertises no concrete service capability in R0. Window/events, font/text, input/IME, accessibility, sandbox/process, and GPU/compositor adapters become capabilities only when real implementations exist. `WindowsPlatformHost::try_new` succeeds only on a Windows compilation target, while the crate itself remains buildable on Linux for portability CI. See ADR-0030.
+The Windows boundary began empty in R0. R1 added system-font integration, R2 added normalized input/IME and clipboard services, and R3 added target-specific GPU selection/surface presentation behind compositor/platform adapters. `WindowsPlatformHost::try_new` still succeeds only on a Windows compilation target, while the crate remains buildable on Linux for portability CI. Accessibility and sandbox/process capabilities remain unimplemented. See ADR-0030.
 
 ## Engine and embedder boundary
 
@@ -360,11 +360,11 @@ R0 exposes `Engine` and `View` above `RenderSession`. `Engine` owns shared host 
 
 Navigation and subresource loading are contracts only in R0. `NavigationRequest` and `ResourceRequest` are checked by `HostPolicy` and return either `Blocked` or `ForwardToEmbedder`; the engine performs no network I/O. The same actions are surfaced as `ViewEvent` values through `EventSink`, which has no dependency on a UI toolkit or Windows API. An embedder can therefore decide how to obtain bytes and then call `View::load_html` with decoded text and an opaque `BaseUrl`.
 
-`ResourceBudget` begins with enforced document-source and viewport-pixel limits. The viewport limit cannot exceed the lower-level framebuffer safety cap. Memory/cache/background CPU and lifecycle budgets remain future extensions rather than invented R0 accounting. `View::render` creates a stateful render session on first use, reuses it for an unchanged viewport, and performs a deterministic full session rebuild when the viewport changes. See ADR-0029.
+`ResourceBudget` now enforces document-source bytes, viewport pixels, DOM node count/depth, text scalars, CSS rules, fragment count and display-command count. The viewport limit cannot exceed the lower-level framebuffer safety cap. Separate resource stores and queues add their own image/font/input bounds. Resident-memory, graphics-cache, background-CPU and lifecycle accounting remain future extensions rather than invented estimates. `View::render` creates a stateful render session on first use, reuses it for an unchanged viewport, and performs a deterministic full session rebuild when the viewport changes. See ADR-0029.
 
 ## Script architecture
 
-Rarog 1.x should initially integrate SpiderMonkey through one replaceable abstraction:
+R2 integrates SpiderMonkey through one replaceable abstraction:
 
 ```text
 DOM/Web APIs
@@ -378,22 +378,9 @@ No engine crate outside the script adapter should depend directly on SpiderMonke
 
 ## Resource model
 
-Every top-level site receives a `ResourceBudget` containing at minimum:
+The current single-process engine uses explicit bounded structures rather than claiming accounting it does not yet implement. `ResourceBudget` covers document/render complexity, while image, font, scheduler, event, clipboard/input and compositor queues/stores enforce subsystem-specific limits.
 
-- resident memory target;
-- decoded image cache target;
-- graphics cache target;
-- background CPU allowance;
-- timer/rendering policy;
-- lifecycle state.
-
-Lifecycle states:
-
-```text
-Active → VisibleIdle → Background → Frozen → Discardable
-```
-
-Security boundaries are preserved regardless of lifecycle state.
+Long-term per-site resident-memory, graphics-cache, background-CPU and lifecycle accounting belongs to the R4+ process/resource model. Those future policies must preserve the same security boundaries regardless of lifecycle state.
 
 ## Security model
 
@@ -426,9 +413,9 @@ Two independent test tracks are mandatory:
 
 ## CI platform policy
 
-Windows is the primary CI platform lane. It must run format, compile checks, Clippy, workspace tests, the deterministic-render gate and the bootstrap render.
+Windows is the primary CI platform lane. It runs format, compile checks, Clippy, workspace tests, the R0/P1/R0.1/R1/R2/R3 gates and the bootstrap render. A dedicated Windows SpiderMonkey feature lane now runs check, Clippy and adapter tests.
 
-Linux remains a portability lane from R0 onward so accidental Windows-only dependencies in engine-core crates are caught early. It also runs the workspace tests and bootstrap render; deterministic behavior is therefore exercised on both lanes even though Windows is the product-priority gate.
+Linux remains the portability lane so accidental Windows-only dependencies in engine-core crates are caught early. It runs workspace checks/tests, the milestone gates, bootstrap render and fuzz-target compilation; a dedicated Linux SpiderMonkey feature lane runs check, Clippy and adapter tests. Rust 1.85 has a separate MSRV job, and dependency advisories are checked by the RustSec workflow.
 
 When macOS support becomes an active target it should gain an equivalent portability lane, but absence of a macOS lane must not block Windows-first engine progress.
 
@@ -452,13 +439,13 @@ R0 now models font selection explicitly through `FontFaceId`, `FontFamily`, `Fon
 
 ### Shaping segmentation foundation
 
-R0 now derives scalar-indexed `ShapingRun` segments by intersecting logical bidi runs with grapheme-safe font fallback runs. Every shaping segment has exactly one source range, one `FontFaceId`, and one `BidiLevel`/direction, and adjacent segments with identical shaping state are coalesced. This is the handoff boundary for a future OpenType shaper: a real backend can shape each segment independently without changing DOM, source ranges, line breaking, fragment identity, or retained paint.
+R0 established scalar-indexed `ShapingRun` segments by intersecting logical bidi runs with grapheme-safe font fallback runs. Every shaping segment has exactly one source range, one `FontFaceId`, and one `BidiLevel`/direction, and adjacent segments with identical shaping state are coalesced. R1 connected this handoff to the production `rarog-text-opentype` backend without changing DOM, source ranges, line breaking, fragment identity or retained paint.
 
 ### Shaping backend boundary
 
-R0 now separates shaping segmentation from shaping execution. `ShapingBackend` receives one `ShapingRun` plus its selected `FontFace` and returns a `ShapedRun` containing positioned glyph IDs, per-glyph advances/offsets, and scalar-indexed source-cluster mapping. The deterministic `FixedTextShaper` implements this contract as the bootstrap backend while the existing aggregate `ShapedText` remains the line-breaking input. A future OpenType backend can therefore replace glyph generation without owning bidi, font fallback, source identity, fragmentation, or retained-paint policy.
+R0 separated shaping segmentation from shaping execution. `ShapingBackend` receives one `ShapingRun` plus its selected `FontFace` and returns a `ShapedRun` containing positioned glyph IDs, per-glyph advances/offsets and scalar-indexed source-cluster mapping. `FixedTextShaper` remains a deterministic fallback/test backend, while R1's OpenType adapter supplies production glyph shaping without owning bidi, font fallback, source identity, fragmentation or retained-paint policy.
 
 ### Shaping request metadata
 
-R0 now carries backend-neutral shaping metadata in `ShapingRequest`. Every request preserves one resolved `ShapingRun` and adds script classification, a normalized language tag, OpenType feature settings, and variation-axis coordinates. Bootstrap requests infer script deterministically from the scalar-indexed source range and default language to `und`; feature and variation vectors are empty unless the caller explicitly configures them. The deterministic bootstrap backend accepts this metadata but intentionally ignores feature/variation semantics, leaving those decisions to a future OpenType implementation behind the same `ShapingBackend` boundary.
+R0 established backend-neutral shaping metadata in `ShapingRequest`. Every request preserves one resolved `ShapingRun` and adds script classification, a normalized language tag, OpenType feature settings and variation-axis coordinates. Bootstrap requests infer script deterministically from the scalar-indexed source range and default language to `und`; R1's OpenType adapter consumes configured feature/variation metadata behind the same `ShapingBackend` boundary.
 
