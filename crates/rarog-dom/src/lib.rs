@@ -492,7 +492,7 @@ impl Document {
         let generation = self.next_generation()?;
 
         let NodeKind::Element(element) = &mut self.nodes[node.index()].kind else {
-            unreachable!("element kind was validated above");
+            return Err(MutationError::NotElement(node));
         };
         element.attributes.insert(name.clone(), value);
         self.record_mutation(generation, MutationKind::Attribute { node, name });
@@ -514,7 +514,7 @@ impl Document {
         let generation = self.next_generation()?;
 
         let NodeKind::Element(element) = &mut self.nodes[node.index()].kind else {
-            unreachable!("element kind was validated above");
+            return Err(MutationError::NotElement(node));
         };
         let removed = element.attributes.remove(name);
         self.record_mutation(
@@ -544,7 +544,7 @@ impl Document {
         let generation = self.next_generation()?;
 
         let NodeKind::Text(text) = &mut self.nodes[node.index()].kind else {
-            unreachable!("text kind was validated above");
+            return Err(MutationError::NotText(node));
         };
         *text = value;
         self.record_mutation(generation, MutationKind::CharacterData { node });
