@@ -90,7 +90,7 @@ The completed R0–R3 foundation includes:
 - a replaceable script-runtime contract plus an isolated SpiderMonkey ESR backend with opaque realm/root identities;
 - Event/EventTarget foundations and bounded engine-owned task/microtask scheduling connected to retained render checkpoints;
 - Rarog-owned URL/origin/site identity and Fetch request/response/network-capability boundaries;
-- R4 process/site identity and bounded host-side schemeful-site assignment foundations with fail-closed process budgets;
+- R4 process/site identity, fail-closed schemeful-site assignment and bounded versioned Host/Site IPC foundations;
 - platform-neutral keyboard, pointer, wheel, text-input and clipboard contracts with bounded Windows input/IME/clipboard adapters;
 - bounded Flexbox/Grid slices with explicit fail-closed behavior for unsupported geometry;
 - backend-neutral frame planning, bounded compositor workers and a replaceable `wgpu` staging backend;
@@ -126,6 +126,7 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-webidl` — Rarog-owned normalized WebIDL IR, validation and parser frontend boundary
 - `rarog-url` — Rarog-owned URL, origin and site identity primitives
 - `rarog-process` — Rarog-owned Host/Site process identities and bounded site-assignment topology
+- `rarog-ipc` — versioned Host/Site IPC envelopes, correlation, backpressure and disconnect semantics
 - `rarog-fetch` — bounded Fetch values and embedder network-capability boundary
 - `rarog-script` — replaceable script-runtime, realm and rooted-value contracts
 - `rarog-script-spidermonkey` — isolated SpiderMonkey adapter behind `rarog-script`
