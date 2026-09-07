@@ -12,5 +12,5 @@ spidermonkey = ["dep:mozjs"]
 
 [dependencies]
 rarog-script = { path = "../rarog-script" }
-mozjs = { version = "=0.21.6", optional = true }
+mozjs = { version = "=0.23.1", optional = true }
 

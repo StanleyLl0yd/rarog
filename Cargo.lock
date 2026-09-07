@@ -1561,9 +1561,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs"
-version = "0.21.6"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7da99196f36404da736e3e561255bd3ae32a3785e9498f81baa87e119c44ecb6"
+checksum = "89b0250ec78781bceb8c3bf523771654583e4db2625e815138bc65fa2b1ec7fe"
 dependencies = [
  "bindgen",
  "cc",
@@ -1576,9 +1576,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_sys"
-version = "140.14.0-0"
+version = "140.14.0-1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fec80275168074746f8dd14e3f451836aecb9f6b8af03610e35e0d49f2b4126f"
+checksum = "4cb5edb8729da5f2b09939fcad2559ba1c54e55d222f14d485b88c7d645890d5"
 dependencies = [
  "bindgen",
  "cc",
@@ -2321,13 +2321,6 @@ name = "rarog-scheduler"
 version = "0.1.0"
 
 [[package]]
-name = "rarog-scroll"
-version = "0.1.0"
-dependencies = [
- "rarog-types",
-]
-
-[[package]]
 name = "rarog-script"
 version = "0.1.0"
 
@@ -2337,6 +2330,13 @@ version = "0.1.0"
 dependencies = [
  "mozjs",
  "rarog-script",
+]
+
+[[package]]
+name = "rarog-scroll"
+version = "0.1.0"
+dependencies = [
+ "rarog-types",
 ]
 
 [[package]]
