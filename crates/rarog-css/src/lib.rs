@@ -163,15 +163,18 @@ impl Default for GridTrackList {
 
 impl GridTrackList {
     pub fn from_sizes(sizes: &[f32]) -> Option<Self> {
-        if sizes.iter().any(|size| !size.is_finite() || *size < 0.0) {
+        if sizes.len() > MAX_EXPLICIT_GRID_TRACKS
+            || sizes.iter().any(|size| !size.is_finite() || *size < 0.0)
+        {
             return None;
         }
-        let tracks = sizes
-            .iter()
-            .copied()
-            .map(GridTrackSize::Fixed)
-            .collect::<Vec<_>>();
-        Self::from_tracks(&tracks)
+
+        let mut result = Self::default();
+        for (track, size) in result.tracks.iter_mut().zip(sizes.iter().copied()) {
+            *track = GridTrackSize::Fixed(size);
+        }
+        result.len = sizes.len() as u8;
+        Some(result)
     }
 
     pub fn from_tracks(tracks: &[GridTrackSize]) -> Option<Self> {
