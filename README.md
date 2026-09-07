@@ -30,7 +30,7 @@ The **primary target platform is Windows**. Rarog is being designed so the engin
 
 The workspace version is **0.1.0**. **R0 — Ember is complete**: it established deterministic rendering, invalidation, paint, embedder and platform ownership boundaries. **R1 — Flame is complete**: it replaced the bootstrap HTML/CSS paths with standards-oriented adapters, established scoped block/inline formatting foundations, connected production OpenType shaping and Windows font discovery, and broadened retained incremental rendering and damage-aware paint. **R2 — Flight is complete**: it established normalized WebIDL and replaceable script-runtime boundaries, the first SpiderMonkey adapter, events and engine-owned task/microtask scheduling, URL/origin/Fetch foundations, script-driven retained rendering checkpoints, and Windows input/IME/clipboard adapters. **R3 — Wings is complete**: bounded Flexbox/Grid work, the compositor worker, replaceable `wgpu` backend, Windows-first GPU presentation, asynchronous image decode, scrolling and engine-owned frame scheduling are protected by a dedicated exit gate. **R4 has not started**: the repository is in the mandatory pre-R4 audit/refactor and stabilization phase.
 
-> Rarog has standards-oriented foundations, not a claim of general-Web compatibility or standards completeness. Broad DOM/Web API bindings, mature script/network integration, flex/grid completeness, GPU/compositor, process isolation and browser readiness remain roadmap work.
+> Rarog has standards-oriented foundations, not a claim of general-Web compatibility or standards completeness. Broad DOM/Web API bindings, mature script/network integration, Flexbox/Grid completeness, production GPU/compositor maturity, process isolation and browser readiness remain roadmap work.
 
 ## Current engine pipeline
 
@@ -59,9 +59,15 @@ fragment tree + block/inline formatting foundations
 retained display list + structural scopes + stable display-item IDs
    ↓
 damage-aware software framebuffer / deterministic hash
+   ↓
+engine-owned frame scheduling + backend-neutral frame plan
+   ↓
+bounded compositor worker
+   ↓
+replaceable wgpu upload / Windows DX12 presentation
 ```
 
-The completed R0–R2 foundation includes:
+The completed R0–R3 foundation includes:
 
 - checked DOM mutations, mutation records, document generation tracking and mutation-history pruning;
 - explicit element namespaces and an atom/string ownership boundary;
@@ -84,11 +90,15 @@ The completed R0–R2 foundation includes:
 - a replaceable script-runtime contract plus an isolated SpiderMonkey ESR backend with opaque realm/root identities;
 - Event/EventTarget foundations and bounded engine-owned task/microtask scheduling connected to retained render checkpoints;
 - Rarog-owned URL/origin/site identity and Fetch request/response/network-capability boundaries;
-- platform-neutral keyboard, pointer, wheel, text-input and clipboard contracts with Windows input/IME/clipboard adapters;
+- platform-neutral keyboard, pointer, wheel, text-input and clipboard contracts with bounded Windows input/IME/clipboard adapters;
+- bounded Flexbox/Grid slices with explicit fail-closed behavior for unsupported geometry;
+- backend-neutral frame planning, bounded compositor workers and a replaceable `wgpu` staging backend;
+- Windows-first DX12 surface presentation behind the platform adapter boundary;
+- bounded asynchronous image-decode ownership, stable scroll-tree identities and engine-owned frame scheduling;
 - `rarog-platform` plus the Windows-specific `rarog-platform-windows` ownership seam;
 - deterministic DOM/style/layout/fragment/display-list snapshots and framebuffer/signature hashes;
 - Windows-primary CI, Linux portability CI, an explicit Rust 1.85 MSRV check, dedicated SpiderMonkey jobs and immutable action pins;
-- dedicated automated R0, R1 and R2 exit gates.
+- dedicated automated R0, R1, R2 and R3 exit gates.
 
 Rarog deliberately does **not** claim general Web compatibility, standards completeness, production security, performance leadership or browser readiness. Those are later milestones with their own measurable exit criteria.
 
@@ -98,7 +108,7 @@ Rarog deliberately does **not** claim general Web compatibility, standards compl
 
 The engine-owned Web platform code stays independent of Win32/WinRT/D3D-specific APIs. Windows-specific code lives behind narrow platform adapters so Linux and macOS ports remain possible later without forcing the core architecture to follow the lowest common denominator.
 
-R1 made the first production text platform path concrete, and R2 extended the Windows host seam through normalized input, IME and clipboard adapters. GPU/compositor, sandbox/process and accessibility services remain assigned to later roadmap milestones.
+R1 made the first production text platform path concrete, R2 extended the Windows host seam through normalized input, IME and clipboard adapters, and R3 added the first Windows GPU/compositor presentation path. Sandbox/process isolation, accessibility and broader production host integration remain later roadmap work.
 
 The first reference browser, **Zorya Browser**, is also planned for Windows first.
 
@@ -118,7 +128,10 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-script` — replaceable script-runtime, realm and rooted-value contracts
 - `rarog-script-spidermonkey` — isolated SpiderMonkey adapter behind `rarog-script`
 - `rarog-scheduler` — bounded task and microtask scheduling primitives
+- `rarog-scroll` — bounded scroll-tree identities, geometry and offsets
 - `rarog-paint` — retained structural display list, stable IDs, damage tracking and software rasterizer
+- `rarog-compositor` — backend-neutral frame planning, scheduling and bounded compositor-worker contracts
+- `rarog-compositor-wgpu` — replaceable `wgpu` upload/presentation staging backend
 - `rarog-platform` — platform-neutral host, font, input and clipboard capability contracts
 - `rarog-platform-windows` — Windows-specific font, input, IME and clipboard adapters
 - `rarog-engine` — rendering, persistent incremental session, event-loop bridge, observability and embedder boundary
