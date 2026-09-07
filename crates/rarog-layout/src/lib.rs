@@ -2997,7 +2997,7 @@ impl FragmentBuilder {
             .copied()
             .map(|track| match track {
                 GridTrackSizing::Fixed(size) => GridTrack::new(size),
-                GridTrackSizing::Auto => GridTrack::new(0.0),
+                GridTrackSizing::Auto | GridTrackSizing::Fraction(_) => GridTrack::new(0.0),
             })
             .collect::<Vec<_>>();
         let fallback_rows = row_sizing
@@ -3005,7 +3005,7 @@ impl FragmentBuilder {
             .copied()
             .map(|track| match track {
                 GridTrackSizing::Fixed(size) => GridTrack::new(size),
-                GridTrackSizing::Auto => GridTrack::new(0.0),
+                GridTrackSizing::Auto | GridTrackSizing::Fraction(_) => GridTrack::new(0.0),
             })
             .collect::<Vec<_>>();
 
