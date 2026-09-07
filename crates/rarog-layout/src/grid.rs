@@ -78,6 +78,7 @@ impl GridTrackSizingState {
         }
     }
 
+    #[cfg(test)]
     fn grow_base_to(&mut self, requested_size: f32) {
         let bounded_size = match self.growth_limit {
             GridTrackGrowthLimit::Finite(limit) => requested_size.min(limit),
@@ -206,6 +207,60 @@ impl GridIntrinsicContributions {
         }
         .map(|contributions| contributions.size_for(kind))
     }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GridSpanningIntrinsicContribution {
+    node: LayoutNodeId,
+    start: usize,
+    span: usize,
+    minimum: f32,
+    min_content: f32,
+    max_content: f32,
+}
+
+#[cfg(test)]
+impl GridSpanningIntrinsicContribution {
+    const fn new(
+        node: LayoutNodeId,
+        start: usize,
+        span: usize,
+        minimum: f32,
+        min_content: f32,
+        max_content: f32,
+    ) -> Self {
+        Self {
+            node,
+            start,
+            span,
+            minimum,
+            min_content,
+            max_content,
+        }
+    }
+
+    const fn size_for(self, kind: GridIntrinsicContributionKind) -> f32 {
+        match kind {
+            GridIntrinsicContributionKind::Minimum => self.minimum,
+            GridIntrinsicContributionKind::MinContent => self.min_content,
+            GridIntrinsicContributionKind::MaxContent => self.max_content,
+        }
+    }
+
+    const fn as_size_contribution(
+        self,
+        kind: GridIntrinsicContributionKind,
+    ) -> GridSpanningSizeContribution {
+        GridSpanningSizeContribution::new(self.node, self.start, self.span, self.size_for(kind))
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+struct GridGrowthLimitPlan {
+    increases: Vec<f32>,
+    touched: Vec<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -652,6 +707,317 @@ pub(crate) fn resolve_non_spanning_intrinsic_track_states(
     Ok(states)
 }
 
+#[cfg(test)]
+pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
+    sizing: &[GridTrackSizing],
+    axis: GridAxis,
+    items: &[GridItem],
+    contributions: &[GridIntrinsicContributions],
+    gap: f32,
+) -> Result<Vec<GridTrackSizingState>, GridLayoutError> {
+    validate_gap(gap, axis)?;
+    let mut states = initialize_track_sizing_states(sizing, axis)?;
+    let mut single_base_targets: Vec<Option<f32>> = vec![None; sizing.len()];
+    let mut single_growth_targets: Vec<Option<f32>> = vec![None; sizing.len()];
+    let mut spanning = Vec::new();
+
+    for item in items.iter().copied() {
+        let (start, span) = match axis {
+            GridAxis::Column => (item.column_start, item.column_span),
+            GridAxis::Row => (item.row_start, item.row_span),
+        };
+        if span == 0 {
+            return Err(GridLayoutError::InvalidSpan { node: item.node });
+        }
+        let end = start
+            .checked_add(span)
+            .ok_or(GridLayoutError::PlacementOutsideGrid { node: item.node })?;
+        let Some(track_slice) = sizing.get(start..end) else {
+            return Err(GridLayoutError::PlacementOutsideGrid { node: item.node });
+        };
+        if !track_slice
+            .iter()
+            .any(|track| matches!(track, GridTrackSizing::Auto))
+        {
+            continue;
+        }
+
+        let contribution = contributions
+            .iter()
+            .copied()
+            .find(|contribution| contribution.node == item.node)
+            .ok_or(GridLayoutError::MissingContribution {
+                node: item.node,
+                axis,
+            })?;
+        let minimum = contribution.size_for(axis, GridIntrinsicContributionKind::Minimum)?;
+        let min_content = contribution.size_for(axis, GridIntrinsicContributionKind::MinContent)?;
+        let max_content = contribution.size_for(axis, GridIntrinsicContributionKind::MaxContent)?;
+
+        if span == 1 {
+            if matches!(sizing[start], GridTrackSizing::Auto) {
+                single_base_targets[start] = Some(
+                    single_base_targets[start].map_or(minimum, |current| current.max(minimum)),
+                );
+                single_growth_targets[start] = Some(
+                    single_growth_targets[start]
+                        .map_or(max_content, |current| current.max(max_content)),
+                );
+            }
+        } else {
+            spanning.push(GridSpanningIntrinsicContribution::new(
+                item.node,
+                start,
+                span,
+                minimum,
+                min_content,
+                max_content,
+            ));
+        }
+    }
+
+    for index in 0..states.len() {
+        if !matches!(sizing[index], GridTrackSizing::Auto) {
+            continue;
+        }
+        if let Some(base_size) = single_base_targets[index] {
+            states[index].base_size = states[index].base_size.max(base_size);
+        }
+        if let Some(growth_limit) = single_growth_targets[index] {
+            states[index].growth_limit =
+                GridTrackGrowthLimit::Finite(growth_limit.max(states[index].base_size));
+        }
+    }
+
+    let mut spans = spanning
+        .iter()
+        .map(|contribution| contribution.span)
+        .collect::<Vec<_>>();
+    spans.sort_unstable();
+    spans.dedup();
+
+    for span in spans {
+        let round = spanning
+            .iter()
+            .copied()
+            .filter(|contribution| contribution.span == span)
+            .collect::<Vec<_>>();
+        let base_contributions = round
+            .iter()
+            .copied()
+            .map(|contribution| {
+                contribution.as_size_contribution(GridIntrinsicContributionKind::Minimum)
+            })
+            .collect::<Vec<_>>();
+        let planned =
+            plan_auto_track_base_size_increases(&states, sizing, gap, axis, &base_contributions)?;
+        apply_planned_base_size_increases(&mut states, &planned)?;
+        clamp_growth_limits_to_base(&mut states, sizing);
+
+        let min_content_contributions = round
+            .iter()
+            .copied()
+            .map(|contribution| {
+                contribution.as_size_contribution(GridIntrinsicContributionKind::MinContent)
+            })
+            .collect::<Vec<_>>();
+        let min_plan = plan_auto_track_growth_limit_increases(
+            &states,
+            sizing,
+            gap,
+            axis,
+            &min_content_contributions,
+            &vec![false; states.len()],
+        )?;
+        let infinitely_growable =
+            apply_planned_growth_limit_increases(&mut states, sizing, &min_plan, true)?;
+
+        let max_content_contributions = round
+            .iter()
+            .copied()
+            .map(|contribution| {
+                contribution.as_size_contribution(GridIntrinsicContributionKind::MaxContent)
+            })
+            .collect::<Vec<_>>();
+        let max_plan = plan_auto_track_growth_limit_increases(
+            &states,
+            sizing,
+            gap,
+            axis,
+            &max_content_contributions,
+            &infinitely_growable,
+        )?;
+        apply_planned_growth_limit_increases(&mut states, sizing, &max_plan, false)?;
+    }
+
+    close_infinite_growth_limits_to_base(&mut states, sizing);
+    Ok(states)
+}
+
+#[cfg(test)]
+fn clamp_growth_limits_to_base(states: &mut [GridTrackSizingState], sizing: &[GridTrackSizing]) {
+    for (state, track) in states.iter_mut().zip(sizing.iter()) {
+        if !matches!(track, GridTrackSizing::Auto) {
+            continue;
+        }
+        if let GridTrackGrowthLimit::Finite(limit) = state.growth_limit {
+            state.growth_limit = GridTrackGrowthLimit::Finite(limit.max(state.base_size));
+        }
+    }
+}
+
+#[cfg(test)]
+fn close_infinite_growth_limits_to_base(
+    states: &mut [GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+) {
+    for (state, track) in states.iter_mut().zip(sizing.iter()) {
+        if matches!(track, GridTrackSizing::Auto)
+            && matches!(state.growth_limit, GridTrackGrowthLimit::Infinite)
+        {
+            state.growth_limit = GridTrackGrowthLimit::Finite(state.base_size);
+        }
+    }
+}
+
+#[cfg(test)]
+fn plan_auto_track_growth_limit_increases(
+    states: &[GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+    gap: f32,
+    axis: GridAxis,
+    contributions: &[GridSpanningSizeContribution],
+    infinitely_growable: &[bool],
+) -> Result<GridGrowthLimitPlan, GridLayoutError> {
+    if states.len() != sizing.len() || states.len() != infinitely_growable.len() {
+        return Err(GridLayoutError::GeometryOverflow);
+    }
+    validate_gap(gap, axis)?;
+
+    let mut planned = vec![0.0_f32; states.len()];
+    let mut touched = vec![false; states.len()];
+
+    for contribution in contributions.iter().copied() {
+        if contribution.span == 0 || !contribution.size.is_finite() || contribution.size < 0.0 {
+            return Err(GridLayoutError::InvalidContribution {
+                node: contribution.node,
+                axis,
+            });
+        }
+        let end = contribution.start.checked_add(contribution.span).ok_or(
+            GridLayoutError::PlacementOutsideGrid {
+                node: contribution.node,
+            },
+        )?;
+        let Some(span_states) = states.get(contribution.start..end) else {
+            return Err(GridLayoutError::PlacementOutsideGrid {
+                node: contribution.node,
+            });
+        };
+        let Some(span_sizing) = sizing.get(contribution.start..end) else {
+            return Err(GridLayoutError::PlacementOutsideGrid {
+                node: contribution.node,
+            });
+        };
+
+        let affected = span_sizing
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, track)| {
+                matches!(track, GridTrackSizing::Auto).then_some(contribution.start + offset)
+            })
+            .collect::<Vec<_>>();
+        if affected.is_empty() {
+            continue;
+        }
+        for index in affected.iter().copied() {
+            touched[index] = true;
+        }
+
+        let mut occupied = 0.0_f32;
+        for (offset, state) in span_states.iter().enumerate() {
+            let size = match state.growth_limit {
+                GridTrackGrowthLimit::Finite(limit) => limit.max(state.base_size),
+                GridTrackGrowthLimit::Infinite => state.base_size,
+            };
+            occupied = finite_add(occupied, size)?;
+            if offset + 1 < span_states.len() {
+                occupied = finite_add(occupied, gap)?;
+            }
+        }
+        let space = (contribution.size - occupied).max(0.0);
+        if space == 0.0 {
+            continue;
+        }
+
+        let preferred = affected
+            .iter()
+            .copied()
+            .filter(|index| {
+                matches!(states[*index].growth_limit, GridTrackGrowthLimit::Infinite)
+                    || infinitely_growable[*index]
+            })
+            .collect::<Vec<_>>();
+        let recipients = if preferred.is_empty() {
+            &affected
+        } else {
+            &preferred
+        };
+        let share = space / recipients.len() as f32;
+        if !share.is_finite() {
+            return Err(GridLayoutError::GeometryOverflow);
+        }
+        if share == 0.0 {
+            continue;
+        }
+        for index in recipients.iter().copied() {
+            planned[index] = planned[index].max(share);
+        }
+    }
+
+    Ok(GridGrowthLimitPlan {
+        increases: planned,
+        touched,
+    })
+}
+
+#[cfg(test)]
+fn apply_planned_growth_limit_increases(
+    states: &mut [GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+    plan: &GridGrowthLimitPlan,
+    mark_newly_finite_as_infinitely_growable: bool,
+) -> Result<Vec<bool>, GridLayoutError> {
+    if states.len() != sizing.len()
+        || states.len() != plan.increases.len()
+        || states.len() != plan.touched.len()
+    {
+        return Err(GridLayoutError::GeometryOverflow);
+    }
+
+    let mut infinitely_growable = vec![false; states.len()];
+    for index in 0..states.len() {
+        if !matches!(sizing[index], GridTrackSizing::Auto) || !plan.touched[index] {
+            continue;
+        }
+        let increase = plan.increases[index];
+        if !increase.is_finite() || increase < 0.0 {
+            return Err(GridLayoutError::GeometryOverflow);
+        }
+        let was_infinite = matches!(states[index].growth_limit, GridTrackGrowthLimit::Infinite);
+        let current = match states[index].growth_limit {
+            GridTrackGrowthLimit::Finite(limit) => limit.max(states[index].base_size),
+            GridTrackGrowthLimit::Infinite => states[index].base_size,
+        };
+        let limit = finite_add(current, increase)?.max(states[index].base_size);
+        states[index].growth_limit = GridTrackGrowthLimit::Finite(limit);
+        if mark_newly_finite_as_infinitely_growable && was_infinite {
+            infinitely_growable[index] = true;
+        }
+    }
+    Ok(infinitely_growable)
+}
+
 fn initialize_track_sizing_states(
     sizing: &[GridTrackSizing],
     axis: GridAxis,
@@ -822,7 +1188,22 @@ pub(crate) fn plan_auto_track_base_size_increases(
             continue;
         }
 
-        let incurred = distribute_base_size_space(states, &affected, space)?;
+        let mut incurred = distribute_base_size_space(states, &affected, space)?;
+        let distributed = incurred
+            .iter()
+            .try_fold(0.0_f32, |sum, (_, increase)| finite_add(sum, *increase))?;
+        let remaining = (space - distributed).max(0.0);
+        if remaining > 0.0 {
+            let share = remaining / affected.len() as f32;
+            if !share.is_finite() {
+                return Err(GridLayoutError::GeometryOverflow);
+            }
+            if share > 0.0 {
+                for (_, increase) in &mut incurred {
+                    *increase = finite_add(*increase, share)?;
+                }
+            }
+        }
         for (index, increase) in incurred {
             planned[index] = planned[index].max(increase);
         }
@@ -842,7 +1223,7 @@ pub(crate) fn apply_planned_base_size_increases(
         if !increase.is_finite() || increase < 0.0 {
             return Err(GridLayoutError::GeometryOverflow);
         }
-        state.grow_base_to(finite_add(state.base_size, increase)?);
+        state.base_size = finite_add(state.base_size, increase)?;
     }
     Ok(())
 }
@@ -2107,6 +2488,178 @@ mod tests {
     }
 
     #[test]
+    fn composed_spanning_auto_round_matches_spec_infinite_growth_example() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let items = [
+            GridItem::new(LayoutNodeId(1), 0, 0),
+            GridItem::new(LayoutNodeId(2), 0, 0).with_span(1, 2),
+        ];
+        let contributions = [
+            GridIntrinsicContributions::new(
+                LayoutNodeId(1),
+                GridAxisIntrinsicContributions::new(10.0, 10.0, 10.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+            GridIntrinsicContributions::new(
+                LayoutNodeId(2),
+                GridAxisIntrinsicContributions::new(30.0, 30.0, 100.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+        ];
+
+        let states = resolve_spanning_auto_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            0.0,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 10.0);
+        assert_eq!(states[1].base_size, 20.0);
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(10.0));
+        assert_eq!(states[1].growth_limit, GridTrackGrowthLimit::Finite(90.0));
+    }
+
+    #[test]
+    fn composed_spanning_auto_round_is_gap_aware() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0).with_span(1, 2)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(44.0, 44.0, 80.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        let states = resolve_spanning_auto_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            4.0,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 20.0);
+        assert_eq!(states[1].base_size, 20.0);
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(38.0));
+        assert_eq!(states[1].growth_limit, GridTrackGrowthLimit::Finite(38.0));
+    }
+
+    #[test]
+    fn composed_spanning_auto_round_preserves_fixed_track_and_grows_auto_peer() {
+        let sizing = [GridTrackSizing::Fixed(20.0), GridTrackSizing::Auto];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0).with_span(1, 2)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(50.0, 50.0, 80.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        let states = resolve_spanning_auto_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            5.0,
+        )
+        .unwrap();
+
+        assert_eq!(states[0], GridTrackSizingState::fixed(20.0));
+        assert_eq!(states[1].base_size, 25.0);
+        assert_eq!(states[1].growth_limit, GridTrackGrowthLimit::Finite(55.0));
+    }
+
+    #[test]
+    fn composed_spanning_auto_round_can_grow_base_beyond_existing_growth_limits() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let items = [
+            GridItem::new(LayoutNodeId(1), 0, 0),
+            GridItem::new(LayoutNodeId(2), 0, 1),
+            GridItem::new(LayoutNodeId(3), 0, 0).with_span(1, 2),
+        ];
+        let contributions = [
+            GridIntrinsicContributions::new(
+                LayoutNodeId(1),
+                GridAxisIntrinsicContributions::new(10.0, 10.0, 15.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+            GridIntrinsicContributions::new(
+                LayoutNodeId(2),
+                GridAxisIntrinsicContributions::new(10.0, 10.0, 15.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+            GridIntrinsicContributions::new(
+                LayoutNodeId(3),
+                GridAxisIntrinsicContributions::new(50.0, 50.0, 50.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+        ];
+
+        let states = resolve_spanning_auto_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            0.0,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 25.0);
+        assert_eq!(states[1].base_size, 25.0);
+        assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(25.0));
+        assert_eq!(states[1].growth_limit, GridTrackGrowthLimit::Finite(25.0));
+    }
+
+    #[test]
+    fn composed_spanning_auto_round_is_order_independent() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let first_items = [
+            GridItem::new(LayoutNodeId(1), 0, 0),
+            GridItem::new(LayoutNodeId(2), 0, 0).with_span(1, 2),
+            GridItem::new(LayoutNodeId(3), 0, 0).with_span(1, 2),
+        ];
+        let second_items = [first_items[2], first_items[0], first_items[1]];
+        let contributions = [
+            GridIntrinsicContributions::new(
+                LayoutNodeId(1),
+                GridAxisIntrinsicContributions::new(10.0, 10.0, 10.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+            GridIntrinsicContributions::new(
+                LayoutNodeId(2),
+                GridAxisIntrinsicContributions::new(30.0, 30.0, 80.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+            GridIntrinsicContributions::new(
+                LayoutNodeId(3),
+                GridAxisIntrinsicContributions::new(40.0, 40.0, 100.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+        ];
+
+        let first = resolve_spanning_auto_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &first_items,
+            &contributions,
+            0.0,
+        )
+        .unwrap();
+        let second = resolve_spanning_auto_intrinsic_track_states(
+            &sizing,
+            GridAxis::Column,
+            &second_items,
+            &contributions,
+            0.0,
+        )
+        .unwrap();
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
     fn spanning_rounds_process_items_by_increasing_span() {
         let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
         let mut states = initialize_track_sizing_states(&sizing, GridAxis::Column).unwrap();
@@ -2342,6 +2895,35 @@ mod tests {
         .unwrap();
 
         assert_eq!(planned, vec![5.0, 25.0]);
+    }
+
+    #[test]
+    fn spanning_distribution_can_plan_beyond_intrinsic_growth_limits() {
+        let states = [
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(15.0),
+            },
+            GridTrackSizingState {
+                base_size: 10.0,
+                growth_limit: GridTrackGrowthLimit::Finite(15.0),
+            },
+        ];
+        let planned = plan_auto_track_base_size_increases(
+            &states,
+            &[GridTrackSizing::Auto, GridTrackSizing::Auto],
+            0.0,
+            GridAxis::Column,
+            &[GridSpanningSizeContribution::new(
+                LayoutNodeId(1),
+                0,
+                2,
+                50.0,
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(planned, vec![15.0, 15.0]);
     }
 
     #[test]
