@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/rarog-icon.webp" width="256" alt="Rarog">
+  <img src="assets/branding/rarog-icon.png" width="256" alt="Rarog">
 </p>
 
 <h1 align="center">Rarog Web Engine</h1>

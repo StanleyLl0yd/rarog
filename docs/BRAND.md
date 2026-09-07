@@ -4,7 +4,7 @@ The Rarog bird-and-orbit mark is the visual identity for the engine, its reposit
 
 ## Canonical assets
 
-- `assets/branding/rarog-icon.webp` — canonical full-resolution 1254×1254 lossless repository/display master, pixel-equivalent to the approved original artwork.
+- `assets/branding/rarog-icon.png` — canonical original 1254×1254 PNG supplied for Rarog; README and repository branding use this master directly, without resizing or lossy re-encoding.
 - `assets/branding/rarog-window-icon-24.rgba` — generated 24×24 RGBA runtime derivative used by the current Windows GUI shell.
 
 Application packaging should generate platform-native icon sets from the same approved master artwork. Do not redraw the bird, replace the orbit, alter the composition, or use a different project mark.
