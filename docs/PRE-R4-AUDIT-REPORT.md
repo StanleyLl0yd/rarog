@@ -109,7 +109,7 @@ The second pass read all 48 non-production Rust files in addition to all product
 At the final source endpoint:
 
 - tracked Rust files: 87;
-- Rust lines by the baseline counting method: 43,885;
+- Rust lines by the baseline counting method: 43,889;
 - `#[test]` occurrences: 687;
 - literal `TODO` occurrences: 0;
 - literal `FIXME` occurrences: 0;
@@ -140,6 +140,8 @@ Documentation reconciliation PR #219 passed CI run `34122347554` with:
 
 The final post-reconciliation `main` stabilization run `34122878456` on `a73833a8d37226996bdd1b973224f44c4e187218` completed successfully with Windows primary, Linux portability, MSRV 1.85, SpiderMonkey Windows and SpiderMonkey Linux all green.
 
+The closure PR also advances the R3 exit integration assertion from “pre-R4 pending” to the durable completed-transition contract: R3 remains complete, the pre-R4 gate is complete, and neither document may contain unchecked gate items.
+
 RustSec run `34116654609` completed successfully on commit `73e756b9136d018702c27e2741bb1803a4cd6a6d`, after the manifest cleanup and introduction of the audit workflow. No dependency declarations or `Cargo.lock` contents changed after that dependency-state commit, so it audits the same dependency graph recorded at the final endpoint.
 
 The Linux portability lane includes fuzz-target compilation. The Windows/Linux lanes run workspace checks/tests, milestone/correctness gates and bootstrap rendering; the separate feature lanes exercise SpiderMonkey; MSRV is pinned to Rust 1.85.
@@ -165,8 +167,8 @@ Repository/tree metrics use recursive Git blob sizes. Rust lines use UTF-8 text 
 | Repository bytes excluding canonical repository hero master | 1,974,310 | 2,002,333 |
 | Workspace crates | 22 | 22 |
 | Rust files | 87 | 87 |
-| Rust blob bytes | 1,452,714 | 1,461,807 |
-| Rust lines, including source/tests/examples/fuzz | 43,620 | 43,885 |
+| Rust blob bytes | 1,452,714 | 1,461,930 |
+| Rust lines, including source/tests/examples/fuzz | 43,620 | 43,889 |
 | `#[test]` occurrences | 682 | 687 |
 | literal `TODO` occurrences | 0 | 0 |
 | literal `FIXME` occurrences | 0 | 0 |
@@ -181,7 +183,7 @@ Repository/tree metrics use recursive Git blob sizes. Rust lines use UTF-8 text 
 
 The raw repository-byte increase must not be interpreted as code growth. After the baseline, branding PRs #204/#205 replaced the 3,356-byte WebP repository hero with the exact approved 1,867,165-byte original PNG. That branding-only change accounts for nearly all raw byte growth. The adjusted row excludes only the canonical repository hero master at each endpoint so the audit/documentation change can be compared without that unrelated asset replacement.
 
-The Rust source/test total increased by 265 lines and five test occurrences while adding boundary regressions and hardening. TOML bytes decreased by 197 through manifest cleanup. The dependency graph did not grow.
+The Rust source/test total increased by 269 lines and five test occurrences while adding boundary regressions, hardening and the completed R3 → pre-R4 transition assertion. TOML bytes decreased by 197 through manifest cleanup. The dependency graph did not grow.
 
 ## Completion
 
