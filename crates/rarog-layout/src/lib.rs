@@ -37,6 +37,26 @@ use unicode_linebreak::{BreakOpportunity as UnicodeBreakOpportunity, linebreaks}
 use unicode_script::{Script, UnicodeScript};
 use unicode_segmentation::UnicodeSegmentation;
 
+fn grid_track_sizing(track: CssGridTrackSize) -> GridTrackSizing {
+    match track {
+        CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
+        CssGridTrackSize::Auto => GridTrackSizing::Auto,
+        CssGridTrackSize::Fraction(factor) => GridTrackSizing::Fraction(factor),
+        CssGridTrackSize::MinContent => GridTrackSizing::MinContent,
+        CssGridTrackSize::MaxContent => GridTrackSizing::MaxContent,
+    }
+}
+
+fn fallback_grid_track(track: GridTrackSizing) -> GridTrack {
+    match track {
+        GridTrackSizing::Fixed(size) => GridTrack::new(size),
+        GridTrackSizing::Auto
+        | GridTrackSizing::Fraction(_)
+        | GridTrackSizing::MinContent
+        | GridTrackSizing::MaxContent => GridTrack::new(0.0),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LayoutNodeId(usize);
 
@@ -2976,13 +2996,7 @@ impl FragmentBuilder {
             .as_slice()
             .iter()
             .copied()
-            .map(|track| match track {
-                CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
-                CssGridTrackSize::Auto => GridTrackSizing::Auto,
-                CssGridTrackSize::Fraction(factor) => GridTrackSizing::Fraction(factor),
-                CssGridTrackSize::MinContent => GridTrackSizing::MinContent,
-                CssGridTrackSize::MaxContent => GridTrackSizing::MaxContent,
-            })
+            .map(grid_track_sizing)
             .collect::<Vec<_>>();
         let row_sizing = container
             .style
@@ -2990,35 +3004,17 @@ impl FragmentBuilder {
             .as_slice()
             .iter()
             .copied()
-            .map(|track| match track {
-                CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
-                CssGridTrackSize::Auto => GridTrackSizing::Auto,
-                CssGridTrackSize::Fraction(factor) => GridTrackSizing::Fraction(factor),
-                CssGridTrackSize::MinContent => GridTrackSizing::MinContent,
-                CssGridTrackSize::MaxContent => GridTrackSizing::MaxContent,
-            })
+            .map(grid_track_sizing)
             .collect::<Vec<_>>();
         let fallback_columns = column_sizing
             .iter()
             .copied()
-            .map(|track| match track {
-                GridTrackSizing::Fixed(size) => GridTrack::new(size),
-                GridTrackSizing::Auto
-                | GridTrackSizing::Fraction(_)
-                | GridTrackSizing::MinContent
-                | GridTrackSizing::MaxContent => GridTrack::new(0.0),
-            })
+            .map(fallback_grid_track)
             .collect::<Vec<_>>();
         let fallback_rows = row_sizing
             .iter()
             .copied()
-            .map(|track| match track {
-                GridTrackSizing::Fixed(size) => GridTrack::new(size),
-                GridTrackSizing::Auto
-                | GridTrackSizing::Fraction(_)
-                | GridTrackSizing::MinContent
-                | GridTrackSizing::MaxContent => GridTrack::new(0.0),
-            })
+            .map(fallback_grid_track)
             .collect::<Vec<_>>();
 
         let Ok(fallback_grid) = layout_fixed_grid(
