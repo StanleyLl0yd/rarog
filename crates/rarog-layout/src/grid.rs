@@ -1684,15 +1684,8 @@ mod tests {
             growth_limit: GridTrackGrowthLimit::Finite(36.0),
         }];
 
-        finalize_track_sizing_phases(
-            &mut states,
-            &sizing,
-            0.0,
-            None,
-            GridAxis::Column,
-            true,
-        )
-        .unwrap();
+        finalize_track_sizing_phases(&mut states, &sizing, 0.0, None, GridAxis::Column, true)
+            .unwrap();
 
         assert_eq!(states[0].base_size, 12.0);
         assert_eq!(states[0].growth_limit, GridTrackGrowthLimit::Finite(36.0));
