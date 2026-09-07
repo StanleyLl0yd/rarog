@@ -14,8 +14,8 @@ use rarog_layout::{
     refresh_text_node, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
-    DamageRegion, DisplayList, DisplayListError, Framebuffer, FramebufferError, build_display_list,
-    replace_display_items_for_fragment, replace_display_items_for_fragments,
+    DamageRegion, DisplayCommand, DisplayList, DisplayListError, Framebuffer, FramebufferError,
+    build_display_list, replace_display_items_for_fragment, replace_display_items_for_fragments,
 };
 use rarog_resources::{
     ImageDecodeOutcome, ImageDecodeQueue, ImageDecodeQueueError, ImageDecodeRequestId,
@@ -491,8 +491,7 @@ impl RenderSession {
             .complete(&mut self.image_resources, request, outcome)?;
 
         let visual_change_pending = reference.is_some_and(|reference| {
-            let mut candidate = self.display_list.clone();
-            candidate.refresh_image_resource(reference).updated_commands > 0
+            display_list_needs_image_refresh(&self.display_list, reference)
         });
         if visual_change_pending {
             let reference = reference.expect("visual image completion has a ready reference");
@@ -618,6 +617,25 @@ impl RenderSession {
         dirty.capture(&self.document, &self.styles);
         let through_generation = dirty.through_generation();
         let dirty_nodes = dirty.entries().len();
+        let no_document_updates =
+            !mutation_history_lost && (mutations.is_empty() || dirty_nodes == 0);
+
+        if no_document_updates && self.pending_image_refreshes.is_empty() {
+            dirty.clear();
+            self.dirty = dirty;
+            self.document.prune_mutations_through(through_generation);
+            self.damage = DamageRegion::default();
+            return Ok(IncrementalReport {
+                mode: IncrementalMode::Unchanged,
+                from_generation,
+                through_generation,
+                dirty_nodes,
+                patched_nodes: 0,
+                retained_display_list: true,
+                styles_rebuilt: false,
+                elapsed: update_started.elapsed(),
+            });
+        }
 
         let mut display_list = self.display_list.clone();
         let resource_updates = self
@@ -631,7 +649,7 @@ impl RenderSession {
             })
             .fold(0usize, usize::saturating_add);
 
-        if !mutation_history_lost && (mutations.is_empty() || dirty_nodes == 0) {
+        if no_document_updates {
             dirty.clear();
             self.dirty = dirty;
             self.document.prune_mutations_through(through_generation);
@@ -1124,6 +1142,19 @@ impl RenderSession {
             elapsed: update_started.elapsed(),
         })
     }
+}
+
+fn display_list_needs_image_refresh(
+    display_list: &DisplayList,
+    reference: ImageResourceRef,
+) -> bool {
+    display_list.commands().iter().any(|command| {
+        matches!(
+            command,
+            DisplayCommand::DrawImage { image, .. }
+                if image.id() == reference.id() && image.revision() < reference.revision()
+        )
+    })
 }
 
 fn next_display_list_revision(
