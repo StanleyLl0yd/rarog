@@ -1591,7 +1591,7 @@ fn find_auto_placement(
                 }
             }
         }
-        (Some(_), Some(_)) => unreachable!("fully explicit requests resolve before auto-placement"),
+        (Some(_), Some(_)) => return None,
     }
     None
 }
