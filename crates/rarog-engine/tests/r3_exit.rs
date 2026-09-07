@@ -58,7 +58,7 @@ fn fragment_with_id<'a>(output: &'a RenderOutput, id: &str) -> &'a Fragment {
 }
 
 #[test]
-fn r3_exit_manifest_is_complete_and_pre_r4_gate_is_pending() {
+fn r3_exit_manifest_and_pre_r4_transition_gate_are_complete() {
     assert!(R3_BACKLOG.contains("Status: **complete**."));
     assert!(
         !R3_BACKLOG
@@ -66,8 +66,13 @@ fn r3_exit_manifest_is_complete_and_pre_r4_gate_is_pending() {
             .any(|line| line.trim_start().starts_with("- [ ]")),
         "R3 backlog contains an unchecked milestone item"
     );
-    assert!(PRE_R4_AUDIT.contains("Status: **pending**."));
-    assert!(PRE_R4_AUDIT.contains("R4 implementation is blocked"));
+    assert!(PRE_R4_AUDIT.contains("Status: **complete**."));
+    assert!(
+        !PRE_R4_AUDIT
+            .lines()
+            .any(|line| line.trim_start().starts_with("- [ ]")),
+        "pre-R4 audit contains an unchecked transition item"
+    );
 }
 
 #[test]
