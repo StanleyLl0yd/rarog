@@ -58,7 +58,7 @@ See `R1-BACKLOG.md` and `R1-EXIT.md` for the completed scope, retained-rendering
 
 See `R2-BACKLOG.md` and `R2-EXIT.md` for the completed script-facing, scheduling, security-identity and Windows host scope plus explicit deferrals.
 
-## R3 — Wings
+## R3 — Wings — complete
 
 - flexbox/grid milestones;
 - compositor thread;
@@ -66,7 +66,16 @@ See `R2-BACKLOG.md` and `R2-EXIT.md` for the completed script-facing, scheduling
 - Windows-first GPU/compositor integration;
 - async image decode;
 - scroll tree;
-- frame scheduler.
+- frame scheduler;
+- dedicated automated R3 exit gate.
+
+See `R3-BACKLOG.md` and `R3-EXIT.md` for the completed bounded Wings scope and explicit deferrals.
+
+## Pre-R4 audit and stabilization gate
+
+R4 does not begin immediately after R3. The complete repository is audited and refactored first under `agent/AUDIT_REFACTOR.md`, with behavior preservation, two full passes and complete verification required.
+
+`PRE-R4-AUDIT.md` is the authoritative transition gate. While it is pending, Host/Site process, IPC, sandboxing, site-isolation and other R4 implementation work is blocked.
 
 ## R4 — Sky
 
