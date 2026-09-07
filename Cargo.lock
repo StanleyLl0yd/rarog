@@ -2166,9 +2166,9 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
 name = "psl"
-version = "2.1.226"
+version = "2.1.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bc88482eea924ca3a2f56a547454169af58deef35567965eb4fc2392a834841"
+checksum = "158b8294dde3909df5a4ec68a35f8c39720151834b1f87050b87b37435150011"
 dependencies = [
  "psl-types",
 ]
@@ -2321,13 +2321,6 @@ name = "rarog-scheduler"
 version = "0.1.0"
 
 [[package]]
-name = "rarog-scroll"
-version = "0.1.0"
-dependencies = [
- "rarog-types",
-]
-
-[[package]]
 name = "rarog-script"
 version = "0.1.0"
 
@@ -2337,6 +2330,13 @@ version = "0.1.0"
 dependencies = [
  "mozjs",
  "rarog-script",
+]
+
+[[package]]
+name = "rarog-scroll"
+version = "0.1.0"
+dependencies = [
+ "rarog-types",
 ]
 
 [[package]]
@@ -2892,9 +2892,9 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "url"
-version = "2.5.7"
+version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08bc136a29a3d1758e07a9cca267be308aeebf5cfd5a10f3f67ab2097683ef5b"
+checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
 dependencies = [
  "form_urlencoded",
  "idna",
