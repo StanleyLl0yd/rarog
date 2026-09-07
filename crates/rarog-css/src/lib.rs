@@ -141,6 +141,7 @@ pub const MAX_EXPLICIT_GRID_TRACKS: usize = 8;
 pub enum GridTrackSize {
     Fixed(f32),
     Auto,
+    Fraction(f32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -174,7 +175,11 @@ impl GridTrackList {
     pub fn from_tracks(tracks: &[GridTrackSize]) -> Option<Self> {
         if tracks.len() > MAX_EXPLICIT_GRID_TRACKS
             || tracks.iter().any(|track| {
-                matches!(track, GridTrackSize::Fixed(size) if !size.is_finite() || *size < 0.0)
+                matches!(
+                    track,
+                    GridTrackSize::Fixed(size) | GridTrackSize::Fraction(size)
+                        if !size.is_finite() || *size < 0.0
+                )
             })
         {
             return None;
@@ -1608,6 +1613,8 @@ fn parse_grid_track_list(value: &str) -> Option<GridTrackList> {
         .map(|part| {
             if part.eq_ignore_ascii_case("auto") {
                 Some(GridTrackSize::Auto)
+            } else if let Some(factor) = parse_fr(part) {
+                Some(GridTrackSize::Fraction(factor))
             } else {
                 parse_px(part)
                     .filter(|size| *size >= 0.0)
@@ -1619,6 +1626,17 @@ fn parse_grid_track_list(value: &str) -> Option<GridTrackList> {
         return None;
     }
     GridTrackList::from_tracks(&tracks)
+}
+
+fn parse_fr(value: &str) -> Option<f32> {
+    let value = value.trim();
+    let split = value.len().checked_sub(2)?;
+    let suffix = value.get(split..)?;
+    if !suffix.eq_ignore_ascii_case("fr") {
+        return None;
+    }
+    let factor = value.get(..split)?.parse::<f32>().ok()?;
+    (factor.is_finite() && factor >= 0.0).then_some(factor)
 }
 
 fn push_grid_line_start(
@@ -2688,8 +2706,35 @@ mod finite_geometry_tests {
     }
 
     #[test]
+    fn bounded_grid_fraction_tracks_parse_into_computed_track_metadata() {
+        assert_eq!(
+            parse_declarations("grid-template-columns:1fr 2.5FR auto 40px"),
+            vec![Declaration {
+                property: PropertyId::GridTemplateColumns,
+                value: PropertyValue::GridTracks(
+                    GridTrackList::from_tracks(&[
+                        GridTrackSize::Fraction(1.0),
+                        GridTrackSize::Fraction(2.5),
+                        GridTrackSize::Auto,
+                        GridTrackSize::Fixed(40.0),
+                    ])
+                    .unwrap(),
+                ),
+                important: false,
+            }]
+        );
+
+        for rejected in ["fr", "-1fr", "NaNfr", "inffr", "1frx"] {
+            assert!(
+                parse_declarations(&format!("grid-template-columns:{rejected}")).is_empty(),
+                "{rejected}"
+            );
+        }
+    }
+
+    #[test]
     fn unsupported_grid_track_and_line_syntax_fails_closed() {
-        assert!(parse_declarations("grid-template-columns:1fr 20px").is_empty());
+        assert!(parse_declarations("grid-template-columns:minmax(10px, 1fr)").is_empty());
         assert!(parse_declarations("grid-template-rows:repeat(2, 20px)").is_empty());
         assert!(parse_declarations("grid-column-start:-1").is_empty());
         assert!(parse_declarations("grid-column-end:3").is_empty());

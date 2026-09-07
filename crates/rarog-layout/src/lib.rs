@@ -2979,6 +2979,7 @@ impl FragmentBuilder {
             .map(|track| match track {
                 CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
                 CssGridTrackSize::Auto => GridTrackSizing::Auto,
+                CssGridTrackSize::Fraction(factor) => GridTrackSizing::Fraction(factor),
             })
             .collect::<Vec<_>>();
         let row_sizing = container
@@ -2990,6 +2991,7 @@ impl FragmentBuilder {
             .map(|track| match track {
                 CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
                 CssGridTrackSize::Auto => GridTrackSizing::Auto,
+                CssGridTrackSize::Fraction(factor) => GridTrackSizing::Fraction(factor),
             })
             .collect::<Vec<_>>();
         let fallback_columns = column_sizing
@@ -3111,7 +3113,7 @@ impl FragmentBuilder {
 
         let rows = if row_sizing
             .iter()
-            .any(|track| matches!(track, GridTrackSizing::Auto))
+            .any(|track| matches!(track, GridTrackSizing::Auto | GridTrackSizing::Fraction(_)))
         {
             let Ok(column_resolved_grid) = layout_fixed_grid(
                 Point {
@@ -3133,10 +3135,9 @@ impl FragmentBuilder {
                 nodes.iter().zip(&column_resolved_grid.items).zip(&items)
             {
                 let row_end = item.row_start + item.row_span;
-                if !row_sizing[item.row_start..row_end]
-                    .iter()
-                    .any(|track| matches!(track, GridTrackSizing::Auto))
-                {
+                if !row_sizing[item.row_start..row_end].iter().any(|track| {
+                    matches!(track, GridTrackSizing::Auto | GridTrackSizing::Fraction(_))
+                }) {
                     continue;
                 }
                 let inline_alignment = grid_inline_self_alignment(
@@ -4525,6 +4526,68 @@ mod tests {
             grid.children[0].boxes.border_box,
             Rect::new(0.0, 0.0, 88.0, 20.0)
         );
+    }
+
+    #[test]
+    fn css_grid_fraction_columns_use_definite_free_space_and_declared_gap() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:110px;justify-content:flex-start;grid-template-columns:1fr 3fr;grid-template-rows:20px;column-gap:10px",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.size.width, 25.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.x, 35.0);
+        assert_eq!(grid.children[1].boxes.border_box.size.width, 75.0);
+    }
+
+    #[test]
+    fn css_grid_fraction_rows_use_definite_block_space() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:20px;height:100px;align-content:flex-start;grid-template-columns:20px;grid-template-rows:1fr 3fr",
+                    ),
+                ),
+            )
+            .unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(container, element("div", None)).unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.size.height, 25.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.y, 25.0);
+        assert_eq!(grid.children[1].boxes.border_box.size.height, 75.0);
     }
 
     #[test]
