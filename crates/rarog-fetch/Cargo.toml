@@ -12,5 +12,3 @@ rarog-url = { path = "../rarog-url" }
 [lints]
 workspace = true
 
-[lib]
-path = "src/lib.rs"
