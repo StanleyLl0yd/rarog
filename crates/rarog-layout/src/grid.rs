@@ -39,6 +39,7 @@ pub(crate) struct GridTrackGroupDistribution {
 pub enum GridTrackSizing {
     Fixed(f32),
     Auto,
+    Fraction(f32),
 }
 
 impl GridTrackSizing {
@@ -48,6 +49,10 @@ impl GridTrackSizing {
 
     pub const fn auto() -> Self {
         Self::Auto
+    }
+
+    pub const fn fraction(factor: f32) -> Self {
+        Self::Fraction(factor)
     }
 }
 
@@ -743,11 +748,20 @@ pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
         let Some(track_slice) = sizing.get(start..end) else {
             return Err(GridLayoutError::PlacementOutsideGrid { node: item.node });
         };
-        if !track_slice
+        let has_auto = track_slice
             .iter()
-            .any(|track| matches!(track, GridTrackSizing::Auto))
-        {
+            .any(|track| matches!(track, GridTrackSizing::Auto));
+        let has_fraction = track_slice
+            .iter()
+            .any(|track| matches!(track, GridTrackSizing::Fraction(_)));
+        if !has_auto && !has_fraction {
             continue;
+        }
+        if span > 1 && has_fraction {
+            return Err(GridLayoutError::UnsupportedIntrinsicSpan {
+                node: item.node,
+                axis,
+            });
         }
 
         let contribution = contributions
@@ -763,14 +777,22 @@ pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
         let max_content = contribution.size_for(axis, GridIntrinsicContributionKind::MaxContent)?;
 
         if span == 1 {
-            if matches!(sizing[start], GridTrackSizing::Auto) {
-                single_base_targets[start] = Some(
-                    single_base_targets[start].map_or(minimum, |current| current.max(minimum)),
-                );
-                single_growth_targets[start] = Some(
-                    single_growth_targets[start]
-                        .map_or(max_content, |current| current.max(max_content)),
-                );
+            match sizing[start] {
+                GridTrackSizing::Auto => {
+                    single_base_targets[start] = Some(
+                        single_base_targets[start].map_or(minimum, |current| current.max(minimum)),
+                    );
+                    single_growth_targets[start] = Some(
+                        single_growth_targets[start]
+                            .map_or(max_content, |current| current.max(max_content)),
+                    );
+                }
+                GridTrackSizing::Fraction(_) => {
+                    single_base_targets[start] = Some(
+                        single_base_targets[start].map_or(minimum, |current| current.max(minimum)),
+                    );
+                }
+                GridTrackSizing::Fixed(_) => {}
             }
         } else {
             spanning.push(GridSpanningIntrinsicContribution::new(
@@ -785,15 +807,19 @@ pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
     }
 
     for index in 0..states.len() {
-        if !matches!(sizing[index], GridTrackSizing::Auto) {
-            continue;
+        if matches!(
+            sizing[index],
+            GridTrackSizing::Auto | GridTrackSizing::Fraction(_)
+        ) {
+            if let Some(base_size) = single_base_targets[index] {
+                states[index].base_size = states[index].base_size.max(base_size);
+            }
         }
-        if let Some(base_size) = single_base_targets[index] {
-            states[index].base_size = states[index].base_size.max(base_size);
-        }
-        if let Some(growth_limit) = single_growth_targets[index] {
-            states[index].growth_limit =
-                GridTrackGrowthLimit::Finite(growth_limit.max(states[index].base_size));
+        if matches!(sizing[index], GridTrackSizing::Auto) {
+            if let Some(growth_limit) = single_growth_targets[index] {
+                states[index].growth_limit =
+                    GridTrackGrowthLimit::Finite(growth_limit.max(states[index].base_size));
+            }
         }
     }
 
@@ -878,7 +904,7 @@ fn close_infinite_growth_limits_to_base(
     sizing: &[GridTrackSizing],
 ) {
     for (state, track) in states.iter_mut().zip(sizing.iter()) {
-        if matches!(track, GridTrackSizing::Auto)
+        if matches!(track, GridTrackSizing::Auto | GridTrackSizing::Fraction(_))
             && matches!(state.growth_limit, GridTrackGrowthLimit::Infinite)
         {
             state.growth_limit = GridTrackGrowthLimit::Finite(state.base_size);
@@ -1035,7 +1061,12 @@ fn initialize_track_sizing_states(
                 Ok(GridTrackSizingState::fixed(size))
             }
             GridTrackSizing::Auto => Ok(GridTrackSizingState::intrinsic()),
-            GridTrackSizing::Fixed(_) => Err(GridLayoutError::InvalidTrackSize { axis, index }),
+            GridTrackSizing::Fraction(factor) if factor.is_finite() && factor >= 0.0 => {
+                Ok(GridTrackSizingState::intrinsic())
+            }
+            GridTrackSizing::Fixed(_) | GridTrackSizing::Fraction(_) => {
+                Err(GridLayoutError::InvalidTrackSize { axis, index })
+            }
         })
         .collect()
 }
@@ -1060,6 +1091,7 @@ pub(crate) fn finalize_track_sizing_phases(
     }
 
     maximize_track_base_sizes(states, gap, available_space)?;
+    expand_flexible_track_base_sizes(states, sizing, gap, available_space, axis)?;
     if stretch_auto {
         stretch_auto_track_base_sizes(states, sizing, gap, available_space)?;
     }
@@ -1083,6 +1115,117 @@ fn maximize_track_base_sizes(
         planned[index] = increase;
     }
     apply_planned_base_size_increases(states, &planned)
+}
+
+fn expand_flexible_track_base_sizes(
+    states: &mut [GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+    gap: f32,
+    available_space: f32,
+    axis: GridAxis,
+) -> Result<(), GridLayoutError> {
+    if states.len() != sizing.len() {
+        return Err(GridLayoutError::GeometryOverflow);
+    }
+    let flex_fraction =
+        find_definite_grid_flex_fraction(states, sizing, gap, available_space, axis)?;
+
+    for (state, track) in states.iter_mut().zip(sizing.iter().copied()) {
+        let GridTrackSizing::Fraction(factor) = track else {
+            continue;
+        };
+        let target = flex_fraction * factor;
+        if !target.is_finite() {
+            return Err(GridLayoutError::GeometryOverflow);
+        }
+        if target > state.base_size {
+            state.base_size = target;
+            if let GridTrackGrowthLimit::Finite(limit) = state.growth_limit {
+                state.growth_limit = GridTrackGrowthLimit::Finite(limit.max(target));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_definite_grid_flex_fraction(
+    states: &[GridTrackSizingState],
+    sizing: &[GridTrackSizing],
+    gap: f32,
+    available_space: f32,
+    axis: GridAxis,
+) -> Result<f32, GridLayoutError> {
+    if states.len() != sizing.len() {
+        return Err(GridLayoutError::GeometryOverflow);
+    }
+    validate_gap(gap, axis)?;
+    if !available_space.is_finite() || available_space < 0.0 {
+        return Err(GridLayoutError::InvalidAvailableSize);
+    }
+
+    let mut gap_extent = 0.0_f32;
+    for _ in 1..states.len() {
+        gap_extent = finite_add(gap_extent, gap)?;
+    }
+    let space_to_fill = (available_space - gap_extent).max(0.0);
+
+    let mut active = vec![false; states.len()];
+    let mut flex_count = 0usize;
+    for (index, track) in sizing.iter().copied().enumerate() {
+        if let GridTrackSizing::Fraction(factor) = track {
+            if !factor.is_finite() || factor < 0.0 {
+                return Err(GridLayoutError::InvalidTrackSize { axis, index });
+            }
+            active[index] = true;
+            flex_count += 1;
+        }
+    }
+    if flex_count == 0 {
+        return Ok(0.0);
+    }
+
+    loop {
+        let mut non_flexible_base = 0.0_f32;
+        let mut flex_factor_sum = 0.0_f32;
+        for index in 0..states.len() {
+            match sizing[index] {
+                GridTrackSizing::Fraction(factor) if active[index] => {
+                    flex_factor_sum = finite_add(flex_factor_sum, factor)?;
+                }
+                _ => {
+                    non_flexible_base = finite_add(non_flexible_base, states[index].base_size)?;
+                }
+            }
+        }
+
+        let leftover = (space_to_fill - non_flexible_base).max(0.0);
+        let denominator = flex_factor_sum.max(1.0);
+        let flex_fraction = leftover / denominator;
+        if !flex_fraction.is_finite() {
+            return Err(GridLayoutError::GeometryOverflow);
+        }
+
+        let mut froze_any = false;
+        for index in 0..states.len() {
+            if !active[index] {
+                continue;
+            }
+            let GridTrackSizing::Fraction(factor) = sizing[index] else {
+                continue;
+            };
+            let target = flex_fraction * factor;
+            if !target.is_finite() {
+                return Err(GridLayoutError::GeometryOverflow);
+            }
+            if target < states[index].base_size {
+                active[index] = false;
+                froze_any = true;
+            }
+        }
+        if !froze_any {
+            return Ok(flex_fraction);
+        }
+    }
 }
 
 fn stretch_auto_track_base_sizes(
@@ -2298,6 +2441,167 @@ mod tests {
 
         assert_eq!(states[0].base_size, 30.0);
         assert_eq!(states[1].base_size, 30.0);
+    }
+
+    #[test]
+    fn definite_flex_fraction_accounts_for_fixed_tracks_and_gutters() {
+        let sizing = [
+            GridTrackSizing::Fixed(20.0),
+            GridTrackSizing::Fraction(1.0),
+            GridTrackSizing::Fraction(1.0),
+        ];
+        let mut states = [
+            GridTrackSizingState::fixed(20.0),
+            GridTrackSizingState {
+                base_size: 0.0,
+                growth_limit: GridTrackGrowthLimit::Finite(0.0),
+            },
+            GridTrackSizingState {
+                base_size: 0.0,
+                growth_limit: GridTrackGrowthLimit::Finite(0.0),
+            },
+        ];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            10.0,
+            Some(100.0),
+            GridAxis::Column,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 20.0);
+        assert_eq!(states[1].base_size, 30.0);
+        assert_eq!(states[2].base_size, 30.0);
+    }
+
+    #[test]
+    fn flex_factor_sum_below_one_leaves_requested_fraction_unfilled() {
+        let sizing = [
+            GridTrackSizing::Fraction(0.25),
+            GridTrackSizing::Fraction(0.25),
+        ];
+        let mut states = [
+            GridTrackSizingState {
+                base_size: 0.0,
+                growth_limit: GridTrackGrowthLimit::Finite(0.0),
+            },
+            GridTrackSizingState {
+                base_size: 0.0,
+                growth_limit: GridTrackGrowthLimit::Finite(0.0),
+            },
+        ];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 25.0);
+        assert_eq!(states[1].base_size, 25.0);
+    }
+
+    #[test]
+    fn flex_fraction_freezes_tracks_below_existing_base_size() {
+        let sizing = [
+            GridTrackSizing::Fraction(1.0),
+            GridTrackSizing::Fraction(1.0),
+        ];
+        let mut states = [
+            GridTrackSizingState {
+                base_size: 80.0,
+                growth_limit: GridTrackGrowthLimit::Finite(80.0),
+            },
+            GridTrackSizingState {
+                base_size: 0.0,
+                growth_limit: GridTrackGrowthLimit::Finite(0.0),
+            },
+        ];
+
+        finalize_track_sizing_phases(
+            &mut states,
+            &sizing,
+            0.0,
+            Some(100.0),
+            GridAxis::Column,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(states[0].base_size, 80.0);
+        assert_eq!(states[1].base_size, 20.0);
+    }
+
+    #[test]
+    fn composed_resolver_uses_minimum_for_single_flexible_track() {
+        let sizing = [
+            GridTrackSizing::Fraction(1.0),
+            GridTrackSizing::Fraction(1.0),
+        ];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(80.0, 80.0, 100.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        let tracks = resolve_intrinsic_tracks_with_space(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicTrackResolveOptions {
+                base_kind: GridIntrinsicContributionKind::Minimum,
+                growth_kind: GridIntrinsicContributionKind::MaxContent,
+                gap: 0.0,
+                available_space: Some(100.0),
+                stretch_auto: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(tracks, vec![GridTrack::new(80.0), GridTrack::new(20.0)]);
+    }
+
+    #[test]
+    fn flexible_intrinsic_spans_remain_fail_closed() {
+        let sizing = [
+            GridTrackSizing::Fraction(1.0),
+            GridTrackSizing::Fraction(1.0),
+        ];
+        let item = GridItem::new(LayoutNodeId(1), 0, 0).with_span(1, 2);
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(80.0, 80.0, 100.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        assert_eq!(
+            resolve_intrinsic_tracks_with_space(
+                &sizing,
+                GridAxis::Column,
+                &[item],
+                &contributions,
+                GridIntrinsicTrackResolveOptions {
+                    base_kind: GridIntrinsicContributionKind::Minimum,
+                    growth_kind: GridIntrinsicContributionKind::MaxContent,
+                    gap: 0.0,
+                    available_space: Some(100.0),
+                    stretch_auto: false,
+                },
+            ),
+            Err(GridLayoutError::UnsupportedIntrinsicSpan {
+                node: LayoutNodeId(1),
+                axis: GridAxis::Column,
+            })
+        );
     }
 
     #[test]
