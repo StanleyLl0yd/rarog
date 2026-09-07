@@ -1,8 +1,8 @@
 # Pre-R4 repository audit and stabilization gate
 
-Status: **pending**.
+Status: **complete**.
 
-R4 implementation is blocked while this status is pending.
+R4 implementation may begin only after this completed gate is merged to `main`.
 
 ## Objective
 
@@ -21,9 +21,9 @@ No new product functionality is added during this phase.
 - [x] Complete mandatory repository-wide audit pass 2 over the already-refactored tree.
 - [x] Resolve or explicitly record every remaining candidate that cannot be proven safe.
 - [x] Reconcile architecture docs, roadmap, ADRs, README, AGENTS and CI with the resulting implementation.
-- [ ] Run the final stabilization suite on Windows-primary, Linux portability, MSRV and SpiderMonkey gates.
-- [ ] Produce the final audit report with before/after metrics, changes made, preserved deferrals and any accepted residual debt.
-- [ ] Mark this gate complete before opening the first R4 implementation PR.
+- [x] Run the final stabilization suite on Windows-primary, Linux portability, MSRV and SpiderMonkey gates.
+- [x] Produce the final audit report with before/after metrics, changes made, preserved deferrals and any accepted residual debt.
+- [x] Mark this gate complete before opening the first R4 implementation PR.
 
 ## Audit emphasis for the R3 → R4 boundary
 
@@ -45,6 +45,6 @@ In addition to the general protocol, inspect these areas closely before process 
 
 ## Exit condition
 
-This document may change to `Status: **complete**` only when every checklist item above is checked and the final stabilization CI is green.
+This gate is complete: every checklist item above is checked and final stabilization CI run `34122878456` is green on the reconciled post-R3 `main` tree.
 
-Only then may R4 begin.
+R4 may begin only after this completed gate and final report are merged to `main`.
