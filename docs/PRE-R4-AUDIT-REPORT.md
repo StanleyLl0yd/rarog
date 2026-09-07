@@ -1,6 +1,6 @@
 # Pre-R4 audit report
 
-Status: **in progress**.
+Status: **complete**.
 
 This report records the mandatory repository-wide audit/refactor between R3 — Wings and R4 — Sky. R4 remains blocked by `PRE-R4-AUDIT.md` until final stabilization is green and the gate is explicitly marked complete.
 
@@ -138,7 +138,7 @@ Documentation reconciliation PR #219 passed CI run `34122347554` with:
 - SpiderMonkey Windows — success;
 - SpiderMonkey Linux — success.
 
-The final post-reconciliation `main` stabilization run is `34122878456` on `a73833a8d37226996bdd1b973224f44c4e187218`; it must complete successfully before this report and the transition gate may be marked complete.
+The final post-reconciliation `main` stabilization run `34122878456` on `a73833a8d37226996bdd1b973224f44c4e187218` completed successfully with Windows primary, Linux portability, MSRV 1.85, SpiderMonkey Windows and SpiderMonkey Linux all green.
 
 RustSec run `34116654609` completed successfully on commit `73e756b9136d018702c27e2741bb1803a4cd6a6d`, after the manifest cleanup and introduction of the audit workflow. No dependency declarations or `Cargo.lock` contents changed after that dependency-state commit, so it audits the same dependency graph recorded at the final endpoint.
 
@@ -190,6 +190,6 @@ The Rust source/test total increased by 265 lines and five test occurrences whil
 - Mandatory repository-wide audit pass 2: complete.
 - Remaining candidates resolved or explicitly preserved: complete.
 - Architecture/roadmap/ADR/README/AGENTS/CI reconciliation: complete.
-- Final stabilization: pending run `34122878456`.
-- Final report: in progress.
-- R4: blocked until the final stabilization result is green and `PRE-R4-AUDIT.md` is marked complete.
+- Final stabilization: complete; run `34122878456` is green.
+- Final report: complete.
+- R4 transition gate: ready to close in `PRE-R4-AUDIT.md`; no R4 implementation has started.
