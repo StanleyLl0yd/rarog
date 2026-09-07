@@ -21,7 +21,7 @@ pub use grid::{
 
 use grid::{
     GridAxisIntrinsicContributions, GridIntrinsicContributionKind, GridIntrinsicContributions,
-    resolve_intrinsic_content_sized_tracks, resolve_intrinsic_tracks_with_space,
+    GridIntrinsicTrackResolveOptions, resolve_intrinsic_tracks_with_space,
 };
 
 use rarog_css::{
@@ -3099,11 +3099,13 @@ impl FragmentBuilder {
             GridAxis::Column,
             &items,
             &inline_contributions,
-            column_base_kind,
-            column_growth_kind,
-            container.style.column_gap,
-            column_available,
-            stretch_columns,
+            GridIntrinsicTrackResolveOptions {
+                base_kind: column_base_kind,
+                growth_kind: column_growth_kind,
+                gap: container.style.column_gap,
+                available_space: column_available,
+                stretch_auto: stretch_columns,
+            },
         ) else {
             return (Vec::new(), fallback_content_size);
         };
@@ -3191,11 +3193,13 @@ impl FragmentBuilder {
                 GridAxis::Row,
                 &items,
                 &contributions,
-                row_base_kind,
-                row_growth_kind,
-                container.style.row_gap,
-                row_available,
-                stretch_rows,
+                GridIntrinsicTrackResolveOptions {
+                    base_kind: row_base_kind,
+                    growth_kind: row_growth_kind,
+                    gap: container.style.row_gap,
+                    available_space: row_available,
+                    stretch_auto: stretch_rows,
+                },
             ) else {
                 return (Vec::new(), fallback_content_size);
             };
