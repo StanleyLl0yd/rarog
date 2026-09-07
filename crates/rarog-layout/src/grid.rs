@@ -565,10 +565,15 @@ pub fn resolve_grid_placements(
         occupied.push(item);
     }
 
-    Ok(resolved
+    resolved
         .into_iter()
-        .map(|item| item.expect("every grid placement request was resolved"))
-        .collect())
+        .enumerate()
+        .map(|(index, item)| {
+            item.ok_or(GridLayoutError::AutoPlacementUnavailable {
+                node: requests[index].node,
+            })
+        })
+        .collect()
 }
 
 pub fn resolve_content_sized_tracks(
@@ -1586,7 +1591,7 @@ fn find_auto_placement(
                 }
             }
         }
-        (Some(_), Some(_)) => unreachable!("fully explicit requests resolve before auto-placement"),
+        (Some(_), Some(_)) => return None,
     }
     None
 }
