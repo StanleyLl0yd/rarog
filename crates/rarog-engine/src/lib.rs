@@ -14,8 +14,8 @@ use rarog_layout::{
     refresh_text_node, relayout_fragment_flow, relayout_fragment_subtree, relayout_tree,
 };
 use rarog_paint::{
-    DamageRegion, DisplayList, DisplayListError, Framebuffer, FramebufferError, build_display_list,
-    replace_display_items_for_fragment, replace_display_items_for_fragments,
+    DamageRegion, DisplayCommand, DisplayList, DisplayListError, Framebuffer, FramebufferError,
+    build_display_list, replace_display_items_for_fragment, replace_display_items_for_fragments,
 };
 use rarog_resources::{
     ImageDecodeOutcome, ImageDecodeQueue, ImageDecodeQueueError, ImageDecodeRequestId,
@@ -490,10 +490,8 @@ impl RenderSession {
             .image_decodes
             .complete(&mut self.image_resources, request, outcome)?;
 
-        let visual_change_pending = reference.is_some_and(|reference| {
-            let mut candidate = self.display_list.clone();
-            candidate.refresh_image_resource(reference).updated_commands > 0
-        });
+        let visual_change_pending = reference
+            .is_some_and(|reference| display_list_needs_image_refresh(&self.display_list, reference));
         if visual_change_pending {
             let reference = reference.expect("visual image completion has a ready reference");
             self.pending_image_refreshes
@@ -1124,6 +1122,19 @@ impl RenderSession {
             elapsed: update_started.elapsed(),
         })
     }
+}
+
+fn display_list_needs_image_refresh(
+    display_list: &DisplayList,
+    reference: ImageResourceRef,
+) -> bool {
+    display_list.commands().iter().any(|command| {
+        matches!(
+            command,
+            DisplayCommand::DrawImage { image, .. }
+                if image.id() == reference.id() && image.revision() < reference.revision()
+        )
+    })
 }
 
 fn next_display_list_revision(
