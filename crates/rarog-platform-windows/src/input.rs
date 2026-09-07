@@ -64,6 +64,9 @@ const VK_RCONTROL: usize = 0xa3;
 const VK_LMENU: usize = 0xa4;
 const VK_RMENU: usize = 0xa5;
 
+const MAX_QUEUED_INPUT_EVENTS: usize = 4_096;
+const MAX_INPUT_TEXT_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug)]
 pub struct WindowsInputService {
     state: Mutex<WindowsInputState>,
@@ -137,24 +140,25 @@ impl WindowsInputService {
         text: &[u16],
         selection_utf16: Option<(usize, usize)>,
     ) -> Result<(), PlatformInputError> {
+        let decoded = decode_utf16_bounded(text)?;
         let selection = selection_utf16
             .map(|(start, end)| utf16_range_to_text_range(text, start, end))
             .transpose()?;
         self.push_text_event(TextInputEvent::CompositionUpdate {
-            text: String::from_utf16_lossy(text),
+            text: decoded,
             selection,
         })
     }
 
     pub fn push_ime_composition_end_utf16(&self, text: &[u16]) -> Result<(), PlatformInputError> {
         self.push_text_event(TextInputEvent::CompositionEnd {
-            text: String::from_utf16_lossy(text),
+            text: decode_utf16_bounded(text)?,
         })
     }
 
     pub fn push_ime_commit_utf16(&self, text: &[u16]) -> Result<(), PlatformInputError> {
         self.push_text_event(TextInputEvent::Commit {
-            text: String::from_utf16_lossy(text),
+            text: decode_utf16_bounded(text)?,
         })
     }
 
@@ -163,8 +167,7 @@ impl WindowsInputService {
             .state
             .lock()
             .map_err(|_| PlatformInputError::BackendFailure)?;
-        state.queue.push_back(PlatformInputEvent::Text(event));
-        Ok(())
+        state.push_text_event(event)
     }
 }
 
@@ -198,6 +201,32 @@ struct WindowsInputState {
 }
 
 impl WindowsInputState {
+    fn ensure_queue_capacity(&self, additional: usize) -> Result<(), PlatformInputError> {
+        if self.queue.len().saturating_add(additional) > MAX_QUEUED_INPUT_EVENTS {
+            return Err(PlatformInputError::BackendFailure);
+        }
+        Ok(())
+    }
+
+    fn push_event(&mut self, event: PlatformInputEvent) -> Result<(), PlatformInputError> {
+        self.ensure_queue_capacity(1)?;
+        self.queue.push_back(event);
+        Ok(())
+    }
+
+    fn push_text_event(&mut self, event: TextInputEvent) -> Result<(), PlatformInputError> {
+        let bytes = match &event {
+            TextInputEvent::CompositionStart => 0,
+            TextInputEvent::CompositionUpdate { text, .. }
+            | TextInputEvent::CompositionEnd { text }
+            | TextInputEvent::Commit { text } => text.len(),
+        };
+        if bytes > MAX_INPUT_TEXT_BYTES {
+            return Err(PlatformInputError::BackendFailure);
+        }
+        self.push_event(PlatformInputEvent::Text(event))
+    }
+
     fn push_window_message(
         &mut self,
         message: u32,
@@ -206,11 +235,11 @@ impl WindowsInputState {
     ) -> Result<bool, PlatformInputError> {
         match message {
             WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
-                self.push_keyboard(message, wparam, lparam);
+                self.push_keyboard(message, wparam, lparam)?;
                 Ok(true)
             }
             WM_CHAR | WM_SYSCHAR => {
-                self.push_utf16_unit(wparam as u16);
+                self.push_utf16_unit(wparam as u16)?;
                 Ok(true)
             }
             WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP
@@ -222,7 +251,13 @@ impl WindowsInputState {
         }
     }
 
-    fn push_keyboard(&mut self, message: u32, virtual_key: usize, lparam: isize) {
+    fn push_keyboard(
+        &mut self,
+        message: u32,
+        virtual_key: usize,
+        lparam: isize,
+    ) -> Result<(), PlatformInputError> {
+        self.ensure_queue_capacity(1)?;
         let pressed = matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN);
         let repeat = pressed && ((lparam as usize >> 30) & 1) != 0;
         self.update_modifier(virtual_key, pressed, repeat);
@@ -240,6 +275,7 @@ impl WindowsInputState {
                 repeat,
                 modifiers: self.modifiers,
             }));
+        Ok(())
     }
 
     fn update_modifier(&mut self, virtual_key: usize, pressed: bool, repeat: bool) {
@@ -308,8 +344,7 @@ impl WindowsInputState {
             modifiers,
         };
         event.validate()?;
-        self.queue.push_back(PlatformInputEvent::Pointer(event));
-        Ok(())
+        self.push_event(PlatformInputEvent::Pointer(event))
     }
 
     fn push_wheel(
@@ -326,40 +361,66 @@ impl WindowsInputState {
             modifiers: self.modifiers,
         };
         event.validate()?;
-        self.queue.push_back(PlatformInputEvent::Wheel(event));
-        Ok(())
+        self.push_event(PlatformInputEvent::Wheel(event))
     }
 
-    fn push_utf16_unit(&mut self, unit: u16) {
-        if (0xd800..=0xdbff).contains(&unit) {
+    fn push_utf16_unit(&mut self, unit: u16) -> Result<(), PlatformInputError> {
+        let pending = self.pending_high_surrogate;
+        let additional = if is_high_surrogate(unit) {
+            usize::from(pending.is_some())
+        } else if is_low_surrogate(unit) || pending.is_none() {
+            1
+        } else {
+            2
+        };
+        self.ensure_queue_capacity(additional)?;
+
+        if is_high_surrogate(unit) {
             if self.pending_high_surrogate.replace(unit).is_some() {
-                self.push_character('\u{fffd}');
+                self.push_character_unchecked('\u{fffd}');
             }
-            return;
+            return Ok(());
         }
-        if (0xdc00..=0xdfff).contains(&unit) {
+        if is_low_surrogate(unit) {
             let Some(high) = self.pending_high_surrogate.take() else {
-                self.push_character('\u{fffd}');
-                return;
+                self.push_character_unchecked('\u{fffd}');
+                return Ok(());
             };
             let high = u32::from(high - 0xd800);
             let low = u32::from(unit - 0xdc00);
             let scalar = 0x10000 + ((high << 10) | low);
-            self.push_character(char::from_u32(scalar).unwrap_or('\u{fffd}'));
-            return;
+            self.push_character_unchecked(char::from_u32(scalar).unwrap_or('\u{fffd}'));
+            return Ok(());
         }
         if self.pending_high_surrogate.take().is_some() {
-            self.push_character('\u{fffd}');
+            self.push_character_unchecked('\u{fffd}');
         }
-        self.push_character(char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}'));
+        self.push_character_unchecked(char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}'));
+        Ok(())
     }
 
-    fn push_character(&mut self, character: char) {
+    fn push_character_unchecked(&mut self, character: char) {
         self.queue
             .push_back(PlatformInputEvent::Text(TextInputEvent::Commit {
                 text: character.to_string(),
             }));
     }
+}
+
+fn decode_utf16_bounded(text: &[u16]) -> Result<String, PlatformInputError> {
+    let bytes = char::decode_utf16(text.iter().copied()).fold(0usize, |total, character| {
+        total.saturating_add(character.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
+    });
+    if bytes > MAX_INPUT_TEXT_BYTES {
+        return Err(PlatformInputError::BackendFailure);
+    }
+
+    let mut decoded = String::with_capacity(bytes);
+    decoded.extend(
+        char::decode_utf16(text.iter().copied())
+            .map(|character| character.unwrap_or(char::REPLACEMENT_CHARACTER)),
+    );
+    Ok(decoded)
 }
 
 fn utf16_range_to_text_range(
@@ -576,6 +637,50 @@ mod tests {
 
     fn pop(state: &mut WindowsInputState) -> PlatformInputEvent {
         state.queue.pop_front().expect("expected normalized event")
+    }
+
+    #[test]
+    fn input_queue_limit_rejects_new_events_without_mutating_modifier_state() {
+        let mut state = WindowsInputState::default();
+        for _ in 0..MAX_QUEUED_INPUT_EVENTS {
+            state
+                .queue
+                .push_back(PlatformInputEvent::Text(TextInputEvent::CompositionStart));
+        }
+
+        assert_eq!(
+            state.push_window_message(WM_KEYDOWN, VK_SHIFT, key_lparam(0x2a, false, false)),
+            Err(PlatformInputError::BackendFailure)
+        );
+        assert!(!state.modifiers.shift);
+        assert_eq!(state.queue.len(), MAX_QUEUED_INPUT_EVENTS);
+    }
+
+    #[test]
+    fn surrogate_replacement_is_atomic_when_queue_capacity_is_insufficient() {
+        let mut state = WindowsInputState::default();
+        for _ in 0..MAX_QUEUED_INPUT_EVENTS - 1 {
+            state
+                .queue
+                .push_back(PlatformInputEvent::Text(TextInputEvent::CompositionStart));
+        }
+        state.pending_high_surrogate = Some(0xd83d);
+
+        assert_eq!(
+            state.push_window_message(WM_CHAR, usize::from(b'A'), 0),
+            Err(PlatformInputError::BackendFailure)
+        );
+        assert_eq!(state.pending_high_surrogate, Some(0xd83d));
+        assert_eq!(state.queue.len(), MAX_QUEUED_INPUT_EVENTS - 1);
+    }
+
+    #[test]
+    fn bounded_utf16_decode_rejects_text_before_allocation() {
+        let text = vec![u16::from(b'A'); MAX_INPUT_TEXT_BYTES + 1];
+        assert_eq!(
+            decode_utf16_bounded(&text),
+            Err(PlatformInputError::BackendFailure)
+        );
     }
 
     #[test]
