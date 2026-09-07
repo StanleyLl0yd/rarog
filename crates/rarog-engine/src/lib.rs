@@ -490,8 +490,9 @@ impl RenderSession {
             .image_decodes
             .complete(&mut self.image_resources, request, outcome)?;
 
-        let visual_change_pending = reference
-            .is_some_and(|reference| display_list_needs_image_refresh(&self.display_list, reference));
+        let visual_change_pending = reference.is_some_and(|reference| {
+            display_list_needs_image_refresh(&self.display_list, reference)
+        });
         if visual_change_pending {
             let reference = reference.expect("visual image completion has a ready reference");
             self.pending_image_refreshes
