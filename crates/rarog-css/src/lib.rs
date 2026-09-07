@@ -142,6 +142,8 @@ pub enum GridTrackSize {
     Fixed(f32),
     Auto,
     Fraction(f32),
+    MinContent,
+    MaxContent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1613,6 +1615,10 @@ fn parse_grid_track_list(value: &str) -> Option<GridTrackList> {
         .map(|part| {
             if part.eq_ignore_ascii_case("auto") {
                 Some(GridTrackSize::Auto)
+            } else if part.eq_ignore_ascii_case("min-content") {
+                Some(GridTrackSize::MinContent)
+            } else if part.eq_ignore_ascii_case("max-content") {
+                Some(GridTrackSize::MaxContent)
             } else if let Some(factor) = parse_fr(part) {
                 Some(GridTrackSize::Fraction(factor))
             } else {
@@ -2696,6 +2702,25 @@ mod finite_geometry_tests {
                     GridTrackList::from_tracks(&[
                         GridTrackSize::Auto,
                         GridTrackSize::Fixed(40.0),
+                        GridTrackSize::Auto,
+                    ])
+                    .unwrap(),
+                ),
+                important: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn bounded_grid_content_sized_tracks_parse_into_computed_metadata() {
+        assert_eq!(
+            parse_declarations("grid-template-columns:min-content MAX-CONTENT auto"),
+            vec![Declaration {
+                property: PropertyId::GridTemplateColumns,
+                value: PropertyValue::GridTracks(
+                    GridTrackList::from_tracks(&[
+                        GridTrackSize::MinContent,
+                        GridTrackSize::MaxContent,
                         GridTrackSize::Auto,
                     ])
                     .unwrap(),
