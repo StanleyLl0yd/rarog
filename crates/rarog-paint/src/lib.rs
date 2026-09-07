@@ -1064,11 +1064,10 @@ impl Framebuffer {
                     }
                 }
                 DisplayCommand::DrawImage { rect, image } => {
-                    let destination =
-                        translate_rect(
-                            transform_rect(rect, *transforms.last().expect("transform state")),
-                            translation,
-                        );
+                    let destination = translate_rect(
+                        transform_rect(rect, *transforms.last().expect("transform state")),
+                        translation,
+                    );
                     let decoded = images.and_then(|store| store.image(image));
                     if let (Some(decoded), Some(clipped)) = (
                         decoded,
