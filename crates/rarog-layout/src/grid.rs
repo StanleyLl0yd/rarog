@@ -40,6 +40,8 @@ pub enum GridTrackSizing {
     Fixed(f32),
     Auto,
     Fraction(f32),
+    MinContent,
+    MaxContent,
 }
 
 impl GridTrackSizing {
@@ -769,10 +771,16 @@ pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
         let has_fraction = track_slice
             .iter()
             .any(|track| matches!(track, GridTrackSizing::Fraction(_)));
-        if !has_auto && !has_fraction {
+        let has_content_sized = track_slice.iter().any(|track| {
+            matches!(
+                track,
+                GridTrackSizing::MinContent | GridTrackSizing::MaxContent
+            )
+        });
+        if !has_auto && !has_fraction && !has_content_sized {
             continue;
         }
-        if span > 1 && has_fraction {
+        if span > 1 && (has_fraction || has_content_sized) {
             return Err(GridLayoutError::UnsupportedIntrinsicSpan {
                 node: item.node,
                 axis,
@@ -807,6 +815,26 @@ pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
                         single_base_targets[start].map_or(minimum, |current| current.max(minimum)),
                     );
                 }
+                GridTrackSizing::MinContent => {
+                    single_base_targets[start] = Some(
+                        single_base_targets[start]
+                            .map_or(min_content, |current| current.max(min_content)),
+                    );
+                    single_growth_targets[start] = Some(
+                        single_growth_targets[start]
+                            .map_or(min_content, |current| current.max(min_content)),
+                    );
+                }
+                GridTrackSizing::MaxContent => {
+                    single_base_targets[start] = Some(
+                        single_base_targets[start]
+                            .map_or(max_content, |current| current.max(max_content)),
+                    );
+                    single_growth_targets[start] = Some(
+                        single_growth_targets[start]
+                            .map_or(max_content, |current| current.max(max_content)),
+                    );
+                }
                 GridTrackSizing::Fixed(_) => {}
             }
         } else {
@@ -824,13 +852,19 @@ pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
     for index in 0..states.len() {
         if matches!(
             sizing[index],
-            GridTrackSizing::Auto | GridTrackSizing::Fraction(_)
+            GridTrackSizing::Auto
+                | GridTrackSizing::Fraction(_)
+                | GridTrackSizing::MinContent
+                | GridTrackSizing::MaxContent
         ) {
             if let Some(base_size) = single_base_targets[index] {
                 states[index].base_size = states[index].base_size.max(base_size);
             }
         }
-        if matches!(sizing[index], GridTrackSizing::Auto) {
+        if matches!(
+            sizing[index],
+            GridTrackSizing::Auto | GridTrackSizing::MinContent | GridTrackSizing::MaxContent
+        ) {
             if let Some(growth_limit) = single_growth_targets[index] {
                 states[index].growth_limit =
                     GridTrackGrowthLimit::Finite(growth_limit.max(states[index].base_size));
@@ -919,8 +953,13 @@ fn close_infinite_growth_limits_to_base(
     sizing: &[GridTrackSizing],
 ) {
     for (state, track) in states.iter_mut().zip(sizing.iter()) {
-        if matches!(track, GridTrackSizing::Auto | GridTrackSizing::Fraction(_))
-            && matches!(state.growth_limit, GridTrackGrowthLimit::Infinite)
+        if matches!(
+            track,
+            GridTrackSizing::Auto
+                | GridTrackSizing::Fraction(_)
+                | GridTrackSizing::MinContent
+                | GridTrackSizing::MaxContent
+        ) && matches!(state.growth_limit, GridTrackGrowthLimit::Infinite)
         {
             state.growth_limit = GridTrackGrowthLimit::Finite(state.base_size);
         }
@@ -1075,7 +1114,9 @@ fn initialize_track_sizing_states(
             GridTrackSizing::Fixed(size) if size.is_finite() && size >= 0.0 => {
                 Ok(GridTrackSizingState::fixed(size))
             }
-            GridTrackSizing::Auto => Ok(GridTrackSizingState::intrinsic()),
+            GridTrackSizing::Auto | GridTrackSizing::MinContent | GridTrackSizing::MaxContent => {
+                Ok(GridTrackSizingState::intrinsic())
+            }
             GridTrackSizing::Fraction(factor) if factor.is_finite() && factor >= 0.0 => {
                 Ok(GridTrackSizingState::intrinsic())
             }
@@ -2456,6 +2497,74 @@ mod tests {
 
         assert_eq!(states[0].base_size, 30.0);
         assert_eq!(states[1].base_size, 30.0);
+    }
+
+    #[test]
+    fn content_sized_tracks_select_track_specific_intrinsic_contributions() {
+        let sizing = [GridTrackSizing::MinContent, GridTrackSizing::MaxContent];
+        let items = [
+            GridItem::new(LayoutNodeId(1), 0, 0),
+            GridItem::new(LayoutNodeId(2), 0, 1),
+        ];
+        let contributions = [
+            GridIntrinsicContributions::new(
+                LayoutNodeId(1),
+                GridAxisIntrinsicContributions::new(12.0, 20.0, 36.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+            GridIntrinsicContributions::new(
+                LayoutNodeId(2),
+                GridAxisIntrinsicContributions::new(10.0, 18.0, 44.0),
+                GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+            ),
+        ];
+
+        let tracks = resolve_intrinsic_tracks_with_space(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicTrackResolveOptions {
+                base_kind: GridIntrinsicContributionKind::Minimum,
+                growth_kind: GridIntrinsicContributionKind::MaxContent,
+                gap: 0.0,
+                available_space: None,
+                stretch_auto: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(tracks, vec![GridTrack::new(20.0), GridTrack::new(44.0)]);
+    }
+
+    #[test]
+    fn content_sized_intrinsic_spans_remain_fail_closed() {
+        let item = GridItem::new(LayoutNodeId(1), 0, 0).with_span(1, 2);
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(20.0, 40.0, 80.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        assert_eq!(
+            resolve_intrinsic_tracks_with_space(
+                &[GridTrackSizing::MinContent, GridTrackSizing::MaxContent],
+                GridAxis::Column,
+                &[item],
+                &contributions,
+                GridIntrinsicTrackResolveOptions {
+                    base_kind: GridIntrinsicContributionKind::Minimum,
+                    growth_kind: GridIntrinsicContributionKind::MaxContent,
+                    gap: 0.0,
+                    available_space: None,
+                    stretch_auto: false,
+                },
+            ),
+            Err(GridLayoutError::UnsupportedIntrinsicSpan {
+                node: LayoutNodeId(1),
+                axis: GridAxis::Column,
+            })
+        );
     }
 
     #[test]
