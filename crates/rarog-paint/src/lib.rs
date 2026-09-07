@@ -798,10 +798,17 @@ pub struct ImageResourceRefresh {
 
 impl DisplayList {
     pub fn refresh_image_resource(&mut self, reference: ImageResourceRef) -> ImageResourceRefresh {
-        let previous = self.clone();
+        let effective = effective_indexed_paint(self);
+        let mut damage = DamageRegion::default();
+        let mut seen = BTreeSet::new();
         let mut updated_commands = 0usize;
 
-        for command in &mut self.commands {
+        for (id, command) in self
+            .command_ids
+            .iter()
+            .copied()
+            .zip(self.commands.iter_mut())
+        {
             let DisplayCommand::DrawImage { image, .. } = command else {
                 continue;
             };
@@ -810,13 +817,11 @@ impl DisplayList {
             }
             *image = reference;
             updated_commands = updated_commands.saturating_add(1);
+            if let Some(bounds) = effective.get(&id).and_then(|item| item.bounds) {
+                damage.push_unique(bounds, &mut seen);
+            }
         }
 
-        let damage = if updated_commands == 0 {
-            DamageRegion::default()
-        } else {
-            DamageRegion::between(Some(&previous), self)
-        };
         ImageResourceRefresh {
             updated_commands,
             damage,
