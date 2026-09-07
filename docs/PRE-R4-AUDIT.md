@@ -14,7 +14,7 @@ No new product functionality is added during this phase.
 
 ## Required sequence
 
-- [ ] Capture the post-R3 baseline: repository structure, crate/dependency graph, test/CI state and practical size/count metrics.
+- [x] Capture the post-R3 baseline: repository structure, crate/dependency graph, test/CI state and practical size/count metrics (`PRE-R4-AUDIT-REPORT.md`).
 - [ ] Complete repository-wide audit pass 1.
 - [ ] Apply high-confidence behavior-preserving deletion, consolidation, simplification and dependency cleanup in focused PRs.
 - [ ] Run the relevant full verification after every meaningful refactor group.
