@@ -75,8 +75,9 @@ Rarog security-sensitive repository policy is:
 - CodeQL scans Rust and GitHub Actions workflows;
 - Semgrep provides an independent SAST layer;
 - Gitleaks scans repository history for secrets;
-- Dependency Review blocks newly introduced high-severity vulnerable dependencies;
+- RustSec is the active dependency-vulnerability merge gate; GitHub Dependency Review remains intentionally disabled until the repository dependency graph is enabled and the action can run reliably;
 - Dependabot covers Cargo and GitHub Actions updates;
+- Dependabot version updates remain useful independently of Dependency Review; Dependabot alerts/security updates require the GitHub dependency graph/security-analysis feature to be enabled;
 - the workspace forbids ordinary unsafe Rust, with the intentionally isolated SpiderMonkey adapter reviewed separately.
 
 Never commit an `.env` file, token, private key, certificate private material, signing key, service credential or other secret.
