@@ -4487,6 +4487,47 @@ mod tests {
     }
 
     #[test]
+    fn css_grid_intrinsic_spanning_auto_columns_are_gap_aware() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:100px;justify-content:flex-start;grid-template-columns:auto auto;grid-template-rows:20px;column-gap:4px",
+                    ),
+                ),
+            )
+            .unwrap();
+        let spanning = doc
+            .append_new(
+                container,
+                element(
+                    "div",
+                    Some("grid-row-start:1;grid-column-start:1;grid-column-end:span 2"),
+                ),
+            )
+            .unwrap();
+        doc.append_new(spanning, NodeKind::Text("hello world".into()))
+            .unwrap();
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children.len(), 1);
+        assert_eq!(
+            grid.children[0].boxes.border_box,
+            Rect::new(0.0, 0.0, 88.0, 20.0)
+        );
+    }
+
+    #[test]
     fn css_grid_auto_columns_stretch_across_definite_inline_space_by_default() {
         let mut doc = Document::new();
         let container = doc

@@ -209,7 +209,6 @@ impl GridIntrinsicContributions {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct GridSpanningIntrinsicContribution {
     node: LayoutNodeId,
@@ -220,7 +219,6 @@ struct GridSpanningIntrinsicContribution {
     max_content: f32,
 }
 
-#[cfg(test)]
 impl GridSpanningIntrinsicContribution {
     const fn new(
         node: LayoutNodeId,
@@ -256,7 +254,6 @@ impl GridSpanningIntrinsicContribution {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 struct GridGrowthLimitPlan {
     increases: Vec<f32>,
@@ -618,14 +615,26 @@ pub(crate) fn resolve_intrinsic_tracks_with_space(
     contributions: &[GridIntrinsicContributions],
     options: GridIntrinsicTrackResolveOptions,
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
-    let mut states = resolve_non_spanning_intrinsic_track_states(
-        sizing,
-        axis,
-        items,
-        contributions,
-        options.base_kind,
-        options.growth_kind,
-    )?;
+    let mut states = if options.base_kind == GridIntrinsicContributionKind::Minimum
+        && options.growth_kind == GridIntrinsicContributionKind::MaxContent
+    {
+        resolve_spanning_auto_intrinsic_track_states(
+            sizing,
+            axis,
+            items,
+            contributions,
+            options.gap,
+        )?
+    } else {
+        resolve_non_spanning_intrinsic_track_states(
+            sizing,
+            axis,
+            items,
+            contributions,
+            options.base_kind,
+            options.growth_kind,
+        )?
+    };
     finalize_track_sizing_phases(
         &mut states,
         sizing,
@@ -707,7 +716,6 @@ pub(crate) fn resolve_non_spanning_intrinsic_track_states(
     Ok(states)
 }
 
-#[cfg(test)]
 pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
     sizing: &[GridTrackSizing],
     axis: GridAxis,
@@ -854,7 +862,6 @@ pub(crate) fn resolve_spanning_auto_intrinsic_track_states(
     Ok(states)
 }
 
-#[cfg(test)]
 fn clamp_growth_limits_to_base(states: &mut [GridTrackSizingState], sizing: &[GridTrackSizing]) {
     for (state, track) in states.iter_mut().zip(sizing.iter()) {
         if !matches!(track, GridTrackSizing::Auto) {
@@ -866,7 +873,6 @@ fn clamp_growth_limits_to_base(states: &mut [GridTrackSizingState], sizing: &[Gr
     }
 }
 
-#[cfg(test)]
 fn close_infinite_growth_limits_to_base(
     states: &mut [GridTrackSizingState],
     sizing: &[GridTrackSizing],
@@ -880,7 +886,6 @@ fn close_infinite_growth_limits_to_base(
     }
 }
 
-#[cfg(test)]
 fn plan_auto_track_growth_limit_increases(
     states: &[GridTrackSizingState],
     sizing: &[GridTrackSizing],
@@ -981,7 +986,6 @@ fn plan_auto_track_growth_limit_increases(
     })
 }
 
-#[cfg(test)]
 fn apply_planned_growth_limit_increases(
     states: &mut [GridTrackSizingState],
     sizing: &[GridTrackSizing],
@@ -2153,6 +2157,34 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[test]
+    fn production_semantic_resolver_supports_gap_aware_intrinsic_spans() {
+        let sizing = [GridTrackSizing::Auto, GridTrackSizing::Auto];
+        let items = [GridItem::new(LayoutNodeId(1), 0, 0).with_span(1, 2)];
+        let contributions = [GridIntrinsicContributions::new(
+            LayoutNodeId(1),
+            GridAxisIntrinsicContributions::new(40.0, 40.0, 88.0),
+            GridAxisIntrinsicContributions::new(0.0, 0.0, 0.0),
+        )];
+
+        let tracks = resolve_intrinsic_tracks_with_space(
+            &sizing,
+            GridAxis::Column,
+            &items,
+            &contributions,
+            GridIntrinsicTrackResolveOptions {
+                base_kind: GridIntrinsicContributionKind::Minimum,
+                growth_kind: GridIntrinsicContributionKind::MaxContent,
+                gap: 4.0,
+                available_space: Some(100.0),
+                stretch_auto: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(tracks, vec![GridTrack::new(42.0), GridTrack::new(42.0)]);
     }
 
     #[test]
