@@ -619,9 +619,9 @@ dependencies = [
 
 [[package]]
 name = "font-test-data"
-version = "0.7.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d99914ae8c4aee9e814f54be404e15182a9a5556eb2d37f4189e6cff44d5a63"
+checksum = "8250a122865fc22377a26c0bb273bc4a69914409b4cf4a9b4cd7d7c6c5b1a0d7"
 dependencies = [
  "font-types",
 ]
@@ -2321,13 +2321,6 @@ name = "rarog-scheduler"
 version = "0.1.0"
 
 [[package]]
-name = "rarog-scroll"
-version = "0.1.0"
-dependencies = [
- "rarog-types",
-]
-
-[[package]]
 name = "rarog-script"
 version = "0.1.0"
 
@@ -2337,6 +2330,13 @@ version = "0.1.0"
 dependencies = [
  "mozjs",
  "rarog-script",
+]
+
+[[package]]
+name = "rarog-scroll"
+version = "0.1.0"
+dependencies = [
+ "rarog-types",
 ]
 
 [[package]]
