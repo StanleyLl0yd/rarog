@@ -509,6 +509,15 @@ pub fn resolve_content_sized_tracks(
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GridIntrinsicTrackResolveOptions {
+    pub base_kind: GridIntrinsicContributionKind,
+    pub growth_kind: GridIntrinsicContributionKind,
+    pub gap: f32,
+    pub available_space: Option<f32>,
+    pub stretch_auto: bool,
+}
+
 pub(crate) fn resolve_intrinsic_content_sized_tracks(
     sizing: &[GridTrackSizing],
     axis: GridAxis,
@@ -521,11 +530,13 @@ pub(crate) fn resolve_intrinsic_content_sized_tracks(
         axis,
         items,
         contributions,
-        kind,
-        kind,
-        0.0,
-        None,
-        false,
+        GridIntrinsicTrackResolveOptions {
+            base_kind: kind,
+            growth_kind: kind,
+            gap: 0.0,
+            available_space: None,
+            stretch_auto: false,
+        },
     )
 }
 
@@ -534,27 +545,23 @@ pub(crate) fn resolve_intrinsic_tracks_with_space(
     axis: GridAxis,
     items: &[GridItem],
     contributions: &[GridIntrinsicContributions],
-    base_kind: GridIntrinsicContributionKind,
-    growth_kind: GridIntrinsicContributionKind,
-    gap: f32,
-    available_space: Option<f32>,
-    stretch_auto: bool,
+    options: GridIntrinsicTrackResolveOptions,
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
     let mut states = resolve_non_spanning_intrinsic_track_states(
         sizing,
         axis,
         items,
         contributions,
-        base_kind,
-        growth_kind,
+        options.base_kind,
+        options.growth_kind,
     )?;
     finalize_track_sizing_phases(
         &mut states,
         sizing,
-        gap,
-        available_space,
+        options.gap,
+        options.available_space,
         axis,
-        stretch_auto,
+        options.stretch_auto,
     )?;
 
     Ok(states
@@ -1526,11 +1533,13 @@ mod tests {
             GridAxis::Column,
             &items,
             &contributions,
-            GridIntrinsicContributionKind::Minimum,
-            GridIntrinsicContributionKind::MaxContent,
-            0.0,
-            Some(120.0),
-            true,
+            GridIntrinsicTrackResolveOptions {
+                base_kind: GridIntrinsicContributionKind::Minimum,
+                growth_kind: GridIntrinsicContributionKind::MaxContent,
+                gap: 0.0,
+                available_space: Some(120.0),
+                stretch_auto: true,
+            },
         )
         .unwrap();
 
@@ -1553,11 +1562,13 @@ mod tests {
             GridAxis::Column,
             &items,
             &contributions,
-            GridIntrinsicContributionKind::MaxContent,
-            GridIntrinsicContributionKind::MaxContent,
-            0.0,
-            None,
-            false,
+            GridIntrinsicTrackResolveOptions {
+                base_kind: GridIntrinsicContributionKind::MaxContent,
+                growth_kind: GridIntrinsicContributionKind::MaxContent,
+                gap: 0.0,
+                available_space: None,
+                stretch_auto: false,
+            },
         )
         .unwrap();
 
