@@ -226,7 +226,7 @@ impl ProcessTopology {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rarog_url::{Origin, WebUrl};
+    use rarog_url::WebUrl;
 
     fn site(url: &str) -> SiteIdentity {
         WebUrl::parse(url).unwrap().site_identity().unwrap()
@@ -281,10 +281,7 @@ mod tests {
         let first_origin = url.origin().unwrap();
         let first_site = first_origin.site();
         let same_site = first_site.clone();
-        let second_site = match url.origin().unwrap() {
-            Origin::Opaque(_) as origin => origin.site(),
-            Origin::Tuple { .. } => unreachable!(),
-        };
+        let second_site = url.origin().unwrap().site();
 
         let mut topology = ProcessTopology::try_new(3).unwrap();
         let first = topology.assign_site(first_site).unwrap();
