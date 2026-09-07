@@ -378,6 +378,7 @@ pub enum GridLayoutError {
     InvalidContribution { node: LayoutNodeId, axis: GridAxis },
     MissingContribution { node: LayoutNodeId, axis: GridAxis },
     UnsupportedIntrinsicSpan { node: LayoutNodeId, axis: GridAxis },
+    IndefiniteFlexibleTracks { axis: GridAxis },
     InvalidGap { axis: GridAxis },
     InvalidSpan { node: LayoutNodeId },
     PlacementOutsideGrid { node: LayoutNodeId },
@@ -414,6 +415,12 @@ impl fmt::Display for GridLayoutError {
                 write!(
                     formatter,
                     "grid item {node:?} spans multiple tracks including an intrinsic {axis:?} track"
+                )
+            }
+            Self::IndefiniteFlexibleTracks { axis } => {
+                write!(
+                    formatter,
+                    "grid {axis:?} flexible tracks require definite available space"
                 )
             }
             Self::InvalidGap { axis } => {
@@ -620,6 +627,14 @@ pub(crate) fn resolve_intrinsic_tracks_with_space(
     contributions: &[GridIntrinsicContributions],
     options: GridIntrinsicTrackResolveOptions,
 ) -> Result<Vec<GridTrack>, GridLayoutError> {
+    if options.available_space.is_none()
+        && sizing
+            .iter()
+            .any(|track| matches!(track, GridTrackSizing::Fraction(_)))
+    {
+        return Err(GridLayoutError::IndefiniteFlexibleTracks { axis });
+    }
+
     let mut states = if options.base_kind == GridIntrinsicContributionKind::Minimum
         && options.growth_kind == GridIntrinsicContributionKind::MaxContent
     {
@@ -2441,6 +2456,28 @@ mod tests {
 
         assert_eq!(states[0].base_size, 30.0);
         assert_eq!(states[1].base_size, 30.0);
+    }
+
+    #[test]
+    fn flexible_tracks_require_definite_available_space() {
+        assert_eq!(
+            resolve_intrinsic_tracks_with_space(
+                &[GridTrackSizing::Fraction(1.0)],
+                GridAxis::Row,
+                &[],
+                &[],
+                GridIntrinsicTrackResolveOptions {
+                    base_kind: GridIntrinsicContributionKind::Minimum,
+                    growth_kind: GridIntrinsicContributionKind::MaxContent,
+                    gap: 0.0,
+                    available_space: None,
+                    stretch_auto: false,
+                },
+            ),
+            Err(GridLayoutError::IndefiniteFlexibleTracks {
+                axis: GridAxis::Row,
+            })
+        );
     }
 
     #[test]
