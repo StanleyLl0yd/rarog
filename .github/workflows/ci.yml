@@ -15,7 +15,8 @@ permissions: {}
 jobs:
   windows:
     name: Windows primary
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -51,6 +52,7 @@ jobs:
   msrv:
     name: MSRV 1.85
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -66,6 +68,7 @@ jobs:
   linux-portability:
     name: Linux portability
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -97,6 +100,7 @@ jobs:
   spidermonkey-linux:
     name: SpiderMonkey Linux
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
@@ -118,7 +122,8 @@ jobs:
 
   spidermonkey-windows:
     name: SpiderMonkey Windows
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
@@ -149,6 +154,7 @@ jobs:
       - spidermonkey-linux
       - spidermonkey-windows
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Enforce verification results
