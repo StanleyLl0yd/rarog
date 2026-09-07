@@ -13,6 +13,7 @@ members = [
   "crates/rarog-url",
   "crates/rarog-process",
   "crates/rarog-ipc",
+  "crates/rarog-broker",
   "crates/rarog-fetch",
   "crates/rarog-script",
   "crates/rarog-script-spidermonkey",
