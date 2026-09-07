@@ -161,8 +161,8 @@ Repository/tree metrics use recursive Git blob sizes. Rust lines use UTF-8 text 
 | Metric | Baseline | Final |
 | --- | ---: | ---: |
 | Repository files (Git blobs) | 249 | 253 |
-| Repository blob bytes | 1,977,666 | 3,869,134 |
-| Repository bytes excluding canonical repository hero master | 1,974,310 | 2,001,969 |
+| Repository blob bytes | 1,977,666 | 3,869,498 |
+| Repository bytes excluding canonical repository hero master | 1,974,310 | 2,002,333 |
 | Workspace crates | 22 | 22 |
 | Rust files | 87 | 87 |
 | Rust blob bytes | 1,452,714 | 1,461,807 |
@@ -171,7 +171,7 @@ Repository/tree metrics use recursive Git blob sizes. Rust lines use UTF-8 text 
 | literal `TODO` occurrences | 0 | 0 |
 | literal `FIXME` occurrences | 0 | 0 |
 | Markdown files | 126 | 129 |
-| Markdown blob bytes | 401,225 | 418,924 |
+| Markdown blob bytes | 401,225 | 419,288 |
 | TOML files | 25 | 25 |
 | TOML blob bytes | 9,340 | 9,143 |
 | Lockfile package entries | 372 | 372 |
