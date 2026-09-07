@@ -44,7 +44,7 @@ For `align-content: normal` or `stretch`, a definite content height enables Maxi
 
 For `align-content: flex-start`, a definite content height enables Maximize without final stretch.
 
-For `height:auto`, the block-axis available-space argument remains indefinite even though a finite parent measurement height is available. Auto rows therefore remain content-driven and do not stretch to the viewport/containing block.
+For `height:auto`, the block-axis available-space argument remains indefinite even though a finite parent measurement height is available. Parent measurement space is therefore never promoted into Grid block-axis definiteness. Auto rows remain content-driven and do not stretch to the viewport/containing block.
 
 Other content-distribution values keep the compatibility projection until track-group positioning is implemented.
 
