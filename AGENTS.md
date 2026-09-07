@@ -162,6 +162,26 @@ Do not weaken existing CI, portability, MSRV, fuzz-build, or correctness gates t
 
 Do not edit generated artifacts as though they were authoritative source when a schema, generator, or other upstream source of truth exists. Change the source of truth and regenerate instead.
 
+## Repository security and supply chain
+
+Treat repository configuration and CI/CD as part of Rarog's security boundary.
+
+Before a major milestone transition or release, perform a repository-wide security review covering source, dependencies, workflows, generated/downloaded tooling, credentials, artifacts and repository protection settings.
+
+Never hardcode or commit credentials, tokens, private keys, signing material, environment secrets or production authentication data.
+
+All external GitHub Actions must use immutable full commit SHAs. Workflow container images used for security, build or publishing jobs must use immutable digests. Do not introduce mutable action refs such as tags, branches or `latest`.
+
+Keep workflow-level permissions empty by default and grant only the permissions each job requires. Do not expose repository secrets or write-capable tokens to untrusted pull-request code. Avoid `pull_request_target`; introducing it requires an explicit security review.
+
+Keep `Cargo.lock` committed and use locked dependency resolution in CI and future release builds. New or updated dependencies must pass the applicable vulnerability and dependency-review gates.
+
+Do not weaken, bypass or remove required build/security checks to merge a change. Security scanner configuration changes require the same pull-request verification as production code.
+
+When a release pipeline is introduced, bind every published artifact to an immutable release tag and exact commit, isolate signing credentials outside the repository, use least-privilege publish permissions, and add provenance/attestation where technically supported.
+
+After repository-wide refactoring or security hardening, re-audit `.github/**`, dependency state and trust boundaries before declaring the work complete.
+
 ## Verification
 
 Run the checks appropriate to the change before considering it complete.
