@@ -2980,6 +2980,8 @@ impl FragmentBuilder {
                 CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
                 CssGridTrackSize::Auto => GridTrackSizing::Auto,
                 CssGridTrackSize::Fraction(factor) => GridTrackSizing::Fraction(factor),
+                CssGridTrackSize::MinContent => GridTrackSizing::MinContent,
+                CssGridTrackSize::MaxContent => GridTrackSizing::MaxContent,
             })
             .collect::<Vec<_>>();
         let row_sizing = container
@@ -2992,6 +2994,8 @@ impl FragmentBuilder {
                 CssGridTrackSize::Fixed(size) => GridTrackSizing::Fixed(size),
                 CssGridTrackSize::Auto => GridTrackSizing::Auto,
                 CssGridTrackSize::Fraction(factor) => GridTrackSizing::Fraction(factor),
+                CssGridTrackSize::MinContent => GridTrackSizing::MinContent,
+                CssGridTrackSize::MaxContent => GridTrackSizing::MaxContent,
             })
             .collect::<Vec<_>>();
         let fallback_columns = column_sizing
@@ -2999,7 +3003,10 @@ impl FragmentBuilder {
             .copied()
             .map(|track| match track {
                 GridTrackSizing::Fixed(size) => GridTrack::new(size),
-                GridTrackSizing::Auto | GridTrackSizing::Fraction(_) => GridTrack::new(0.0),
+                GridTrackSizing::Auto
+                | GridTrackSizing::Fraction(_)
+                | GridTrackSizing::MinContent
+                | GridTrackSizing::MaxContent => GridTrack::new(0.0),
             })
             .collect::<Vec<_>>();
         let fallback_rows = row_sizing
@@ -3007,7 +3014,10 @@ impl FragmentBuilder {
             .copied()
             .map(|track| match track {
                 GridTrackSizing::Fixed(size) => GridTrack::new(size),
-                GridTrackSizing::Auto | GridTrackSizing::Fraction(_) => GridTrack::new(0.0),
+                GridTrackSizing::Auto
+                | GridTrackSizing::Fraction(_)
+                | GridTrackSizing::MinContent
+                | GridTrackSizing::MaxContent => GridTrack::new(0.0),
             })
             .collect::<Vec<_>>();
 
@@ -3111,10 +3121,15 @@ impl FragmentBuilder {
             return (Vec::new(), fallback_content_size);
         };
 
-        let rows = if row_sizing
-            .iter()
-            .any(|track| matches!(track, GridTrackSizing::Auto | GridTrackSizing::Fraction(_)))
-        {
+        let rows = if row_sizing.iter().any(|track| {
+            matches!(
+                track,
+                GridTrackSizing::Auto
+                    | GridTrackSizing::Fraction(_)
+                    | GridTrackSizing::MinContent
+                    | GridTrackSizing::MaxContent
+            )
+        }) {
             let Ok(column_resolved_grid) = layout_fixed_grid(
                 Point {
                     x: containing_block.origin.x + column_distribution.offset,
@@ -3136,7 +3151,13 @@ impl FragmentBuilder {
             {
                 let row_end = item.row_start + item.row_span;
                 if !row_sizing[item.row_start..row_end].iter().any(|track| {
-                    matches!(track, GridTrackSizing::Auto | GridTrackSizing::Fraction(_))
+                    matches!(
+                        track,
+                        GridTrackSizing::Auto
+                            | GridTrackSizing::Fraction(_)
+                            | GridTrackSizing::MinContent
+                            | GridTrackSizing::MaxContent
+                    )
                 }) {
                     continue;
                 }
@@ -4526,6 +4547,41 @@ mod tests {
             grid.children[0].boxes.border_box,
             Rect::new(0.0, 0.0, 88.0, 20.0)
         );
+    }
+
+    #[test]
+    fn css_grid_min_and_max_content_columns_use_intrinsic_measurements() {
+        let mut doc = Document::new();
+        let container = doc
+            .append_new(
+                doc.root(),
+                element(
+                    "div",
+                    Some(
+                        "display:grid;width:200px;justify-content:flex-start;grid-template-columns:min-content max-content;grid-template-rows:20px",
+                    ),
+                ),
+            )
+            .unwrap();
+        let first = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(first, NodeKind::Text("hello world".into()))
+            .unwrap();
+        let second = doc.append_new(container, element("div", None)).unwrap();
+        doc.append_new(second, NodeKind::Text("hello world".into()))
+            .unwrap();
+
+        let output = layout_document(
+            &doc,
+            Size {
+                width: 320.0,
+                height: 200.0,
+            },
+        );
+        let grid = &output.fragments.root.children[0];
+
+        assert_eq!(grid.children[0].boxes.border_box.size.width, 40.0);
+        assert_eq!(grid.children[1].boxes.border_box.origin.x, 40.0);
+        assert_eq!(grid.children[1].boxes.border_box.size.width, 88.0);
     }
 
     #[test]
