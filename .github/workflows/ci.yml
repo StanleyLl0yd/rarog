@@ -79,7 +79,7 @@ jobs:
       - name: Check
         run: cargo check --locked --workspace --all-targets
       - name: Check fuzz targets
-        run: cargo check --manifest-path fuzz/Cargo.toml --bins
+        run: cargo check --locked --manifest-path fuzz/Cargo.toml --bins
       - name: Test
         run: cargo test --locked --workspace
       - name: R0 exit gate
