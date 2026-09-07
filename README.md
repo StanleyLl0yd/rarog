@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/rarog-icon.webp" width="112" alt="Rarog">
+  <img src="assets/branding/rarog-icon.webp" width="256" alt="Rarog">
 </p>
 
 <h1 align="center">Rarog Web Engine</h1>
@@ -140,6 +140,7 @@ cargo test -p rarog-engine --test p1_exit
 cargo test -p rarog-engine --test r01_correctness
 cargo test -p rarog-engine --test r1_exit
 cargo test -p rarog-engine --test r2_exit
+cargo test -p rarog-engine --test r3_exit
 cargo check --manifest-path fuzz/Cargo.toml --bins
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
@@ -150,6 +151,6 @@ Rarog is dual-licensed under **Apache-2.0 OR MIT**, at your option. See `LICENSE
 
 ## Project status
 
-**R0 — Ember, R1 — Flame and R2 — Flight are complete. R3 — Wings is in progress.** Rarog remains experimental; no compatibility, performance, security-hardening or production-readiness claims are made yet.
+**R0 — Ember, R1 — Flame, R2 — Flight and R3 — Wings are complete. R4 — Sky has not started.** Rarog is currently in the mandatory pre-R4 repository audit/refactor and stabilization phase and remains experimental; no compatibility, performance, security-hardening or production-readiness claims are made yet.
 
 Created by **Stanley Lloyd**. Contributions are welcome; see `CONTRIBUTING.md`.
