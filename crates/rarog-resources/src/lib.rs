@@ -470,10 +470,9 @@ impl ImageDecodeQueue {
                 None
             }
         };
-        let active = self
-            .active
-            .take()
-            .expect("active request is retained until completion succeeds");
+        let Some(active) = self.active.take() else {
+            return Err(ImageDecodeQueueError::NoActiveRequest);
+        };
         self.retained_encoded_bytes = self
             .retained_encoded_bytes
             .saturating_sub(active.encoded.len());
@@ -492,10 +491,9 @@ impl ImageDecodeQueue {
         else {
             return false;
         };
-        let pending = self
-            .pending
-            .remove(position)
-            .expect("position comes from the same queue");
+        let Some(pending) = self.pending.remove(position) else {
+            return false;
+        };
         self.retained_encoded_bytes = self
             .retained_encoded_bytes
             .saturating_sub(pending.encoded.len());
@@ -518,10 +516,9 @@ impl ImageDecodeQueue {
                 actual: request,
             });
         }
-        let active = self
-            .active
-            .take()
-            .expect("active request exists after identity validation");
+        let Some(active) = self.active.take() else {
+            return Err(ImageDecodeQueueError::NoActiveRequest);
+        };
         self.retained_encoded_bytes = self
             .retained_encoded_bytes
             .saturating_sub(active.encoded.len());
