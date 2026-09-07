@@ -707,7 +707,8 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
         match command {
             DisplayCommand::FillRect { rect, color }
             | DisplayCommand::TextPlaceholder { rect, color } => {
-                let destination = transform_rect(rect, *transforms.last().expect("transform state"));
+                let destination =
+                    transform_rect(rect, *transforms.last().expect("transform state"));
                 let bounds = match *clips.last().expect("clip state") {
                     Some(clip) => intersection(destination, clip),
                     None => Some(destination),
@@ -724,7 +725,8 @@ fn effective_indexed_paint(list: &DisplayList) -> BTreeMap<DisplayItemId, Effect
                 ordinal = ordinal.saturating_add(1);
             }
             DisplayCommand::DrawImage { rect, image } => {
-                let destination = transform_rect(rect, *transforms.last().expect("transform state"));
+                let destination =
+                    transform_rect(rect, *transforms.last().expect("transform state"));
                 let bounds = match *clips.last().expect("clip state") {
                     Some(clip) => intersection(destination, clip),
                     None => Some(destination),
@@ -1052,7 +1054,10 @@ impl Framebuffer {
             match *command {
                 DisplayCommand::FillRect { rect, color }
                 | DisplayCommand::TextPlaceholder { rect, color } => {
-                    let rect = translate_rect(transform_rect(rect, *transforms.last().expect("transform state")), translation);
+                    let rect = translate_rect(
+                        transform_rect(rect, *transforms.last().expect("transform state")),
+                        translation,
+                    );
                     if let Some(clipped) = intersection(rect, *clips.last().expect("clip stack")) {
                         let color = apply_opacity(color, *opacities.last().expect("opacity stack"));
                         self.fill_rect(clipped, color);
@@ -1060,7 +1065,10 @@ impl Framebuffer {
                 }
                 DisplayCommand::DrawImage { rect, image } => {
                     let destination =
-                        translate_rect(transform_rect(rect, *transforms.last().expect("transform state")), translation);
+                        translate_rect(
+                            transform_rect(rect, *transforms.last().expect("transform state")),
+                            translation,
+                        );
                     let decoded = images.and_then(|store| store.image(image));
                     if let (Some(decoded), Some(clipped)) = (
                         decoded,
@@ -1075,7 +1083,10 @@ impl Framebuffer {
                     }
                 }
                 DisplayCommand::PushClip { rect } => {
-                    let rect = translate_rect(transform_rect(rect, *transforms.last().expect("transform state")), translation);
+                    let rect = translate_rect(
+                        transform_rect(rect, *transforms.last().expect("transform state")),
+                        translation,
+                    );
                     let current = *clips.last().expect("clip stack");
                     clips
                         .push(intersection(current, rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)));
