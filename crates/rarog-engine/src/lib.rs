@@ -617,6 +617,25 @@ impl RenderSession {
         dirty.capture(&self.document, &self.styles);
         let through_generation = dirty.through_generation();
         let dirty_nodes = dirty.entries().len();
+        let no_document_updates =
+            !mutation_history_lost && (mutations.is_empty() || dirty_nodes == 0);
+
+        if no_document_updates && self.pending_image_refreshes.is_empty() {
+            dirty.clear();
+            self.dirty = dirty;
+            self.document.prune_mutations_through(through_generation);
+            self.damage = DamageRegion::default();
+            return Ok(IncrementalReport {
+                mode: IncrementalMode::Unchanged,
+                from_generation,
+                through_generation,
+                dirty_nodes,
+                patched_nodes: 0,
+                retained_display_list: true,
+                styles_rebuilt: false,
+                elapsed: update_started.elapsed(),
+            });
+        }
 
         let mut display_list = self.display_list.clone();
         let resource_updates = self
@@ -630,7 +649,7 @@ impl RenderSession {
             })
             .fold(0usize, usize::saturating_add);
 
-        if !mutation_history_lost && (mutations.is_empty() || dirty_nodes == 0) {
+        if no_document_updates {
             dirty.clear();
             self.dirty = dirty;
             self.document.prune_mutations_through(through_generation);
