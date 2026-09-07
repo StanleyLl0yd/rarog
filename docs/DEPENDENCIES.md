@@ -21,13 +21,15 @@ These are intended to define Rarog and should remain under Rarog architectural c
 
 Components should be selected by technical evaluation and isolated behind adapters:
 
-- JavaScript/Wasm: SpiderMonkey initially
-- GPU abstraction: `wgpu` candidate
+- JavaScript/Wasm: SpiderMonkey through the isolated `rarog-script-spidermonkey` adapter
+- GPU abstraction: `wgpu` behind compositor/platform adapters
 - Unicode normalization/segmentation: Unicode-focused Rust crates
-- text shaping: HarfBuzz or a mature Rust shaping stack behind an adapter
-- image/audio/video codecs: mature audited libraries/system frameworks
+- text shaping: HarfRust behind the Rarog-owned shaping contract
+- HTML parsing: `html5ever` behind the Rarog-owned HTML adapter
+- WebIDL parsing: `weedle2` behind the normalized WebIDL frontend
+- URL parsing and public-suffix data: `url` + `psl` behind Rarog-owned URL/origin/site types
+- image/audio/video codecs: mature audited libraries/system frameworks when those subsystems are introduced
 - TLS: mature platform/Rust TLS implementation; never custom cryptography
-- URL parsing: standards-oriented library if semantics fit Rarog's security model
 
 ## Selected adapters
 
@@ -38,6 +40,30 @@ R1 uses the published `cssparser` 0.37 release as the CSS Syntax tokenizer/parse
 The dependency is limited to the private `rarog-css` syntax adapter. Rarog continues to own selector representation and matching, specificity, cascade, invalidation dependencies, typed property/value conversion and computed style. No `cssparser` type is part of a public Rarog API.
 
 The dependency is MPL-2.0 licensed and satisfies the workspace Rust 1.85 build gate. The adapter is covered by malformed-input regression tests and a dedicated CSS stylesheet fuzz target. Upgrading the backend must preserve these boundaries and pass the same compatibility and deterministic-render gates.
+
+### `html5ever` 0.39
+
+R1 uses `html5ever` for standards-oriented HTML tokenization and tree construction behind `rarog-html`. The tree sink, tendril and parser types remain private to the adapter; output is converted into the Rarog-owned DOM and diagnostics types. The HTML parser has a dedicated fuzz target.
+
+### `weedle2` 5.0.0
+
+R2 pins package `weedle2` 5.0.0 (imported as `weedle`) behind `rarog-webidl::StandardsWebIdlFrontend`. The dependency parses syntax; Rarog owns normalization, validation, binding metadata and the public WebIDL IR. The frontend has a dedicated fuzz target.
+
+### `url` 2.5.7 and `psl` 2.1.226
+
+R2 pins `url` 2.5.7 and `psl` 2.1.226 inside `rarog-url`. External URL and public-suffix representations do not cross the crate boundary; callers consume Rarog-owned URL, origin and site identity types. URL parsing/resolution has a dedicated fuzz target.
+
+### `harfrust` 0.13.3
+
+R1 uses `harfrust` in `rarog-text-opentype` behind the Rarog-owned shaping interfaces. Font fallback, source ranges, bidi state, shaping requests and fragment identity remain engine-owned; the adapter consumes registered OpenType bytes and returns Rarog-owned shaped glyph data.
+
+### `mozjs` 0.21.6
+
+R2 pins optional `mozjs` 0.21.6 in the isolated `rarog-script-spidermonkey` crate. Ordinary engine crates depend only on `rarog-script`. SpiderMonkey builds are exercised through dedicated Linux and Windows feature lanes; the adapter is the intentional narrow exception to the workspace-wide no-`unsafe` policy.
+
+### Windows platform adapters
+
+The Windows platform crate currently uses `font-kit` 0.14.3 for system-font selection and `clipboard-win` 5.4.1 for clipboard integration. Both dependencies remain target-specific implementation details behind `rarog-platform` contracts. Windows GPU selection and presentation enable the DX12 backend of the same pinned `wgpu` 26.0.1 release used by the compositor adapter.
 
 ### `wgpu` 26.0.1
 
