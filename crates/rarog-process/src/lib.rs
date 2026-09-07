@@ -271,7 +271,10 @@ mod tests {
 
         assert_eq!(error.kind, ProcessTopologyErrorKind::ProcessLimitExceeded);
         assert_eq!(topology.active_site_processes(), 1);
-        assert_eq!(topology.process_for_site(&first_site), Some(first.process()));
+        assert_eq!(
+            topology.process_for_site(&first_site),
+            Some(first.process())
+        );
         assert_eq!(topology.process_for_site(&cross_scheme), None);
     }
 
