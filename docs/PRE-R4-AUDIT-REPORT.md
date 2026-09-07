@@ -152,6 +152,7 @@ The Linux portability lane includes fuzz-target compilation. The Windows/Linux l
 - No production binary-size comparison is reported: the workspace is primarily an engine/library plus bootstrap shell, and no stable release artifact was produced at both endpoints with an identical artifact-measurement procedure.
 - No benchmark improvement percentage is claimed; the audit removed obvious repeated work but did not run a controlled cross-endpoint performance benchmark suite.
 - Candidates requiring ownership/public-API/process-boundary redesign were preserved for explicit R4 architectural work rather than changed speculatively.
+- Numerous historical topic branch refs predate the current cleanup policy and remain outside the audited `main` tree. Repository `delete_branch_on_merge` is enabled for future merged topics, but the available GitHub connector exposes no delete-ref mutation, so retroactive branch-ref deletion is an administrative cleanup item rather than a claimed audit change.
 
 ## Before/after statistics
 
