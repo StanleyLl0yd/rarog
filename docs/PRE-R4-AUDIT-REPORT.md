@@ -2,7 +2,7 @@
 
 Status: **complete**.
 
-This report records the mandatory repository-wide audit/refactor between R3 — Wings and R4 — Sky. R4 remains blocked by `PRE-R4-AUDIT.md` until final stabilization is green and the gate is explicitly marked complete.
+This report records the mandatory repository-wide audit/refactor between R3 — Wings and R4 — Sky. Final stabilization is green and the gate is complete in this finalization branch; R4 remains blocked until the completed gate/report are merged to `main`.
 
 ## Scope and endpoints
 
@@ -192,4 +192,4 @@ The Rust source/test total increased by 265 lines and five test occurrences whil
 - Architecture/roadmap/ADR/README/AGENTS/CI reconciliation: complete.
 - Final stabilization: complete; run `34122878456` is green.
 - Final report: complete.
-- R4 transition gate: ready to close in `PRE-R4-AUDIT.md`; no R4 implementation has started.
+- R4 transition gate: complete in this finalization branch; no R4 implementation has started.
