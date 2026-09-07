@@ -14,9 +14,9 @@ Tracking issue: #231.
 
 ## B — IPC
 
-- [ ] Define versioned Rarog-owned IPC endpoint roles, message envelopes and protocol limits.
-- [ ] Add request/reply correlation, validation and bounded queue/backpressure semantics.
-- [ ] Define transport-independent disconnect/protocol-error behavior.
+- [x] Define versioned Rarog-owned IPC endpoint roles, message envelopes and protocol limits (#233).
+- [x] Add request/reply correlation, validation and bounded queue/backpressure semantics (#233).
+- [x] Define transport-independent disconnect/protocol-error behavior (#233).
 - [ ] Add a Windows-first IPC transport behind the portable protocol boundary.
 
 ## C — Capability broker

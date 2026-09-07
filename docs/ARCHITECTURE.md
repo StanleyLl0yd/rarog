@@ -86,6 +86,16 @@ The assignment contract is fail-closed:
 
 This establishes the identity/lifetime contract required by later R4 IPC, capability brokering and crash recovery without assuming that those components already run in separate OS processes. See ADR-0102.
 
+### R4 IPC protocol boundary
+
+`rarog-ipc` defines a transport-independent Host↔Site protocol envelope before any Windows IPC transport is selected. Every envelope carries the current protocol version, explicit endpoint roles, a request/reply/event kind and a bounded owned payload. Request identities are correlation values only; they do not grant process or capability authority.
+
+The initial channel model is bounded in both message count and queued payload bytes. Enqueue returns explicit backpressure errors rather than growing without limit. Disconnect discards queued work and makes subsequent send/receive operations fail until a new channel object is established.
+
+Direct Site↔Site and Host↔Host routes are rejected by the portable protocol. Site-process authority is intentionally not accepted from a self-asserted payload field: later Host control-plane code binds a channel to the `SiteProcessId` it launched/authenticated and capability checks use that Host-owned binding.
+
+The protocol crate does not choose named pipes, sockets, shared memory, serialization or Windows handles. Those are later transport concerns behind this validated envelope/lifetime contract. See ADR-0103.
+
 ## Rendering model
 
 ```text

@@ -2270,6 +2270,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-ipc"
+version = "0.1.0"
+
+[[package]]
 name = "rarog-layout"
 version = "0.1.0"
 dependencies = [
