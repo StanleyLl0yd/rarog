@@ -1,0 +1,54 @@
+# R4 — Sky backlog
+
+Status: **in progress**.
+
+Tracking issue: #231.
+
+## A — Process topology
+
+- [x] Introduce Rarog-owned Host/Site process identities independent of OS process IDs and handles.
+- [x] Add bounded Host-owned schemeful-site assignment with explicit reuse only for the same `SiteIdentity`.
+- [x] Fail closed when the Site-process budget is exhausted instead of sharing a process across distinct sites.
+- [x] Retire Site-process assignments without reusing stale process identities.
+- [ ] Connect document/navigation lifecycle to explicit Site-process assignment and replacement.
+
+## B — IPC
+
+- [ ] Define versioned Rarog-owned IPC endpoint roles, message envelopes and protocol limits.
+- [ ] Add request/reply correlation, validation and bounded queue/backpressure semantics.
+- [ ] Define transport-independent disconnect/protocol-error behavior.
+- [ ] Add a Windows-first IPC transport behind the portable protocol boundary.
+
+## C — Capability broker
+
+- [ ] Define Host-owned brokered capability identities, scopes and revocation.
+- [ ] Bind capability authority to the owning Site-process identity and lifecycle.
+- [ ] Route privileged network/platform operations through explicit broker checks.
+- [ ] Prove Site-side inputs cannot mint, widen or reuse revoked capability authority.
+
+## D — Windows process hardening
+
+- [ ] Define the narrow Windows Host/Site process launch adapter.
+- [ ] Apply Windows-first process mitigation/sandbox policy for Site processes.
+- [ ] Keep Windows handles, tokens, job objects and mitigation APIs outside portable engine crates.
+- [ ] Add Windows-specific process/sandbox validation to CI.
+
+## E — Site isolation integration
+
+- [ ] Make cross-site process separation the default navigation policy.
+- [ ] Define same-site reuse and cross-site replacement rules.
+- [ ] Preserve opaque-origin/site isolation through explicit environment-owned identity propagation.
+- [ ] Connect Site-process authority to IPC and broker ownership without address-space assumptions.
+
+## F — Crash recovery
+
+- [ ] Detect Site-process loss and invalidate the corresponding process/channel state.
+- [ ] Revoke all brokered capabilities owned by a lost Site process.
+- [ ] Recreate recoverable Site state with a fresh process identity.
+- [ ] Fail closed when recovery state or authority cannot be proven valid.
+
+## Closure
+
+R4 closes only after the bounded Sky scope is integrated into production paths, `docs/R4-EXIT.md` is complete, a dedicated `r4_exit` integration gate is present, and Windows-primary/Linux-portability/security CI are green.
+
+R4 completion will not imply a complete browser sandbox, storage/worker/media support, general-Web compatibility or browser readiness.

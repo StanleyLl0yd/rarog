@@ -72,6 +72,20 @@ Host application (Zorya / Rarog View embedder)
 
 The v0.1 bootstrap runs in one process, but its crate boundaries intentionally mirror future security/process boundaries.
 
+### R4 process identity and site assignment boundary
+
+R4 begins with a process-placement-independent topology in `rarog-process`. The Host owns engine-level Host/Site process identities and assigns a schemeful `SiteIdentity` to a bounded Site-process identity. These identities are not OS process IDs, handles or transport endpoints; Windows launch/sandbox state remains behind a later platform boundary.
+
+The assignment contract is fail-closed:
+
+- one live schemeful site may reuse its existing Site-process assignment;
+- a distinct schemeful site receives a distinct Site-process identity;
+- opaque site identities remain isolated unless the exact opaque identity is propagated and reused;
+- exhausting the configured Site-process budget returns an error instead of sharing authority with another site;
+- retiring a Site process removes its site assignment, and replacement allocation receives a fresh identity rather than reusing stale authority.
+
+This establishes the identity/lifetime contract required by later R4 IPC, capability brokering and crash recovery without assuming that those components already run in separate OS processes. See ADR-0102.
+
 ## Rendering model
 
 ```text
