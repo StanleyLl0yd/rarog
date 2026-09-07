@@ -202,6 +202,14 @@ A pull request should merge only after the required checks pass. Remove obsolete
 
 Never commit credentials, tokens, private keys, signing material, generated secrets, local environment data, or sensitive test data.
 
+## Visual identity
+
+Rarog's canonical visual direction is defined in `docs/BRAND.md` and the repository assets under `assets/branding/`.
+
+Use the Rarog bird/orbit mark without redrawing, recoloring, stretching, rotating or adding competing effects. New project-facing visuals should use the documented Ember Navy, flame red/orange/gold and indigo/purple palette rather than introducing arbitrary accent colors.
+
+Repository presentation, documentation artwork and future application chrome should feel like the same product, while readability, accessibility, platform conventions and technical clarity take precedence over decorative styling.
+
 ## Comments and documentation
 
 Keep source-code comments minimal, necessary, current, and English-only.

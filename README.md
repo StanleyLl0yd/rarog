@@ -1,6 +1,23 @@
-# Rarog Web Engine
+<p align="center">
+  <img src="assets/branding/rarog-icon.webp" width="112" alt="Rarog">
+</p>
 
-**A small engine for a big Web.**
+<h1 align="center">Rarog Web Engine</h1>
+
+<p align="center"><strong>A small engine for a big Web.</strong></p>
+
+<p align="center">
+  <img alt="Rust-first" src="https://img.shields.io/badge/Rust--first-F95023?style=flat-square&labelColor=0B0E2C">
+  <img alt="Windows-first" src="https://img.shields.io/badge/Windows--first-3A44AE?style=flat-square&labelColor=0B0E2C">
+  <img alt="Independent Web engine" src="https://img.shields.io/badge/independent-Web%20engine-EC2820?style=flat-square&labelColor=0B0E2C">
+</p>
+
+<p align="center">
+  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
+  <a href="docs/ROADMAP.md">Roadmap</a> ·
+  <a href="docs/BRAND.md">Visual identity</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
 Rarog is an experimental, independent, Rust-first Web engine designed around four priorities:
 
@@ -11,7 +28,7 @@ Rarog is an experimental, independent, Rust-first Web engine designed around fou
 
 The **primary target platform is Windows**. Rarog is being designed so the engine core can remain portable, but the first production-quality host integration, GPU/compositor path, sandboxing, input integration, accessibility work and reference browser will target **Windows 10/11** first.
 
-The workspace version is **0.1.0**. **R0 — Ember is complete**: it established deterministic rendering, invalidation, paint, embedder and platform ownership boundaries. **R1 — Flame is complete**: it replaced the bootstrap HTML/CSS paths with standards-oriented adapters, established scoped block/inline formatting foundations, connected production OpenType shaping and Windows font discovery, and broadened retained incremental rendering and damage-aware paint. **R2 — Flight is complete**: it established normalized WebIDL and replaceable script-runtime boundaries, the first SpiderMonkey adapter, events and engine-owned task/microtask scheduling, URL/origin/Fetch foundations, script-driven retained rendering checkpoints, and Windows input/IME/clipboard adapters. **R3 — Wings is in progress**, beginning with measured flexbox/layout work before compositor/GPU, asynchronous resources and scrolling.
+The workspace version is **0.1.0**. **R0 — Ember is complete**: it established deterministic rendering, invalidation, paint, embedder and platform ownership boundaries. **R1 — Flame is complete**: it replaced the bootstrap HTML/CSS paths with standards-oriented adapters, established scoped block/inline formatting foundations, connected production OpenType shaping and Windows font discovery, and broadened retained incremental rendering and damage-aware paint. **R2 — Flight is complete**: it established normalized WebIDL and replaceable script-runtime boundaries, the first SpiderMonkey adapter, events and engine-owned task/microtask scheduling, URL/origin/Fetch foundations, script-driven retained rendering checkpoints, and Windows input/IME/clipboard adapters. **R3 — Wings is complete**: bounded Flexbox/Grid work, the compositor worker, replaceable `wgpu` backend, Windows-first GPU presentation, asynchronous image decode, scrolling and engine-owned frame scheduling are protected by a dedicated exit gate. **R4 has not started**: the repository is in the mandatory pre-R4 audit/refactor and stabilization phase.
 
 > Rarog has standards-oriented foundations, not a claim of general-Web compatibility or standards completeness. Broad DOM/Web API bindings, mature script/network integration, flex/grid completeness, GPU/compositor, process isolation and browser readiness remain roadmap work.
 

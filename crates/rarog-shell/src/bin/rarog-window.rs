@@ -16,7 +16,7 @@ mod windows {
     use winit::dpi::LogicalSize;
     use winit::event::{MouseScrollDelta, WindowEvent};
     use winit::event_loop::{ActiveEventLoop, EventLoop};
-    use winit::window::{Window, WindowId};
+    use winit::window::{Icon, Window, WindowId};
 
     pub fn run() -> Result<(), Box<dyn Error>> {
         let input = std::env::args()
@@ -55,8 +55,14 @@ mod windows {
                 return Ok(());
             }
 
+            let icon = Icon::from_rgba(
+                include_bytes!("../../../../assets/branding/rarog-window-icon-24.rgba").to_vec(),
+                24,
+                24,
+            )?;
             let attributes = Window::default_attributes()
                 .with_title(format!("Rarog GPU — {}", self.input))
+                .with_window_icon(Some(icon))
                 .with_inner_size(LogicalSize::new(1024.0, 768.0));
             let window = Arc::new(event_loop.create_window(attributes)?);
             let size = window.inner_size();
