@@ -367,10 +367,7 @@ impl IpcChannel {
         }
     }
 
-    pub fn receive(
-        &mut self,
-        endpoint: EndpointRole,
-    ) -> Result<Option<IpcEnvelope>, IpcError> {
+    pub fn receive(&mut self, endpoint: EndpointRole) -> Result<Option<IpcEnvelope>, IpcError> {
         self.require_connected()?;
         Ok(match endpoint {
             EndpointRole::Host => self.site_to_host.pop(),
@@ -487,13 +484,8 @@ mod tests {
         let mut channel = IpcChannel::try_new(limits).unwrap();
         channel
             .send(
-                IpcEnvelope::request(
-                    EndpointRole::Host,
-                    request_id,
-                    b"ping".to_vec(),
-                    limits,
-                )
-                .unwrap(),
+                IpcEnvelope::request(EndpointRole::Host, request_id, b"ping".to_vec(), limits)
+                    .unwrap(),
             )
             .unwrap();
 
@@ -502,13 +494,8 @@ mod tests {
 
         channel
             .send(
-                IpcEnvelope::response(
-                    EndpointRole::Site,
-                    request_id,
-                    b"pong".to_vec(),
-                    limits,
-                )
-                .unwrap(),
+                IpcEnvelope::response(EndpointRole::Site, request_id, b"pong".to_vec(), limits)
+                    .unwrap(),
             )
             .unwrap();
         let response = channel.receive(EndpointRole::Host).unwrap().unwrap();
