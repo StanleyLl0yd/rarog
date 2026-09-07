@@ -146,7 +146,7 @@ R0 stores an explicit `Namespace` on every `ElementData` and represents the loca
 
 Recoverable syntax problems produce deterministic `ParseDiagnostic` records with a code, severity, source span and message. Contract failures that prevent parsing from starting or completing use `Result::Err`. The canonical entry points are `parse`, `parse_with_diagnostics` and `parse_stream`; `parse_standards*` names remain compatibility aliases rather than a separate parser path.
 
-R1 routes parsing through the standards-oriented adapter backed by `html5ever`, then normalizes its result into Rarog-owned DOM identities and invariants. Streaming input is still buffered until close rather than incrementally tokenized across calls, but backend token/node types do not leak into DOM, layout or engine callers. The adapter boundary therefore preserves replaceability while the parser behavior follows the standards-oriented path. See ADR-0014 and ADR-0025.
+R1 routes parsing through the standards-oriented adapter backed by `html5ever`, then normalizes its result into Rarog-owned DOM identities and invariants. Streaming input is still buffered until close rather than incrementally tokenized across calls, but backend token/node types do not leak into DOM, layout or engine callers. The adapter boundary therefore preserves replaceability while the parser behavior follows the standards-oriented path. See ADR-0101 and ADR-0025.
 
 ## Style source, selector and cascade boundary
 
