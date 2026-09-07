@@ -61,6 +61,8 @@ The resolved column distribution is applied to the provisional geometry used for
 
 The resolved row distribution is applied after row sizing.
 
+Track-group distribution does not feed its offset or extra distributed gutter back into track sizing. The provisional column geometry uses the already-resolved distributed column placement only so natural block-size measurement sees the same item-area geometry as the final pass.
+
 The final `layout_fixed_grid` call receives the distributed origin and effective gaps.
 
 ## Consequences
