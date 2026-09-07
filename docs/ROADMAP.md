@@ -73,12 +73,17 @@ See `R3-BACKLOG.md` and `R3-EXIT.md` for the completed bounded Wings scope and e
 
 ## Pre-R4 audit and stabilization gate
 
+Status: **complete**.
+
 R4 does not begin immediately after R3. The complete repository is audited and refactored first under `agent/AUDIT_REFACTOR.md`, with behavior preservation, two full passes and complete verification required.
 
 `PRE-R4-AUDIT.md` is the authoritative transition gate. While it is pending, Host/Site process, IPC, sandboxing, site-isolation and other R4 implementation work is blocked.
 
 ## R4 — Sky
 
+Status: **in progress**. Tracking issue: #231.
+
+- Rarog-owned Host/Site process identity and bounded site-assignment topology;
 - Host process;
 - Site process;
 - IPC protocol;
