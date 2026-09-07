@@ -36,7 +36,10 @@ jobs:
           build-mode: none
           queries: security-extended
       - name: Analyze
+        id: analyze
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      - name: Enforce medium-or-higher CodeQL findings
+        run: python3 scripts/verify_codeql_sarif.py "${{ steps.analyze.outputs.sarif-output }}"
 
   actions:
     name: Analyze GitHub Actions
@@ -56,4 +59,7 @@ jobs:
           languages: actions
           queries: security-extended
       - name: Analyze
+        id: analyze
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      - name: Enforce medium-or-higher CodeQL findings
+        run: python3 scripts/verify_codeql_sarif.py "${{ steps.analyze.outputs.sarif-output }}"
