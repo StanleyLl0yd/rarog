@@ -1,6 +1,6 @@
 # R3 — Wings backlog
 
-Status: **in progress**.
+Status: **complete**.
 
 Tracking issue: #109.
 
@@ -48,9 +48,13 @@ Tracking issue: #109.
 - [x] Add engine-owned frame scheduling and Windows presentation boundaries (#158–#160, #164, #169).
 - [x] Connect root scrolling and resource completion to retained damage/frame production (#171, #172–#175).
 
-## Current focus
+## Closure
 
-The retained Windows frame path now reaches real DX12/wgpu presentation through the bounded compositor worker: the worker owns the Windows GPU device, surface, retained wgpu backend and surface recovery while engine/frame contracts remain backend-neutral. Image decode completion participates in retained frame production, and the root scroll node drives actual viewport translation/damage without changing display-list identity. Grid now supports bounded single-span `auto` track sizing (#182), intrinsic automatic sizing for non-stretch items (#183), container default inline alignment through `justify-items` (#184), and an explicit internal base-size/growth-limit sizing state (#185). The first order-independent, gap-aware spanning distribution primitive now exists on that state (#186) but is intentionally not wired into CSS layout yet. Minimum/min-content/max-content contribution classes are now explicit layout-owned data (#187). Span-ordered sizing rounds now compose synthetic distribution state in increasing-span phases (#188). Bounded semantic contribution derivation now preserves inline minimum/min-content/max-content measurements through the fragment builder (#189) while production geometry deliberately retains the #182 max-content compatibility selection. A non-spanning intrinsic state resolver now separates base-size and growth-limit contribution kinds (#190), while the compatibility geometry still selects max-content for both. Bounded definite-space Maximize Tracks and auto-track stretch phases now exist (#191), while the compatibility resolver still supplies indefinite space. Computed content-distribution now preserves `normal` / `stretch` so Grid can identify the final auto-track stretch condition (#192). Definite Grid inline space and genuinely definite block space now feed the intrinsic state pipeline for start/stretch content distribution (#193), while auto-height rows remain indefinite. Grid track-group positioning/distribution now composes resolved track sizes with start/end/center/space-* alignment and declared gutters (#194), removing the remaining content-alignment compatibility path. A composed intrinsic-spanning model now validates span-ordered base and growth-limit phases, fixed gaps, and the temporary infinitely-growable handoff (#195). The validated fixed/`auto` model is promoted into CSS-visible Grid geometry for the semantic minimum → max-content path (#196), while legacy max-content-only callers retain the previous fail-closed spanning boundary. Layout-owned fractional track metadata and definite-space flex-fraction expansion land in #197, with bounded CSS `fr` rollout in #198. Bare `min-content` / `max-content` tracks add a bounded richer intrinsic max-track slice in #199. Indefinite flex sizing, flexible/content-sized intrinsic spans, `minmax()`, fit-content and broader Grid grammar remain explicitly deferred. The remaining R3 work is the exit/closure gate before the mandatory pre-R4 audit and refactor phase.
+R3 closes after the bounded Wings scope above is present in production paths and the dedicated `r3_exit` integration gate passes on Windows-primary and Linux-portability CI.
+
+The closure intentionally does **not** redefine deferred CSS Grid work as R3 requirements. Indefinite flex sizing, intrinsic spans across flexible/content-sized tracks, `minmax()`, fit-content, repeat/implicit-track grammar and broader standards completeness remain later compatibility/layout work.
+
+The next implementation phase is **not R4**. The repository enters the mandatory pre-R4 audit/refactor gate documented in `PRE-R4-AUDIT.md`. R4 work may begin only after that gate is complete.
 
 ## Scope boundary
 

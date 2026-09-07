@@ -176,6 +176,9 @@ cargo test --workspace
 cargo test -p rarog-engine --test r0_exit
 cargo test -p rarog-engine --test p1_exit
 cargo test -p rarog-engine --test r01_correctness
+cargo test -p rarog-engine --test r1_exit
+cargo test -p rarog-engine --test r2_exit
+cargo test -p rarog-engine --test r3_exit
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
 

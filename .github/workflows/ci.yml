@@ -40,6 +40,8 @@ jobs:
         run: cargo test -p rarog-engine --test r1_exit
       - name: R2 exit gate
         run: cargo test -p rarog-engine --test r2_exit
+      - name: R3 exit gate
+        run: cargo test -p rarog-engine --test r3_exit
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -76,6 +78,8 @@ jobs:
         run: cargo test -p rarog-engine --test r1_exit
       - name: R2 exit gate
         run: cargo test -p rarog-engine --test r2_exit
+      - name: R3 exit gate
+        run: cargo test -p rarog-engine --test r3_exit
       - name: Bootstrap render
         run: cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 
