@@ -104,14 +104,14 @@ impl FetchMethod {
                 "fetch forbids CONNECT, TRACE and TRACK methods",
             ));
         }
-        let canonical = ["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"]
+        let mut value = value;
+        if ["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"]
             .into_iter()
-            .find(|method| value.eq_ignore_ascii_case(method));
-        let normalized = match canonical {
-            Some(method) if value != method => method.to_owned(),
-            _ => value,
-        };
-        Ok(Self(normalized))
+            .any(|method| value.eq_ignore_ascii_case(method))
+        {
+            value.make_ascii_uppercase();
+        }
+        Ok(Self(value))
     }
 
     pub fn get() -> Self {
