@@ -21,8 +21,7 @@ const R4_BACKLOG: &str = include_str!("../../../docs/R4-BACKLOG.md");
 const R4_EXIT: &str = include_str!("../../../docs/R4-EXIT.md");
 const CI: &str = include_str!("../../../.github/workflows/ci.yml");
 const ROOT_CARGO: &str = include_str!("../../../Cargo.toml");
-const WINDOWS_NATIVE_CARGO: &str =
-    include_str!("../../rarog-platform-windows-native/Cargo.toml");
+const WINDOWS_NATIVE_CARGO: &str = include_str!("../../rarog-platform-windows-native/Cargo.toml");
 
 fn limits(max_site_processes: usize, max_navigation_contexts: usize) -> HostLimits {
     HostLimits {
@@ -406,13 +405,9 @@ fn r4_exit_context_privileges_fail_before_backend_side_effects() {
     assert_eq!(network.starts, 1);
     assert_ne!(operation.get(), network.last_ticket.unwrap().get());
     assert_eq!(
-        host.poll_navigation_context_network_operation(
-            second_network,
-            operation,
-            &mut network,
-        )
-        .unwrap_err()
-        .kind,
+        host.poll_navigation_context_network_operation(second_network, operation, &mut network,)
+            .unwrap_err()
+            .kind,
         HostControlErrorKind::InvalidNetworkOperationAuthority
     );
     assert_eq!(network.polls, 0);
@@ -529,7 +524,10 @@ fn r4_exit_process_loss_revokes_authority_before_fresh_recovery() {
 fn r4_exit_windows_platform_exposes_sandbox_only_on_windows() {
     if WindowsPlatformHost::target_available() {
         let host = WindowsPlatformHost::try_new().unwrap();
-        assert!(host.capabilities().supports(PlatformService::SandboxProcess));
+        assert!(
+            host.capabilities()
+                .supports(PlatformService::SandboxProcess)
+        );
     } else {
         assert_eq!(
             WindowsPlatformHost::try_new().unwrap_err(),
