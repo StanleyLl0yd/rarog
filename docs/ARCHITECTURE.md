@@ -118,7 +118,11 @@ Privileged Network operations never expose backend `NetworkTicket` values as Sit
 
 Document navigation is bound at the Host boundary rather than inside Web-controlled payloads. A `DocumentSiteBinding` stores the owning `SiteIdentity` and Host-assigned `SiteProcessId`. Initial and same-site navigation use the bounded topology normally; cross-site or cross-scheme navigation replaces the document binding with a distinct Site-process identity. Opaque URLs create a fresh identity for a new environment, while inherited opaque environments pass their stored `SiteIdentity` explicitly so identity is never accidentally regenerated. A stale binding is rejected before a target process is allocated. See ADR-0106.
 
-This is still a logical/portable control plane. The later Windows launcher/transport is responsible for detecting OS process loss and binding authenticated OS endpoints to these identities. See ADR-0105.
+The production-facing Host navigation boundary additionally wraps document bindings in bounded monotonic `NavigationContextId` values. Embedders retain the context identity and Site identity, not authoritative `SiteProcessId` values. The Host reference-counts contexts per Site process, keeps a shared same-site process live until the last context leaves, and retires an unreferenced source through disconnect → operation/capability revocation → process retirement. Under a one-slot process budget, an unshared source may be retired before cross-site target allocation; if target creation then fails, the context is explicitly invalidated rather than silently retaining or sharing stale authority.
+
+Privileges used by a navigation context are represented by `NavigationContextCapability`, which binds the Host-issued capability to the exact context in addition to the broker's process/class ownership. This prevents two same-site contexts sharing one Site process from treating each other's numeric capability references as authority. Context-scoped Network/Clipboard entry points resolve process authority from Host state before delegating to the existing broker-gated routes; cross-site navigation, context close and process loss make stale context capability/operation references unusable. See ADR-0109.
+
+This remains a portable authority model. The Windows launch/loss adapter now owns concrete child-process lifecycle and feeds observed loss back into Host revocation/retirement, while the future Windows IPC transport must bind authenticated OS endpoints to the same Host-owned identities. See ADR-0105 and ADR-0108.
 
 ## Rendering model
 

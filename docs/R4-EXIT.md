@@ -13,7 +13,7 @@ R4 establishes the first process-isolation architecture required by ADR-0003:
 - site isolation by default;
 - crash/replacement handling with stale-authority revocation.
 
-The completed portable R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, explicit document-to-Site navigation bindings, broker-gated Network/Clipboard operation routing, and a Host control plane that disconnects channels, revokes process-owned authority, retires identities and creates fresh logical replacements. They do not claim that production Site execution is already moved into the launched child, a Windows IPC transport or sandboxing yet.
+The completed R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, explicit document-to-Site navigation bindings, bounded Host-owned navigation contexts with last-reference Site lifetime, context-scoped privileged authority, broker-gated Network/Clipboard routing, and Windows child-process launch/loss observation that feeds Host revocation/retirement. They do not claim that production Site execution is already moved into the launched child, or that a Windows IPC transport or sandbox policy is complete yet.
 
 ## Required automated gate
 
@@ -23,11 +23,16 @@ Before R4 can close, a dedicated `crates/rarog-engine/tests/r4_exit.rs` gate mus
 - distinct schemeful sites cannot share Site-process authority;
 - same-site reuse is explicit and bounded;
 - cross-site/cross-scheme navigation replaces document bindings without cross-site process sharing;
+- Host navigation-context identities are bounded, monotonic and not reused after close/invalidation;
+- same-site contexts can share a Site process while last-reference close/transition retires unreferenced source authority;
+- a one-slot cross-site replacement retires only an unshared source and explicitly invalidates the context if target allocation then fails;
 - opaque Site identity is explicitly propagated by the owning document environment rather than recomputed;
 - process-budget exhaustion fails closed;
 - IPC version/size/role validation and backpressure behavior;
 - capability ownership, revocation and stale-process rejection;
-- Network and Clipboard backends are unreachable without exact process/capability authorization;
+- production navigation-context Network/Clipboard routes require exact Host context/process/capability authorization before reaching a backend;
+- lower-level process-owned privileged routes remain authenticated Host/transport building blocks rather than Site-selected authority;
+- two contexts sharing one Site process cannot interchange context-scoped capability authority;
 - backend Network tickets are hidden behind bounded Host-owned operation identities and stale operation authority is rejected;
 - real Windows child-process loss invokes Host revocation/retirement once and produces fresh replacement authority;
 - the Windows process/sandbox adapter passes its platform-specific contract.
