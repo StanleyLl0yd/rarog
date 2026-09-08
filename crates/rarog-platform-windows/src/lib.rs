@@ -124,6 +124,7 @@ impl PlatformHost for WindowsPlatformHost {
             input: true,
             input_ime: true,
             clipboard: true,
+            sandbox_process: true,
             ..PlatformCapabilities::NONE
         }
     }
@@ -285,6 +286,7 @@ mod tests {
             assert!(host.capabilities().supports(PlatformService::Input));
             assert!(host.capabilities().supports(PlatformService::InputIme));
             assert!(host.capabilities().supports(PlatformService::Clipboard));
+            assert!(host.capabilities().supports(PlatformService::SandboxProcess));
             assert!(host.font_service().is_some());
             assert!(host.input_service().is_some());
             assert!(host.text_input_service().is_some());

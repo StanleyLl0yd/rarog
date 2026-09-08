@@ -36,6 +36,8 @@ jobs:
         run: cargo test --locked --workspace
       - name: R4 Windows process lifecycle gate
         run: cargo test --locked -p rarog-platform-windows windows_site_process
+      - name: R4 Windows sandbox gate
+        run: cargo test --locked -p rarog-platform-windows-native windows_site_sandbox
       - name: R4 IPC wire codec gate
         run: cargo test --locked -p rarog-ipc wire_
       - name: R4 Windows IPC transport gate
