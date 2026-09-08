@@ -176,6 +176,7 @@ pub enum NavigationErrorKind {
     UnsupportedScheme,
     NavigationIdentitySpaceExhausted,
     FetchPolicy,
+    MissingResponseUrl,
     UnexpectedResponseUrl,
     InformationalResponse,
     NoDocumentResponse,
@@ -589,6 +590,7 @@ struct LoadedDocument {
 
 struct PendingNavigation {
     id: NavigationId,
+    requested_url: WebUrl,
     fetch_request: FetchRequest,
 }
 
@@ -622,7 +624,7 @@ impl View {
             .and_then(|loaded| loaded.document_url.as_ref())
     }
 
-    pub const fn pending_navigation(&self) -> Option<NavigationId> {
+    pub fn pending_navigation(&self) -> Option<NavigationId> {
         match &self.pending_navigation {
             Some(pending) => Some(pending.id),
             None => None,
@@ -776,9 +778,12 @@ impl View {
         source: impl Into<String>,
         base_url: impl Into<BaseUrl>,
     ) -> Result<(), EngineError> {
+        let source = source.into();
+        self.validate_document_source(&source)?;
         self.cancel_pending_navigation();
+        self.install_document(source, base_url.into(), None)?;
         self.document_origin = None;
-        self.install_document(source.into(), base_url.into(), None)
+        Ok(())
     }
 
     pub fn navigate(&self, request: NavigationRequest) -> RequestDisposition {
@@ -855,6 +860,7 @@ impl View {
         limits.max_response_body_bytes = limits
             .max_response_body_bytes
             .min(self.shared.budget.max_document_source_bytes);
+        let requested_url = target.clone();
         let mut fetch_request = FetchRequest::try_new(target, origin, limits).map_err(|error| {
             NavigationError::new(NavigationErrorKind::FetchPolicy, error.to_string())
         })?;
@@ -864,11 +870,11 @@ impl View {
         fetch_request.set_destination(FetchRequestDestination::Document);
 
         let navigation = self.allocate_navigation_id()?;
-        let target = fetch_request.url().clone();
         let superseded = self
             .pending_navigation
             .replace(PendingNavigation {
                 id: navigation,
+                requested_url: requested_url.clone(),
                 fetch_request: fetch_request.clone(),
             })
             .map(|pending| {
@@ -877,7 +883,7 @@ impl View {
                     .on_event(&ViewEvent::NavigationSuperseded {
                         view: self.id,
                         navigation: pending.id,
-                        url: pending.fetch_request.url().clone(),
+                        url: pending.requested_url,
                     });
                 pending.id
             });
@@ -887,7 +893,7 @@ impl View {
             .on_event(&ViewEvent::NavigationStarted {
                 view: self.id,
                 navigation,
-                url: target,
+                url: requested_url,
             });
 
         Ok(NavigationStartOutcome::Started(NavigationStart {
@@ -914,7 +920,7 @@ impl View {
             .on_event(&ViewEvent::NavigationCancelled {
                 view: self.id,
                 navigation: pending.id,
-                url: pending.fetch_request.url().clone(),
+                url: pending.requested_url,
             });
         Some(pending.id)
     }
@@ -931,7 +937,7 @@ impl View {
             .pending_navigation
             .take()
             .expect("matching navigation requires pending state");
-        let target = pending.fetch_request.url().clone();
+        let target = pending.requested_url.clone();
 
         match self.prepare_navigation_document(&pending, &response) {
             Ok((source, final_url, origin)) => {
@@ -997,17 +1003,20 @@ impl View {
         pending: &PendingNavigation,
         response: &FetchResponse,
     ) -> Result<(String, WebUrl, Origin), NavigationError> {
-        let target = pending.fetch_request.url();
-        let final_url = response
-            .url()
-            .cloned()
-            .unwrap_or_else(|| target.clone());
-        if &final_url != target {
+        let transport_url = pending.fetch_request.url();
+        let response_url = response.url().ok_or_else(|| {
+            NavigationError::new(
+                NavigationErrorKind::MissingResponseUrl,
+                "document response must identify the transport response URL",
+            )
+        })?;
+        if response_url != transport_url {
             return Err(NavigationError::new(
                 NavigationErrorKind::UnexpectedResponseUrl,
-                "network backend changed the final response URL outside Rarog redirect policy",
+                "network backend changed the response URL outside Rarog redirect policy",
             ));
         }
+        let final_url = pending.requested_url.clone();
 
         match response.status() {
             100..=199 => {
@@ -1065,12 +1074,7 @@ impl View {
         Ok((source, final_url, origin))
     }
 
-    fn install_document(
-        &mut self,
-        source: String,
-        base_url: BaseUrl,
-        document_url: Option<WebUrl>,
-    ) -> Result<(), EngineError> {
+    fn validate_document_source(&self, source: &str) -> Result<(), EngineError> {
         let limit = self.shared.budget.max_document_source_bytes;
         if source.len() > limit {
             return Err(EngineError::DocumentSourceLimitExceeded {
@@ -1078,6 +1082,16 @@ impl View {
                 limit,
             });
         }
+        Ok(())
+    }
+
+    fn install_document(
+        &mut self,
+        source: String,
+        base_url: BaseUrl,
+        document_url: Option<WebUrl>,
+    ) -> Result<(), EngineError> {
+        self.validate_document_source(&source)?;
 
         self.shared.event_sink.on_event(&ViewEvent::DocumentLoaded {
             view: self.id,
