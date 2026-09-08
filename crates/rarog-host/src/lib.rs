@@ -4,8 +4,8 @@ use rarog_broker::{
 };
 use rarog_ipc::{EndpointRole, IpcChannel, IpcEnvelope, IpcError, IpcErrorKind, IpcLimits};
 use rarog_process::{
-    ProcessTopology, ProcessTopologyError, ProcessTopologyErrorKind, SiteAssignmentKind,
-    SiteProcessId, DEFAULT_MAX_SITE_PROCESSES,
+    DEFAULT_MAX_SITE_PROCESSES, ProcessTopology, ProcessTopologyError, ProcessTopologyErrorKind,
+    SiteAssignmentKind, SiteProcessId,
 };
 use rarog_url::SiteIdentity;
 use std::collections::HashMap;
@@ -316,10 +316,7 @@ impl HostControlPlane {
         Ok(self.broker.revoke(id)?)
     }
 
-    pub fn process_lost(
-        &mut self,
-        process: SiteProcessId,
-    ) -> Result<SiteLoss, HostControlError> {
+    pub fn process_lost(&mut self, process: SiteProcessId) -> Result<SiteLoss, HostControlError> {
         let mut instance = self
             .sites
             .remove(&process)
@@ -402,7 +399,9 @@ mod tests {
     fn same_site_reuses_one_instance_and_cross_site_isolates() {
         let mut host = HostControlPlane::try_new(test_limits(2, 4)).unwrap();
         let first = host.ensure_site(site("https://a.example.com/")).unwrap();
-        let same = host.ensure_site(site("https://b.example.com/path")).unwrap();
+        let same = host
+            .ensure_site(site("https://b.example.com/path"))
+            .unwrap();
         let other = host.ensure_site(site("https://example.org/")).unwrap();
 
         assert!(first.is_new());
@@ -443,14 +442,9 @@ mod tests {
 
         let site_envelope =
             IpcEnvelope::request(EndpointRole::Site, request, Vec::new(), limits.ipc).unwrap();
-        let error = host
-            .enqueue_from_host(process, site_envelope)
-            .unwrap_err();
+        let error = host.enqueue_from_host(process, site_envelope).unwrap_err();
 
-        assert_eq!(
-            error.kind,
-            HostControlErrorKind::InvalidEnvelopeDirection
-        );
+        assert_eq!(error.kind, HostControlErrorKind::InvalidEnvelopeDirection);
         assert_eq!(host.queued_for_site(process).unwrap(), 0);
     }
 
@@ -466,13 +460,8 @@ mod tests {
 
         host.enqueue_from_host(
             process,
-            IpcEnvelope::request(
-                EndpointRole::Host,
-                request,
-                b"request".to_vec(),
-                limits.ipc,
-            )
-            .unwrap(),
+            IpcEnvelope::request(EndpointRole::Host, request, b"request".to_vec(), limits.ipc)
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(host.queued_for_site(process).unwrap(), 1);
