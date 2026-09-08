@@ -1931,6 +1931,222 @@ mod tests {
         }));
     }
 
+    fn html_navigation_response(url: &str, body: &str) -> FetchResponse {
+        let mut headers = rarog_fetch::HeaderList::default();
+        headers
+            .append("Content-Type", "text/html; charset=utf-8")
+            .unwrap();
+        FetchResponse::try_new(
+            Some(WebUrl::parse(url).unwrap()),
+            200,
+            headers,
+            body.as_bytes().to_vec(),
+            1024 * 1024,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn navigation_transaction_supersession_rejects_stale_completion() {
+        let events = RecordingEvents::default();
+        let engine = Engine::builder()
+            .event_sink(events.clone())
+            .build()
+            .unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+
+        let first = match view
+            .begin_navigation(NavigationRequest::new("https://a.example.test/"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let first_id = first.transport().navigation();
+        assert_eq!(first_id.get(), 1);
+        assert_eq!(first.superseded(), None);
+
+        let second = match view
+            .begin_navigation(NavigationRequest::new("https://b.example.test/path#fragment"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let second_id = second.transport().navigation();
+        assert_eq!(second_id.get(), 2);
+        assert_eq!(second.superseded(), Some(first_id));
+        assert_eq!(
+            second.transport().request().url().as_str(),
+            "https://b.example.test/path"
+        );
+        assert_eq!(view.pending_navigation(), Some(second_id));
+
+        assert_eq!(
+            view.complete_navigation(
+                first_id,
+                html_navigation_response("https://a.example.test/", "<p>stale</p>")
+            ),
+            NavigationCompletion::Stale
+        );
+        assert_eq!(view.pending_navigation(), Some(second_id));
+        assert!(view.document_url().is_none());
+
+        let completion = view.complete_navigation(
+            second_id,
+            html_navigation_response(
+                "https://b.example.test/path",
+                "<!doctype html><p>current</p>",
+            ),
+        );
+        let NavigationCompletion::Committed(commit) = completion else {
+            panic!("current navigation did not commit");
+        };
+        assert_eq!(commit.navigation(), second_id);
+        assert_eq!(commit.url().as_str(), "https://b.example.test/path");
+        assert_eq!(commit.status(), 200);
+        assert_eq!(view.document_url(), Some(commit.url()));
+        assert_eq!(
+            view.base_url().map(BaseUrl::as_str),
+            Some("https://b.example.test/path")
+        );
+        assert_eq!(view.pending_navigation(), None);
+
+        let snapshot = events.snapshot();
+        assert!(snapshot.iter().any(|event| matches!(
+            event,
+            ViewEvent::NavigationSuperseded {
+                navigation,
+                ..
+            } if *navigation == first_id
+        )));
+        assert!(snapshot.iter().any(|event| matches!(
+            event,
+            ViewEvent::NavigationCommitted {
+                commit: event_commit,
+                ..
+            } if event_commit.navigation() == second_id
+        )));
+    }
+
+    #[test]
+    fn cancelled_navigation_cannot_commit_and_ids_are_not_reused() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+
+        let first = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/one"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let first_id = first.transport().navigation();
+        assert_eq!(
+            view.cancel_navigation(first_id),
+            NavigationCancelOutcome::Cancelled
+        );
+        assert_eq!(
+            view.complete_navigation(
+                first_id,
+                html_navigation_response("https://example.test/one", "<p>late</p>")
+            ),
+            NavigationCompletion::Stale
+        );
+
+        let second = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/two"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        assert!(second.transport().navigation().get() > first_id.get());
+        assert_eq!(second.superseded(), None);
+    }
+
+    #[test]
+    fn navigation_response_policy_fails_closed_without_replacing_document() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<p>existing</p>", BaseUrl::about_blank())
+            .unwrap();
+
+        let start = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/next"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let navigation = start.transport().navigation();
+        let mut headers = rarog_fetch::HeaderList::default();
+        headers.append("Content-Type", "text/html").unwrap();
+        let response = FetchResponse::try_new(
+            Some(WebUrl::parse("https://example.test/next").unwrap()),
+            200,
+            headers,
+            vec![0xE9],
+            1024,
+        )
+        .unwrap();
+
+        let NavigationCompletion::Failed(error) =
+            view.complete_navigation(navigation, response)
+        else {
+            panic!("unsupported encoding unexpectedly committed");
+        };
+        assert_eq!(error.kind(), NavigationErrorKind::UnsupportedEncoding);
+        assert_eq!(view.base_url(), Some(&BaseUrl::about_blank()));
+        assert!(view.document_url().is_none());
+        assert_eq!(view.pending_navigation(), None);
+    }
+
+    #[test]
+    fn backend_cannot_hide_redirect_by_changing_final_response_url() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        let start = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/start"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let navigation = start.transport().navigation();
+
+        let NavigationCompletion::Failed(error) = view.complete_navigation(
+            navigation,
+            html_navigation_response("https://example.test/final", "<p>redirected</p>"),
+        ) else {
+            panic!("backend-controlled final URL unexpectedly committed");
+        };
+        assert_eq!(error.kind(), NavigationErrorKind::UnexpectedResponseUrl);
+        assert!(view.document_url().is_none());
+    }
+
+    #[test]
+    fn navigation_policy_blocks_transaction_before_transport_projection() {
+        let events = RecordingEvents::default();
+        let engine = Engine::builder()
+            .host_policy(BlockNavigation)
+            .event_sink(events.clone())
+            .build()
+            .unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        let request = NavigationRequest::new("https://example.test/");
+
+        assert_eq!(
+            view.begin_navigation(request.clone()).unwrap(),
+            NavigationStartOutcome::Blocked
+        );
+        assert_eq!(view.pending_navigation(), None);
+        assert!(events.snapshot().contains(&ViewEvent::NavigationBlocked {
+            view: view.id(),
+            request,
+        }));
+    }
+
     #[test]
     fn resource_requests_are_forwarded_to_embedder() {
         let events = RecordingEvents::default();
