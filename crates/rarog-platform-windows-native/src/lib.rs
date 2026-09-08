@@ -87,19 +87,18 @@ mod imp {
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
-        CreateJobObjectW, JobObjectExtendedLimitInformation, QueryInformationJobObject,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        QueryInformationJobObject, SetInformationJobObject,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
-        GetProcessMitigationPolicy, InitializeProcThreadAttributeList, ProcessASLRPolicy,
-        ProcessChildProcessPolicy, ProcessDEPPolicy, ProcessExtensionPointDisablePolicy,
-        ProcessSEHOPPolicy, ProcessStrictHandleCheckPolicy, TerminateProcess,
-        UpdateProcThreadAttribute, WaitForSingleObject, CREATE_NO_WINDOW,
-        EXTENDED_STARTUPINFO_PRESENT, INFINITE, PROCESS_INFORMATION,
-        PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-        PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, STARTUPINFOEXW,
+        CREATE_NO_WINDOW, CreateProcessW, DeleteProcThreadAttributeList,
+        EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, GetProcessMitigationPolicy, INFINITE,
+        InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY,
+        PROC_THREAD_ATTRIBUTE_JOB_LIST, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+        PROCESS_INFORMATION, ProcessASLRPolicy, ProcessChildProcessPolicy, ProcessDEPPolicy,
+        ProcessExtensionPointDisablePolicy, ProcessSEHOPPolicy, ProcessStrictHandleCheckPolicy,
+        STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
     };
 
     const WAIT_OBJECT_0_VALUE: u32 = 0;
@@ -127,7 +126,11 @@ mod imp {
     struct OwnedHandle(HANDLE);
 
     impl OwnedHandle {
-        fn try_new(handle: HANDLE, kind: SandboxErrorKind, operation: &str) -> Result<Self, SandboxError> {
+        fn try_new(
+            handle: HANDLE,
+            kind: SandboxErrorKind,
+            operation: &str,
+        ) -> Result<Self, SandboxError> {
             if handle.is_null() {
                 Err(os_error(kind, operation))
             } else {
@@ -429,7 +432,9 @@ mod imp {
             SetInformationJobObject(
                 job.raw(),
                 JobObjectExtendedLimitInformation,
-                (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast_mut().cast(),
+                (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
+                    .cast_mut()
+                    .cast(),
                 u32::try_from(size_of_val(&info)).map_err(|_| {
                     SandboxError::new(
                         SandboxErrorKind::JobConfiguration,
