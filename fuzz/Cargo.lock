@@ -456,6 +456,7 @@ dependencies = [
  "rarog-compositor",
  "rarog-css",
  "rarog-dom",
+ "rarog-fetch",
  "rarog-html",
  "rarog-layout",
  "rarog-paint",
@@ -464,6 +465,7 @@ dependencies = [
  "rarog-scheduler",
  "rarog-scroll",
  "rarog-types",
+ "rarog-url",
 ]
 
 [[package]]
