@@ -13,7 +13,7 @@ R4 establishes the first process-isolation architecture required by ADR-0003:
 - site isolation by default;
 - crash/replacement handling with stale-authority revocation.
 
-The completed R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, explicit document-to-Site navigation bindings, bounded Host-owned navigation contexts with last-reference Site lifetime, context-scoped privileged authority, broker-gated Network/Clipboard routing, and Windows child-process launch/loss observation that feeds Host revocation/retirement. They do not claim that production Site execution is already moved into the launched child or that the Windows sandbox/mitigation policy is complete yet.
+The completed R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, explicit document-to-Site navigation bindings, bounded Host-owned navigation contexts with last-reference Site lifetime, context-scoped privileged authority, broker-gated Network/Clipboard routing, Windows child-process launch/loss observation, bounded local IPC, and a concrete Windows Site-process mitigation/Job Object containment baseline. They do not claim that the current engine workload has already been migrated wholesale into Site children or that the bounded R4 sandbox is equivalent to a mature browser sandbox.
 
 ## Required automated gate
 
@@ -37,7 +37,9 @@ Before R4 can close, a dedicated `crates/rarog-engine/tests/r4_exit.rs` gate mus
 - two contexts sharing one Site process cannot interchange context-scoped capability authority;
 - backend Network tickets are hidden behind bounded Host-owned operation identities and stale operation authority is rejected;
 - real Windows child-process loss invokes Host revocation/retirement once and produces fresh replacement authority;
-- the Windows process/sandbox adapter passes its platform-specific contract.
+- the Windows process/sandbox adapter passes its platform-specific contract;
+- Windows process creation applies the R4 mitigation, child-process restriction and Job Object containment policy before Site code can execute;
+- ordinary portable/platform crates remain under workspace `unsafe_code = "forbid"`, with unavoidable Win32 handle operations isolated in the dedicated native crate.
 
 The full workspace suite remains responsible for narrower protocol, process, broker, navigation and platform regressions.
 

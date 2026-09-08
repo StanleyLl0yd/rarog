@@ -31,9 +31,9 @@ Tracking issue: #231.
 ## D — Windows process hardening
 
 - [x] Define the narrow Windows Host/Site process launch/loss adapter (#245).
-- [ ] Apply Windows-first process mitigation/sandbox policy for Site processes.
-- [ ] Keep Windows handles, tokens, job objects and mitigation APIs outside portable engine crates.
-- [ ] Add Windows-specific process/sandbox validation to CI.
+- [x] Apply the bounded Windows-first process mitigation/sandbox policy for Site processes (#254).
+- [x] Keep Windows handles, tokens, job objects and mitigation APIs outside portable engine crates through the dedicated native boundary (#254).
+- [x] Add Windows-specific process/sandbox validation to CI (#254).
 
 ## E — Site isolation integration
 
