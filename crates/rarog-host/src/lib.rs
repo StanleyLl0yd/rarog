@@ -17,6 +17,7 @@ use std::fmt;
 use std::num::NonZeroU64;
 
 pub const DEFAULT_MAX_NETWORK_OPERATIONS: usize = 4096;
+pub const DEFAULT_MAX_NAVIGATION_CONTEXTS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostLimits {
@@ -24,6 +25,7 @@ pub struct HostLimits {
     pub ipc: IpcLimits,
     pub max_capabilities: usize,
     pub max_network_operations: usize,
+    pub max_navigation_contexts: usize,
 }
 
 impl HostLimits {
@@ -32,6 +34,7 @@ impl HostLimits {
             && self.ipc.is_valid()
             && self.max_capabilities > 0
             && self.max_network_operations > 0
+            && self.max_navigation_contexts > 0
     }
 }
 
@@ -42,6 +45,7 @@ impl Default for HostLimits {
             ipc: IpcLimits::default(),
             max_capabilities: DEFAULT_MAX_CAPABILITIES,
             max_network_operations: DEFAULT_MAX_NETWORK_OPERATIONS,
+            max_navigation_contexts: DEFAULT_MAX_NAVIGATION_CONTEXTS,
         }
     }
 }
@@ -59,6 +63,12 @@ pub enum HostControlErrorKind {
     Fetch(FetchErrorKind),
     Clipboard(ClipboardError),
     InvalidDocumentBinding,
+    InvalidNavigationContextId,
+    NavigationContextLimitExceeded,
+    NavigationContextIdentitySpaceExhausted,
+    UnknownNavigationContext,
+    NavigationContextInvalidated,
+    InvalidNavigationContextCapabilityAuthority,
     InvalidNetworkOperationId,
     NetworkOperationLimitExceeded,
     NetworkOperationIdentitySpaceExhausted,
@@ -157,6 +167,7 @@ pub struct SiteLoss {
     site: SiteIdentity,
     revoked_capabilities: usize,
     revoked_network_operations: usize,
+    invalidated_navigation_contexts: usize,
 }
 
 impl SiteLoss {
@@ -174,6 +185,10 @@ impl SiteLoss {
 
     pub fn revoked_network_operations(&self) -> usize {
         self.revoked_network_operations
+    }
+
+    pub fn invalidated_navigation_contexts(&self) -> usize {
+        self.invalidated_navigation_contexts
     }
 }
 
@@ -223,6 +238,153 @@ impl NavigationTransition {
     pub fn into_current(self) -> DocumentSiteBinding {
         self.current
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NavigationContextId(NonZeroU64);
+
+impl NavigationContextId {
+    pub fn try_new(raw: u64) -> Result<Self, HostControlError> {
+        NonZeroU64::new(raw).map(Self).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::InvalidNavigationContextId,
+                "navigation context identity must be non-zero",
+            )
+        })
+    }
+
+    pub fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for NavigationContextId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "navigation-context:{}", self.get())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationContextSnapshot {
+    context: NavigationContextId,
+    site: SiteIdentity,
+}
+
+impl NavigationContextSnapshot {
+    pub fn context(&self) -> NavigationContextId {
+        self.context
+    }
+
+    pub fn site(&self) -> &SiteIdentity {
+        &self.site
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationContextTransition {
+    context: NavigationContextId,
+    previous_site: SiteIdentity,
+    current_site: SiteIdentity,
+    kind: NavigationTransitionKind,
+    source_retired: bool,
+}
+
+impl NavigationContextTransition {
+    pub fn context(&self) -> NavigationContextId {
+        self.context
+    }
+
+    pub fn previous_site(&self) -> &SiteIdentity {
+        &self.previous_site
+    }
+
+    pub fn current_site(&self) -> &SiteIdentity {
+        &self.current_site
+    }
+
+    pub fn kind(&self) -> NavigationTransitionKind {
+        self.kind
+    }
+
+    pub fn source_retired(&self) -> bool {
+        self.source_retired
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationContextClose {
+    context: NavigationContextId,
+    site: SiteIdentity,
+    source_retired: bool,
+    revoked_capabilities: usize,
+}
+
+impl NavigationContextClose {
+    pub fn context(&self) -> NavigationContextId {
+        self.context
+    }
+
+    pub fn site(&self) -> &SiteIdentity {
+        &self.site
+    }
+
+    pub fn source_retired(&self) -> bool {
+        self.source_retired
+    }
+
+    pub fn revoked_capabilities(&self) -> usize {
+        self.revoked_capabilities
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NavigationContextCapability {
+    context: NavigationContextId,
+    id: CapabilityId,
+    class: CapabilityClass,
+}
+
+impl NavigationContextCapability {
+    pub fn context(self) -> NavigationContextId {
+        self.context
+    }
+
+    pub fn id(self) -> CapabilityId {
+        self.id
+    }
+
+    pub fn class(self) -> CapabilityClass {
+        self.class
+    }
+}
+
+#[derive(Debug)]
+struct NavigationContextIdAllocator {
+    next: Option<NonZeroU64>,
+}
+
+impl NavigationContextIdAllocator {
+    fn new() -> Self {
+        Self {
+            next: NonZeroU64::new(1),
+        }
+    }
+
+    fn allocate(&mut self) -> Result<NavigationContextId, HostControlError> {
+        let next = self.next.ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::NavigationContextIdentitySpaceExhausted,
+                "navigation context identity space is exhausted",
+            )
+        })?;
+        self.next = NonZeroU64::new(next.get().wrapping_add(1));
+        Ok(NavigationContextId(next))
+    }
+}
+
+#[derive(Clone, Debug)]
+struct NavigationContext {
+    binding: DocumentSiteBinding,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -286,6 +448,10 @@ pub struct HostControlPlane {
     broker: CapabilityBroker,
     ipc_limits: IpcLimits,
     max_network_operations: usize,
+    max_navigation_contexts: usize,
+    navigation_context_allocator: NavigationContextIdAllocator,
+    navigation_contexts: HashMap<NavigationContextId, NavigationContext>,
+    navigation_context_capabilities: HashMap<CapabilityId, NavigationContextId>,
     network_operation_allocator: NetworkOperationIdAllocator,
     network_operations: HashMap<NetworkOperationId, NetworkOperation>,
     sites: HashMap<SiteProcessId, SiteInstance>,
@@ -296,7 +462,7 @@ impl HostControlPlane {
         if !limits.is_valid() {
             return Err(HostControlError::new(
                 HostControlErrorKind::InvalidLimits,
-                "Host limits must contain non-zero process/capability/network-operation limits and valid IPC limits",
+                "Host limits must contain non-zero process/capability/network-operation/navigation-context limits and valid IPC limits",
             ));
         }
 
@@ -305,6 +471,10 @@ impl HostControlPlane {
             broker: CapabilityBroker::try_new(limits.max_capabilities)?,
             ipc_limits: limits.ipc,
             max_network_operations: limits.max_network_operations,
+            max_navigation_contexts: limits.max_navigation_contexts,
+            navigation_context_allocator: NavigationContextIdAllocator::new(),
+            navigation_contexts: HashMap::new(),
+            navigation_context_capabilities: HashMap::new(),
             network_operation_allocator: NetworkOperationIdAllocator::new(),
             network_operations: HashMap::new(),
             sites: HashMap::new(),
@@ -329,6 +499,10 @@ impl HostControlPlane {
 
     pub fn active_network_operations(&self) -> usize {
         self.network_operations.len()
+    }
+
+    pub fn active_navigation_contexts(&self) -> usize {
+        self.navigation_contexts.len()
     }
 
     pub fn ensure_site(&mut self, site: SiteIdentity) -> Result<SiteLease, HostControlError> {
@@ -464,6 +638,7 @@ impl HostControlPlane {
         id: CapabilityId,
     ) -> Result<CapabilityGrant, HostControlError> {
         let grant = self.broker.revoke(id)?;
+        self.navigation_context_capabilities.remove(&id);
         self.network_operations
             .retain(|_, operation| operation.capability != id);
         Ok(grant)
@@ -476,6 +651,17 @@ impl HostControlPlane {
             .ok_or_else(|| HostControlError::unknown_process(process))?;
 
         instance.channel.disconnect();
+        let invalidated_contexts = self
+            .navigation_contexts
+            .iter()
+            .filter_map(|(context, state)| (state.binding.process == process).then_some(*context))
+            .collect::<Vec<_>>();
+        for context in &invalidated_contexts {
+            self.navigation_contexts.remove(context);
+        }
+        self.navigation_context_capabilities
+            .retain(|_, context| !invalidated_contexts.contains(context));
+
         let network_operations_before = self.network_operations.len();
         self.network_operations
             .retain(|_, operation| operation.owner != process);
@@ -495,6 +681,7 @@ impl HostControlPlane {
             site: instance.site,
             revoked_capabilities,
             revoked_network_operations,
+            invalidated_navigation_contexts: invalidated_contexts.len(),
         })
     }
 
@@ -625,6 +812,247 @@ impl HostControlPlane {
         Ok(())
     }
 
+    pub fn open_navigation_context(
+        &mut self,
+        target: &rarog_url::WebUrl,
+    ) -> Result<NavigationContextSnapshot, HostControlError> {
+        let site = target.site_identity()?;
+        self.open_navigation_context_to_site(site)
+    }
+
+    pub fn open_navigation_context_to_site(
+        &mut self,
+        site: SiteIdentity,
+    ) -> Result<NavigationContextSnapshot, HostControlError> {
+        if self.navigation_contexts.len() >= self.max_navigation_contexts {
+            return Err(HostControlError::new(
+                HostControlErrorKind::NavigationContextLimitExceeded,
+                format!(
+                    "navigation context limit {} reached",
+                    self.max_navigation_contexts
+                ),
+            ));
+        }
+
+        let context = self.navigation_context_allocator.allocate()?;
+        let binding = self
+            .begin_document_navigation_to_site(None, site.clone())?
+            .into_current();
+        self.navigation_contexts
+            .insert(context, NavigationContext { binding });
+        Ok(NavigationContextSnapshot { context, site })
+    }
+
+    pub fn navigation_context(
+        &self,
+        context: NavigationContextId,
+    ) -> Result<NavigationContextSnapshot, HostControlError> {
+        let state = self.require_navigation_context(context)?;
+        Ok(NavigationContextSnapshot {
+            context,
+            site: state.binding.site.clone(),
+        })
+    }
+
+    pub fn navigate_navigation_context(
+        &mut self,
+        context: NavigationContextId,
+        target: &rarog_url::WebUrl,
+    ) -> Result<NavigationContextTransition, HostControlError> {
+        let target_site = target.site_identity()?;
+        self.navigate_navigation_context_to_site(context, target_site)
+    }
+
+    pub fn navigate_navigation_context_to_site(
+        &mut self,
+        context: NavigationContextId,
+        target_site: SiteIdentity,
+    ) -> Result<NavigationContextTransition, HostControlError> {
+        let current = self.require_navigation_context(context)?.binding.clone();
+        let previous_site = current.site.clone();
+        if previous_site == target_site {
+            let transition =
+                self.begin_document_navigation_to_site(Some(&current), target_site.clone())?;
+            self.require_navigation_context_mut(context)?.binding = transition.current().clone();
+            return Ok(NavigationContextTransition {
+                context,
+                previous_site,
+                current_site: target_site,
+                kind: transition.kind(),
+                source_retired: false,
+            });
+        }
+
+        match self.begin_document_navigation_to_site(Some(&current), target_site.clone()) {
+            Ok(transition) => {
+                let previous_process = current.process;
+                self.revoke_navigation_context_capabilities(context)?;
+                self.require_navigation_context_mut(context)?.binding =
+                    transition.current().clone();
+                let source_retired = if self.navigation_context_ref_count(previous_process) == 0 {
+                    self.process_lost(previous_process)?;
+                    true
+                } else {
+                    false
+                };
+                Ok(NavigationContextTransition {
+                    context,
+                    previous_site,
+                    current_site: target_site,
+                    kind: transition.kind(),
+                    source_retired,
+                })
+            }
+            Err(error)
+                if matches!(
+                    error.kind,
+                    HostControlErrorKind::Process(ProcessTopologyErrorKind::ProcessLimitExceeded)
+                ) && self.navigation_context_ref_count(current.process) == 1 =>
+            {
+                self.revoke_navigation_context_capabilities(context)?;
+                self.navigation_contexts.remove(&context);
+                self.process_lost(current.process)?;
+
+                match self.begin_document_navigation_to_site(None, target_site.clone()) {
+                    Ok(transition) => {
+                        self.navigation_contexts.insert(
+                            context,
+                            NavigationContext {
+                                binding: transition.current().clone(),
+                            },
+                        );
+                        Ok(NavigationContextTransition {
+                            context,
+                            previous_site,
+                            current_site: target_site,
+                            kind: NavigationTransitionKind::CrossSiteReplacement,
+                            source_retired: true,
+                        })
+                    }
+                    Err(target_error) => Err(HostControlError::new(
+                        HostControlErrorKind::NavigationContextInvalidated,
+                        format!(
+                            "{context} source authority was retired for bounded cross-site replacement, but target assignment failed: {target_error}"
+                        ),
+                    )),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn close_navigation_context(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<NavigationContextClose, HostControlError> {
+        let state = self
+            .navigation_contexts
+            .remove(&context)
+            .ok_or_else(|| Self::unknown_navigation_context(context))?;
+        let revoked_capabilities = self.revoke_navigation_context_capabilities(context)?;
+        let source_retired = if self.navigation_context_ref_count(state.binding.process) == 0 {
+            self.process_lost(state.binding.process)?;
+            true
+        } else {
+            false
+        };
+        Ok(NavigationContextClose {
+            context,
+            site: state.binding.site,
+            source_retired,
+            revoked_capabilities,
+        })
+    }
+
+    pub fn grant_navigation_context_capability(
+        &mut self,
+        context: NavigationContextId,
+        class: CapabilityClass,
+    ) -> Result<NavigationContextCapability, HostControlError> {
+        let process = self.require_navigation_context(context)?.binding.process;
+        let grant = self.grant_capability(process, class)?;
+        let id = grant.id();
+        if self
+            .navigation_context_capabilities
+            .insert(id, context)
+            .is_some()
+        {
+            let _ = self.revoke_capability(id);
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "new capability identity already had navigation-context ownership",
+            ));
+        }
+        Ok(NavigationContextCapability { context, id, class })
+    }
+
+    pub fn revoke_navigation_context_capability(
+        &mut self,
+        capability: NavigationContextCapability,
+    ) -> Result<(), HostControlError> {
+        self.authorize_navigation_context_capability(capability)?;
+        self.revoke_capability(capability.id)?;
+        Ok(())
+    }
+
+    pub fn start_navigation_context_network_operation(
+        &mut self,
+        capability: NavigationContextCapability,
+        request: NetworkRequest,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<NetworkOperationId, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        self.start_network_operation(process, capability.id, request, network)
+    }
+
+    pub fn poll_navigation_context_network_operation(
+        &mut self,
+        capability: NavigationContextCapability,
+        operation: NetworkOperationId,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<NetworkPoll, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        self.poll_network_operation(process, capability.id, operation, network)
+    }
+
+    pub fn cancel_navigation_context_network_operation(
+        &mut self,
+        capability: NavigationContextCapability,
+        operation: NetworkOperationId,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<(), HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        self.cancel_network_operation(process, capability.id, operation, network)
+    }
+
+    pub fn read_navigation_context_clipboard_text(
+        &self,
+        capability: NavigationContextCapability,
+        clipboard: &dyn PlatformClipboardService,
+    ) -> Result<Option<ClipboardText>, HostControlError> {
+        let process = self.authorize_navigation_context_capability_class(
+            capability,
+            CapabilityClass::Clipboard,
+        )?;
+        self.read_clipboard_text(process, capability.id, clipboard)
+    }
+
+    pub fn write_navigation_context_clipboard_text(
+        &self,
+        capability: NavigationContextCapability,
+        text: &ClipboardText,
+        clipboard: &dyn PlatformClipboardService,
+    ) -> Result<(), HostControlError> {
+        let process = self.authorize_navigation_context_capability_class(
+            capability,
+            CapabilityClass::Clipboard,
+        )?;
+        self.write_clipboard_text(process, capability.id, text, clipboard)
+    }
+
     pub fn begin_document_navigation(
         &mut self,
         current: Option<&DocumentSiteBinding>,
@@ -704,6 +1132,85 @@ impl HostControlPlane {
         Ok(())
     }
 
+    fn unknown_navigation_context(context: NavigationContextId) -> HostControlError {
+        HostControlError::new(
+            HostControlErrorKind::UnknownNavigationContext,
+            format!("unknown or invalidated navigation context {context}"),
+        )
+    }
+
+    fn require_navigation_context(
+        &self,
+        context: NavigationContextId,
+    ) -> Result<&NavigationContext, HostControlError> {
+        self.navigation_contexts
+            .get(&context)
+            .ok_or_else(|| Self::unknown_navigation_context(context))
+    }
+
+    fn require_navigation_context_mut(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<&mut NavigationContext, HostControlError> {
+        self.navigation_contexts
+            .get_mut(&context)
+            .ok_or_else(|| Self::unknown_navigation_context(context))
+    }
+
+    fn navigation_context_ref_count(&self, process: SiteProcessId) -> usize {
+        self.navigation_contexts
+            .values()
+            .filter(|context| context.binding.process == process)
+            .count()
+    }
+
+    fn revoke_navigation_context_capabilities(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<usize, HostControlError> {
+        let ids = self
+            .navigation_context_capabilities
+            .iter()
+            .filter_map(|(id, owner)| (*owner == context).then_some(*id))
+            .collect::<Vec<_>>();
+        for id in &ids {
+            self.revoke_capability(*id)?;
+        }
+        Ok(ids.len())
+    }
+
+    fn authorize_navigation_context_capability(
+        &self,
+        capability: NavigationContextCapability,
+    ) -> Result<SiteProcessId, HostControlError> {
+        self.authorize_navigation_context_capability_class(capability, capability.class)
+    }
+
+    fn authorize_navigation_context_capability_class(
+        &self,
+        capability: NavigationContextCapability,
+        class: CapabilityClass,
+    ) -> Result<SiteProcessId, HostControlError> {
+        if capability.class != class
+            || self
+                .navigation_context_capabilities
+                .get(&capability.id)
+                .copied()
+                != Some(capability.context)
+        {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidNavigationContextCapabilityAuthority,
+                "navigation-context capability class or context ownership does not match",
+            ));
+        }
+        let process = self
+            .require_navigation_context(capability.context)?
+            .binding
+            .process;
+        self.authorize_capability(process, capability.id, class)?;
+        Ok(process)
+    }
+
     fn network_ticket(
         &self,
         process: SiteProcessId,
@@ -775,6 +1282,7 @@ mod tests {
             },
             max_capabilities,
             max_network_operations: 4,
+            max_navigation_contexts: 4,
         }
     }
 
@@ -1407,6 +1915,423 @@ mod tests {
     }
 
     #[test]
+    fn navigation_contexts_share_same_site_process_until_last_close() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let first = host
+            .open_navigation_context(&WebUrl::parse("https://a.example.com/").unwrap())
+            .unwrap();
+        let second = host
+            .open_navigation_context(&WebUrl::parse("https://b.example.com/path").unwrap())
+            .unwrap();
+
+        let first_process = host
+            .require_navigation_context(first.context())
+            .unwrap()
+            .binding
+            .process;
+        let second_process = host
+            .require_navigation_context(second.context())
+            .unwrap()
+            .binding
+            .process;
+        assert_eq!(first_process, second_process);
+        assert_eq!(host.active_navigation_contexts(), 2);
+        assert_eq!(host.active_site_processes(), 1);
+
+        let first_capability = host
+            .grant_navigation_context_capability(first.context(), CapabilityClass::Network)
+            .unwrap();
+        let second_capability = host
+            .grant_navigation_context_capability(second.context(), CapabilityClass::Network)
+            .unwrap();
+
+        let closed = host.close_navigation_context(first.context()).unwrap();
+        assert!(!closed.source_retired());
+        assert_eq!(closed.revoked_capabilities(), 1);
+        assert_eq!(host.active_navigation_contexts(), 1);
+        assert_eq!(host.active_site_processes(), 1);
+        assert_eq!(
+            host.authorize_navigation_context_capability(first_capability)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::InvalidNavigationContextCapabilityAuthority
+        );
+        host.authorize_navigation_context_capability(second_capability)
+            .unwrap();
+
+        let closed = host.close_navigation_context(second.context()).unwrap();
+        assert!(closed.source_retired());
+        assert_eq!(host.active_navigation_contexts(), 0);
+        assert_eq!(host.active_site_processes(), 0);
+    }
+
+    #[test]
+    fn cross_site_context_transition_revokes_only_moving_context_authority() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let moving = host
+            .open_navigation_context(&WebUrl::parse("https://a.example.com/").unwrap())
+            .unwrap();
+        let staying = host
+            .open_navigation_context(&WebUrl::parse("https://b.example.com/").unwrap())
+            .unwrap();
+        let moving_capability = host
+            .grant_navigation_context_capability(moving.context(), CapabilityClass::Network)
+            .unwrap();
+        let staying_capability = host
+            .grant_navigation_context_capability(staying.context(), CapabilityClass::Network)
+            .unwrap();
+        let mut network = FixtureNetwork::default();
+        let operation = host
+            .start_navigation_context_network_operation(
+                moving_capability,
+                network_request("https://a.example.com/data"),
+                &mut network,
+            )
+            .unwrap();
+        assert_eq!(network.starts, 1);
+
+        let transition = host
+            .navigate_navigation_context(
+                moving.context(),
+                &WebUrl::parse("https://example.org/").unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            transition.kind(),
+            NavigationTransitionKind::CrossSiteReplacement
+        );
+        assert!(!transition.source_retired());
+        assert_eq!(host.active_site_processes(), 2);
+        assert_eq!(
+            host.poll_navigation_context_network_operation(
+                moving_capability,
+                operation,
+                &mut network,
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::InvalidNavigationContextCapabilityAuthority
+        );
+        assert_eq!(network.polls, 0);
+        host.authorize_navigation_context_capability(staying_capability)
+            .unwrap();
+
+        let staying_close = host.close_navigation_context(staying.context()).unwrap();
+        assert!(staying_close.source_retired());
+        assert_eq!(host.active_site_processes(), 1);
+        let moving_close = host.close_navigation_context(moving.context()).unwrap();
+        assert!(moving_close.source_retired());
+        assert_eq!(host.active_site_processes(), 0);
+    }
+
+    #[test]
+    fn one_slot_cross_site_context_retires_unshared_source_before_replacement() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let context = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+        let old_process = host
+            .require_navigation_context(context.context())
+            .unwrap()
+            .binding
+            .process;
+        let capability = host
+            .grant_navigation_context_capability(context.context(), CapabilityClass::Network)
+            .unwrap();
+
+        let transition = host
+            .navigate_navigation_context(
+                context.context(),
+                &WebUrl::parse("https://example.org/").unwrap(),
+            )
+            .unwrap();
+
+        let new_process = host
+            .require_navigation_context(context.context())
+            .unwrap()
+            .binding
+            .process;
+        assert_eq!(
+            transition.kind(),
+            NavigationTransitionKind::CrossSiteReplacement
+        );
+        assert!(transition.source_retired());
+        assert_ne!(new_process, old_process);
+        assert_eq!(host.active_site_processes(), 1);
+        assert_eq!(host.active_navigation_contexts(), 1);
+        assert_eq!(
+            host.authorize_navigation_context_capability(capability)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::InvalidNavigationContextCapabilityAuthority
+        );
+    }
+
+    #[test]
+    fn failed_one_slot_target_creation_invalidates_context_after_source_retirement() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let context = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+        host.ipc_limits.max_message_bytes = host.ipc_limits.max_queued_bytes + 1;
+
+        let error = host
+            .navigate_navigation_context(
+                context.context(),
+                &WebUrl::parse("https://example.org/").unwrap(),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            HostControlErrorKind::NavigationContextInvalidated
+        );
+        assert_eq!(host.active_navigation_contexts(), 0);
+        assert_eq!(host.active_site_processes(), 0);
+        assert_eq!(
+            host.navigation_context(context.context()).unwrap_err().kind,
+            HostControlErrorKind::UnknownNavigationContext
+        );
+    }
+
+    #[test]
+    fn shared_source_blocks_one_slot_cross_site_transition_without_mutation() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let first = host
+            .open_navigation_context(&WebUrl::parse("https://a.example.com/").unwrap())
+            .unwrap();
+        let second = host
+            .open_navigation_context(&WebUrl::parse("https://b.example.com/").unwrap())
+            .unwrap();
+        let capability = host
+            .grant_navigation_context_capability(first.context(), CapabilityClass::Network)
+            .unwrap();
+
+        let error = host
+            .navigate_navigation_context(
+                first.context(),
+                &WebUrl::parse("https://example.org/").unwrap(),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            HostControlErrorKind::Process(ProcessTopologyErrorKind::ProcessLimitExceeded)
+        );
+        assert_eq!(host.active_navigation_contexts(), 2);
+        assert_eq!(host.active_site_processes(), 1);
+        assert_eq!(
+            host.navigation_context(first.context()).unwrap().site(),
+            first.site()
+        );
+        assert_eq!(
+            host.navigation_context(second.context()).unwrap().site(),
+            second.site()
+        );
+        host.authorize_navigation_context_capability(capability)
+            .unwrap();
+    }
+
+    #[test]
+    fn process_loss_invalidates_bound_contexts_and_context_capabilities() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let first = host
+            .open_navigation_context(&WebUrl::parse("https://a.example.com/").unwrap())
+            .unwrap();
+        let second = host
+            .open_navigation_context(&WebUrl::parse("https://b.example.com/").unwrap())
+            .unwrap();
+        let process = host
+            .require_navigation_context(first.context())
+            .unwrap()
+            .binding
+            .process;
+        let capability = host
+            .grant_navigation_context_capability(first.context(), CapabilityClass::Network)
+            .unwrap();
+
+        let loss = host.process_lost(process).unwrap();
+
+        assert_eq!(loss.invalidated_navigation_contexts(), 2);
+        assert_eq!(host.active_navigation_contexts(), 0);
+        assert_eq!(host.active_capabilities(), 0);
+        assert_eq!(
+            host.navigation_context(first.context()).unwrap_err().kind,
+            HostControlErrorKind::UnknownNavigationContext
+        );
+        assert_eq!(
+            host.navigation_context(second.context()).unwrap_err().kind,
+            HostControlErrorKind::UnknownNavigationContext
+        );
+        assert_eq!(
+            host.authorize_navigation_context_capability(capability)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::InvalidNavigationContextCapabilityAuthority
+        );
+    }
+
+    #[test]
+    fn same_process_does_not_make_context_capabilities_interchangeable() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let first = host
+            .open_navigation_context(&WebUrl::parse("https://a.example.com/").unwrap())
+            .unwrap();
+        let second = host
+            .open_navigation_context(&WebUrl::parse("https://b.example.com/").unwrap())
+            .unwrap();
+        let capability = host
+            .grant_navigation_context_capability(first.context(), CapabilityClass::Network)
+            .unwrap();
+        let forged = NavigationContextCapability {
+            context: second.context(),
+            id: capability.id(),
+            class: CapabilityClass::Network,
+        };
+        let mut network = FixtureNetwork::default();
+
+        assert_eq!(
+            host.start_navigation_context_network_operation(
+                forged,
+                network_request("https://a.example.com/data"),
+                &mut network,
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::InvalidNavigationContextCapabilityAuthority
+        );
+        assert_eq!(network.starts, 0);
+    }
+
+    #[test]
+    fn opaque_context_identity_is_reused_only_when_explicitly_propagated() {
+        let mut host = HostControlPlane::try_new(test_limits(3, 8)).unwrap();
+        let opaque_url = WebUrl::parse("data:text/html,rarog").unwrap();
+        let inherited_site = opaque_url.site_identity().unwrap();
+        let first = host
+            .open_navigation_context_to_site(inherited_site.clone())
+            .unwrap();
+        let second = host
+            .open_navigation_context_to_site(inherited_site)
+            .unwrap();
+
+        let first_process = host
+            .require_navigation_context(first.context())
+            .unwrap()
+            .binding
+            .process;
+        let second_process = host
+            .require_navigation_context(second.context())
+            .unwrap()
+            .binding
+            .process;
+        assert_eq!(first.site(), second.site());
+        assert_eq!(first_process, second_process);
+
+        let fresh = host.open_navigation_context(&opaque_url).unwrap();
+        let fresh_process = host
+            .require_navigation_context(fresh.context())
+            .unwrap()
+            .binding
+            .process;
+        assert!(fresh.site().is_opaque());
+        assert_ne!(fresh.site(), first.site());
+        assert_ne!(fresh_process, first_process);
+    }
+
+    #[test]
+    fn navigation_context_limit_is_enforced_before_site_allocation() {
+        let mut limits = test_limits(2, 8);
+        limits.max_navigation_contexts = 1;
+        let mut host = HostControlPlane::try_new(limits).unwrap();
+        host.open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+
+        let error = host
+            .open_navigation_context(&WebUrl::parse("https://example.org/").unwrap())
+            .unwrap_err();
+        assert_eq!(
+            error.kind,
+            HostControlErrorKind::NavigationContextLimitExceeded
+        );
+        assert_eq!(host.active_navigation_contexts(), 1);
+        assert_eq!(host.active_site_processes(), 1);
+        assert!(
+            host.process_for_site(&site("https://example.org/"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn navigation_context_identity_is_monotonic_and_not_reused_after_close() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let first = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+        let first_id = first.context();
+        host.close_navigation_context(first_id).unwrap();
+
+        let second = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+
+        assert!(second.context().get() > first_id.get());
+        assert_ne!(second.context(), first_id);
+        assert_eq!(
+            host.navigation_context(first_id).unwrap_err().kind,
+            HostControlErrorKind::UnknownNavigationContext
+        );
+    }
+
+    #[test]
+    fn transition_to_existing_target_site_retires_last_source_reference() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let source = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+        let target = host
+            .open_navigation_context(&WebUrl::parse("https://example.org/").unwrap())
+            .unwrap();
+        let source_process = host
+            .require_navigation_context(source.context())
+            .unwrap()
+            .binding
+            .process;
+        let target_process = host
+            .require_navigation_context(target.context())
+            .unwrap()
+            .binding
+            .process;
+
+        let transition = host
+            .navigate_navigation_context(
+                source.context(),
+                &WebUrl::parse("https://example.org/next").unwrap(),
+            )
+            .unwrap();
+
+        assert!(transition.source_retired());
+        assert_eq!(host.active_site_processes(), 1);
+        assert_eq!(
+            host.require_navigation_context(source.context())
+                .unwrap()
+                .binding
+                .process,
+            target_process
+        );
+        assert_eq!(
+            host.require_navigation_context(target.context())
+                .unwrap()
+                .binding
+                .process,
+            target_process
+        );
+        assert_ne!(source_process, target_process);
+        assert_eq!(host.site_for_process(source_process), None);
+    }
+
+    #[test]
     fn invalid_composed_limits_are_rejected() {
         let mut limits = test_limits(1, 1);
         limits.ipc.max_message_bytes = limits.ipc.max_queued_bytes + 1;
@@ -1417,6 +2342,13 @@ mod tests {
 
         let mut limits = test_limits(1, 1);
         limits.max_network_operations = 0;
+        assert_eq!(
+            HostControlPlane::try_new(limits).unwrap_err().kind,
+            HostControlErrorKind::InvalidLimits
+        );
+
+        let mut limits = test_limits(1, 1);
+        limits.max_navigation_contexts = 0;
         assert_eq!(
             HostControlPlane::try_new(limits).unwrap_err().kind,
             HostControlErrorKind::InvalidLimits
