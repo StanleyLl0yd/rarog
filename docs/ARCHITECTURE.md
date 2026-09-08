@@ -112,6 +112,8 @@ Inbound transport plumbing must supply the Host-owned Site-process binding separ
 
 When a Site process is reported lost, the Host control plane disconnects and discards its queued IPC work, revokes every capability owned by that process, then retires its topology identity. Recovery allocates a fresh Site-process identity and a fresh empty channel. Stale process IDs and capability references therefore remain invalid even when the same schemeful site is recovered.
 
+Document navigation is bound at the Host boundary rather than inside Web-controlled payloads. A `DocumentSiteBinding` stores the owning `SiteIdentity` and Host-assigned `SiteProcessId`. Initial and same-site navigation use the bounded topology normally; cross-site or cross-scheme navigation replaces the document binding with a distinct Site-process identity. Opaque URLs create a fresh identity for a new environment, while inherited opaque environments pass their stored `SiteIdentity` explicitly so identity is never accidentally regenerated. A stale binding is rejected before a target process is allocated. See ADR-0106.
+
 This is still a logical/portable control plane. The later Windows launcher/transport is responsible for detecting OS process loss and binding authenticated OS endpoints to these identities. See ADR-0105.
 
 ## Rendering model

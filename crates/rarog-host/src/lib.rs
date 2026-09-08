@@ -7,7 +7,7 @@ use rarog_process::{
     DEFAULT_MAX_SITE_PROCESSES, ProcessTopology, ProcessTopologyError, ProcessTopologyErrorKind,
     SiteAssignmentKind, SiteProcessId,
 };
-use rarog_url::SiteIdentity;
+use rarog_url::{SiteIdentity, UrlError, UrlErrorKind};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -43,6 +43,8 @@ pub enum HostControlErrorKind {
     Process(ProcessTopologyErrorKind),
     Ipc(IpcErrorKind),
     Capability(CapabilityErrorKind),
+    Url(UrlErrorKind),
+    InvalidDocumentBinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +95,12 @@ impl From<CapabilityError> for HostControlError {
     }
 }
 
+impl From<UrlError> for HostControlError {
+    fn from(error: UrlError) -> Self {
+        Self::new(HostControlErrorKind::Url(error.kind), error.message)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SiteLease {
     process: SiteProcessId,
@@ -131,6 +139,54 @@ impl SiteLoss {
 
     pub fn revoked_capabilities(&self) -> usize {
         self.revoked_capabilities
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentSiteBinding {
+    site: SiteIdentity,
+    process: SiteProcessId,
+}
+
+impl DocumentSiteBinding {
+    pub fn site(&self) -> &SiteIdentity {
+        &self.site
+    }
+
+    pub fn process(&self) -> SiteProcessId {
+        self.process
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationTransitionKind {
+    Initial,
+    SameSiteReuse,
+    CrossSiteReplacement,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationTransition {
+    previous: Option<DocumentSiteBinding>,
+    current: DocumentSiteBinding,
+    kind: NavigationTransitionKind,
+}
+
+impl NavigationTransition {
+    pub fn previous(&self) -> Option<&DocumentSiteBinding> {
+        self.previous.as_ref()
+    }
+
+    pub fn current(&self) -> &DocumentSiteBinding {
+        &self.current
+    }
+
+    pub fn kind(&self) -> NavigationTransitionKind {
+        self.kind
+    }
+
+    pub fn into_current(self) -> DocumentSiteBinding {
+        self.current
     }
 }
 
@@ -343,6 +399,85 @@ impl HostControlPlane {
         self.ensure_site(site)
     }
 
+    pub fn begin_document_navigation(
+        &mut self,
+        current: Option<&DocumentSiteBinding>,
+        target: &rarog_url::WebUrl,
+    ) -> Result<NavigationTransition, HostControlError> {
+        self.validate_current_document(current)?;
+        let target_site = target.site_identity()?;
+        self.begin_document_navigation_validated(current, target_site)
+    }
+
+    pub fn begin_document_navigation_to_site(
+        &mut self,
+        current: Option<&DocumentSiteBinding>,
+        target_site: SiteIdentity,
+    ) -> Result<NavigationTransition, HostControlError> {
+        self.validate_current_document(current)?;
+        self.begin_document_navigation_validated(current, target_site)
+    }
+
+    fn begin_document_navigation_validated(
+        &mut self,
+        current: Option<&DocumentSiteBinding>,
+        target_site: SiteIdentity,
+    ) -> Result<NavigationTransition, HostControlError> {
+        let lease = self.ensure_site(target_site.clone())?;
+        let next = DocumentSiteBinding {
+            site: target_site,
+            process: lease.process(),
+        };
+
+        let kind = match current {
+            None => NavigationTransitionKind::Initial,
+            Some(previous) if previous.site == next.site => {
+                if previous.process != next.process {
+                    return Err(HostControlError::new(
+                        HostControlErrorKind::InconsistentState,
+                        "same-site navigation resolved to a different Site-process identity",
+                    ));
+                }
+                NavigationTransitionKind::SameSiteReuse
+            }
+            Some(previous) => {
+                if previous.process == next.process {
+                    return Err(HostControlError::new(
+                        HostControlErrorKind::InconsistentState,
+                        "cross-site navigation resolved to the previous Site-process identity",
+                    ));
+                }
+                NavigationTransitionKind::CrossSiteReplacement
+            }
+        };
+
+        Ok(NavigationTransition {
+            previous: current.cloned(),
+            current: next,
+            kind,
+        })
+    }
+
+    fn validate_current_document(
+        &self,
+        current: Option<&DocumentSiteBinding>,
+    ) -> Result<(), HostControlError> {
+        let Some(binding) = current else {
+            return Ok(());
+        };
+        let instance = self.site(binding.process)?;
+        if instance.site != binding.site {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidDocumentBinding,
+                format!(
+                    "document binding for {} does not match Site-process {}",
+                    binding.site, binding.process
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn site(&self, process: SiteProcessId) -> Result<&SiteInstance, HostControlError> {
         self.sites
             .get(&process)
@@ -544,6 +679,133 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.kind, HostControlErrorKind::UnknownSiteProcess);
+    }
+
+    #[test]
+    fn initial_and_same_site_navigation_reuse_host_assignment() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 2)).unwrap();
+        let first_url = WebUrl::parse("https://a.example.com/start").unwrap();
+        let first = host.begin_document_navigation(None, &first_url).unwrap();
+
+        assert_eq!(first.kind(), NavigationTransitionKind::Initial);
+        assert!(first.previous().is_none());
+
+        let next_url = WebUrl::parse("https://b.example.com/next").unwrap();
+        let next = host
+            .begin_document_navigation(Some(first.current()), &next_url)
+            .unwrap();
+
+        assert_eq!(next.kind(), NavigationTransitionKind::SameSiteReuse);
+        assert_eq!(next.current().process(), first.current().process());
+        assert_eq!(next.current().site(), first.current().site());
+        assert_eq!(host.active_site_processes(), 1);
+    }
+
+    #[test]
+    fn cross_site_and_cross_scheme_navigation_replace_document_process() {
+        let mut host = HostControlPlane::try_new(test_limits(3, 2)).unwrap();
+        let first_url = WebUrl::parse("https://example.com/").unwrap();
+        let first = host
+            .begin_document_navigation(None, &first_url)
+            .unwrap()
+            .into_current();
+
+        let cross_site_url = WebUrl::parse("https://example.org/").unwrap();
+        let cross_site = host
+            .begin_document_navigation(Some(&first), &cross_site_url)
+            .unwrap()
+            .into_current();
+
+        assert_ne!(cross_site.process(), first.process());
+
+        let cross_scheme_url = WebUrl::parse("http://example.org/").unwrap();
+        let cross_scheme = host
+            .begin_document_navigation(Some(&cross_site), &cross_scheme_url)
+            .unwrap();
+
+        assert_eq!(
+            cross_scheme.kind(),
+            NavigationTransitionKind::CrossSiteReplacement
+        );
+        assert_ne!(cross_scheme.current().process(), cross_site.process());
+        assert_eq!(host.active_site_processes(), 3);
+    }
+
+    #[test]
+    fn opaque_site_identity_is_explicitly_propagated_or_fresh_per_navigation() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 2)).unwrap();
+        let opaque_url = WebUrl::parse("data:text/html,rarog").unwrap();
+        let first = host
+            .begin_document_navigation(None, &opaque_url)
+            .unwrap()
+            .into_current();
+
+        assert!(first.site().is_opaque());
+
+        let inherited = host
+            .begin_document_navigation_to_site(Some(&first), first.site().clone())
+            .unwrap();
+
+        assert_eq!(inherited.kind(), NavigationTransitionKind::SameSiteReuse);
+        assert_eq!(inherited.current(), &first);
+
+        let fresh = host
+            .begin_document_navigation(Some(&first), &opaque_url)
+            .unwrap();
+
+        assert_eq!(fresh.kind(), NavigationTransitionKind::CrossSiteReplacement);
+        assert!(fresh.current().site().is_opaque());
+        assert_ne!(fresh.current().site(), first.site());
+        assert_ne!(fresh.current().process(), first.process());
+    }
+
+    #[test]
+    fn stale_document_binding_is_rejected_before_target_assignment() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 2)).unwrap();
+        let first_url = WebUrl::parse("https://example.com/").unwrap();
+        let first = host
+            .begin_document_navigation(None, &first_url)
+            .unwrap()
+            .into_current();
+        host.process_lost(first.process()).unwrap();
+
+        let target = WebUrl::parse("https://example.org/").unwrap();
+        let error = host
+            .begin_document_navigation(Some(&first), &target)
+            .unwrap_err();
+
+        assert_eq!(error.kind, HostControlErrorKind::UnknownSiteProcess);
+        assert_eq!(host.active_site_processes(), 0);
+        assert!(
+            host.process_for_site(&target.site_identity().unwrap())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn navigation_budget_failure_preserves_current_document_binding() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 2)).unwrap();
+        let first_url = WebUrl::parse("https://example.com/").unwrap();
+        let first = host
+            .begin_document_navigation(None, &first_url)
+            .unwrap()
+            .into_current();
+
+        let target = WebUrl::parse("https://example.org/").unwrap();
+        let error = host
+            .begin_document_navigation(Some(&first), &target)
+            .unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            HostControlErrorKind::Process(ProcessTopologyErrorKind::ProcessLimitExceeded)
+        );
+        assert_eq!(host.active_site_processes(), 1);
+        assert_eq!(host.site_for_process(first.process()), Some(first.site()));
+        assert!(
+            host.process_for_site(&target.site_identity().unwrap())
+                .is_none()
+        );
     }
 
     #[test]

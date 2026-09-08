@@ -13,7 +13,7 @@ R4 establishes the first process-isolation architecture required by ADR-0003:
 - site isolation by default;
 - crash/replacement handling with stale-authority revocation.
 
-The completed portable R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, and a Host control plane that disconnects channels, revokes process-owned authority, retires identities and creates fresh logical replacements. They do not claim OS process separation, a Windows transport, automatic process-loss detection, privileged-operation routing or sandboxing yet.
+The completed portable R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, explicit document-to-Site navigation bindings, and a Host control plane that disconnects channels, revokes process-owned authority, retires identities and creates fresh logical replacements. They do not claim OS process separation, a Windows transport, automatic process-loss detection, privileged-operation routing or sandboxing yet.
 
 ## Required automated gate
 
@@ -22,6 +22,8 @@ Before R4 can close, a dedicated `crates/rarog-engine/tests/r4_exit.rs` gate mus
 - the R4 backlog has no unchecked milestone items;
 - distinct schemeful sites cannot share Site-process authority;
 - same-site reuse is explicit and bounded;
+- cross-site/cross-scheme navigation replaces document bindings without cross-site process sharing;
+- opaque Site identity is explicitly propagated by the owning document environment rather than recomputed;
 - process-budget exhaustion fails closed;
 - IPC version/size/role validation and backpressure behavior;
 - capability ownership, revocation and stale-process rejection;
