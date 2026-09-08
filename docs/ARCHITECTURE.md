@@ -114,6 +114,16 @@ When a Site process is reported lost, the Host control plane disconnects and dis
 
 This is still a logical/portable control plane. The later Windows launcher/transport is responsible for detecting OS process loss and binding authenticated OS endpoints to these identities. See ADR-0105.
 
+### R4 navigation/Site-transition boundary
+
+`NavigationControlPlane` adds bounded Host-owned logical navigation contexts above the raw Site lifecycle. A `NavigationContextId` is a monotonically allocated Host identity: it is not an engine `ViewId`, OS process identifier, IPC request value or URL-derived token. Each live context maps to exactly one Host-owned `SiteProcessId`.
+
+Navigation consumes an already-derived `SiteIdentity`. Same-site transitions keep the existing process binding. Cross-site transitions bind the context to distinct Site-process authority. If another context still references the source site, that source process remains live; when the last context leaves, the Host disconnects its channel, revokes its capabilities and retires it.
+
+When the Site-process budget has no spare slot and the moving context is the only reference to its source process, the Host may replace that source without weakening isolation: it first disconnects/revokes/retires the source authority, then allocates a fresh target process/channel. If fresh target authority cannot be established after retirement, the context is invalidated rather than rebound to stale or cross-site authority.
+
+Opaque sites are never reconstructed from serialized URL text by this layer. The owning environment must propagate the exact `SiteIdentity`; cloning the same opaque identity permits intentional reuse, while independently derived opaque identities remain isolated. See ADR-0106.
+
 ## Rendering model
 
 ```text

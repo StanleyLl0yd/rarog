@@ -10,6 +10,7 @@ use rarog_process::{
 use rarog_url::SiteIdentity;
 use std::collections::HashMap;
 use std::fmt;
+use std::num::NonZeroU64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostLimits {
@@ -131,6 +132,362 @@ impl SiteLoss {
 
     pub fn revoked_capabilities(&self) -> usize {
         self.revoked_capabilities
+    }
+}
+
+
+pub const DEFAULT_MAX_NAVIGATION_CONTEXTS: usize = 256;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NavigationLimits {
+    pub max_contexts: usize,
+}
+
+impl NavigationLimits {
+    pub const fn is_valid(self) -> bool {
+        self.max_contexts > 0
+    }
+}
+
+impl Default for NavigationLimits {
+    fn default() -> Self {
+        Self {
+            max_contexts: DEFAULT_MAX_NAVIGATION_CONTEXTS,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NavigationContextId(NonZeroU64);
+
+impl NavigationContextId {
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for NavigationContextId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "navigation:{}", self.get())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationErrorKind {
+    InvalidLimit,
+    ContextLimitExceeded,
+    IdentitySpaceExhausted,
+    UnknownContext,
+    Host(HostControlErrorKind),
+    TransitionInvalidated(HostControlErrorKind),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationError {
+    pub kind: NavigationErrorKind,
+    pub message: String,
+}
+
+impl NavigationError {
+    fn new(kind: NavigationErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    fn unknown_context(context: NavigationContextId) -> Self {
+        Self::new(
+            NavigationErrorKind::UnknownContext,
+            format!("unknown or closed navigation context {context}"),
+        )
+    }
+}
+
+impl fmt::Display for NavigationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NavigationError {}
+
+impl From<HostControlError> for NavigationError {
+    fn from(error: HostControlError) -> Self {
+        Self::new(NavigationErrorKind::Host(error.kind), error.message)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NavigationLease {
+    context: NavigationContextId,
+    process: SiteProcessId,
+}
+
+impl NavigationLease {
+    pub const fn context(self) -> NavigationContextId {
+        self.context
+    }
+
+    pub const fn process(self) -> SiteProcessId {
+        self.process
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationTransitionKind {
+    SameSite,
+    ReusedExistingSite,
+    CreatedSite,
+    CapacityReplacement,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationTransition {
+    context: NavigationContextId,
+    previous_process: SiteProcessId,
+    process: SiteProcessId,
+    kind: NavigationTransitionKind,
+    source_loss: Option<SiteLoss>,
+}
+
+impl NavigationTransition {
+    pub const fn context(&self) -> NavigationContextId {
+        self.context
+    }
+
+    pub const fn previous_process(&self) -> SiteProcessId {
+        self.previous_process
+    }
+
+    pub const fn process(&self) -> SiteProcessId {
+        self.process
+    }
+
+    pub const fn kind(&self) -> NavigationTransitionKind {
+        self.kind
+    }
+
+    pub fn source_loss(&self) -> Option<&SiteLoss> {
+        self.source_loss.as_ref()
+    }
+}
+
+#[derive(Debug)]
+pub struct NavigationControlPlane {
+    host: HostControlPlane,
+    max_contexts: usize,
+    next_context: Option<NonZeroU64>,
+    contexts: HashMap<NavigationContextId, SiteProcessId>,
+}
+
+impl NavigationControlPlane {
+    pub fn try_new(
+        host_limits: HostLimits,
+        navigation_limits: NavigationLimits,
+    ) -> Result<Self, NavigationError> {
+        if !navigation_limits.is_valid() {
+            return Err(NavigationError::new(
+                NavigationErrorKind::InvalidLimit,
+                "navigation context limit must be non-zero",
+            ));
+        }
+
+        Ok(Self {
+            host: HostControlPlane::try_new(host_limits)?,
+            max_contexts: navigation_limits.max_contexts,
+            next_context: NonZeroU64::new(1),
+            contexts: HashMap::new(),
+        })
+    }
+
+    pub fn with_default_limits() -> Result<Self, NavigationError> {
+        Self::try_new(HostLimits::default(), NavigationLimits::default())
+    }
+
+    pub fn host_process(&self) -> rarog_process::HostProcessId {
+        self.host.host_process()
+    }
+
+    pub fn active_contexts(&self) -> usize {
+        self.contexts.len()
+    }
+
+    pub fn active_site_processes(&self) -> usize {
+        self.host.active_site_processes()
+    }
+
+    pub fn active_capabilities(&self) -> usize {
+        self.host.active_capabilities()
+    }
+
+    pub fn process_for_context(&self, context: NavigationContextId) -> Option<SiteProcessId> {
+        self.contexts.get(&context).copied()
+    }
+
+    pub fn site_for_context(&self, context: NavigationContextId) -> Option<&SiteIdentity> {
+        let process = self.process_for_context(context)?;
+        self.host.site_for_process(process)
+    }
+
+    pub fn open_context(
+        &mut self,
+        site: SiteIdentity,
+    ) -> Result<NavigationLease, NavigationError> {
+        if self.contexts.len() >= self.max_contexts {
+            return Err(NavigationError::new(
+                NavigationErrorKind::ContextLimitExceeded,
+                format!("navigation context limit {} reached", self.max_contexts),
+            ));
+        }
+
+        let context = self.allocate_context()?;
+        let process = self.host.ensure_site(site)?.process();
+        self.contexts.insert(context, process);
+        Ok(NavigationLease { context, process })
+    }
+
+    pub fn transition_context(
+        &mut self,
+        context: NavigationContextId,
+        target_site: SiteIdentity,
+    ) -> Result<NavigationTransition, NavigationError> {
+        let previous_process = self.require_context(context)?;
+
+        if self.host.site_for_process(previous_process) == Some(&target_site) {
+            return Ok(NavigationTransition {
+                context,
+                previous_process,
+                process: previous_process,
+                kind: NavigationTransitionKind::SameSite,
+                source_loss: None,
+            });
+        }
+
+        if let Some(process) = self.host.process_for_site(&target_site) {
+            self.contexts.insert(context, process);
+            let source_loss = self.retire_if_unreferenced(previous_process)?;
+            return Ok(NavigationTransition {
+                context,
+                previous_process,
+                process,
+                kind: NavigationTransitionKind::ReusedExistingSite,
+                source_loss,
+            });
+        }
+
+        match self.host.ensure_site(target_site.clone()) {
+            Ok(lease) => {
+                let process = lease.process();
+                self.contexts.insert(context, process);
+                let source_loss = self.retire_if_unreferenced(previous_process)?;
+                Ok(NavigationTransition {
+                    context,
+                    previous_process,
+                    process,
+                    kind: NavigationTransitionKind::CreatedSite,
+                    source_loss,
+                })
+            }
+            Err(error)
+                if error.kind
+                    == HostControlErrorKind::Process(
+                        ProcessTopologyErrorKind::ProcessLimitExceeded,
+                    )
+                    && self.context_ref_count(previous_process) == 1 =>
+            {
+                let source_loss = self.host.process_lost(previous_process)?;
+                let replacement = match self.host.ensure_site(target_site) {
+                    Ok(lease) => lease,
+                    Err(error) => {
+                        self.contexts.remove(&context);
+                        return Err(NavigationError::new(
+                            NavigationErrorKind::TransitionInvalidated(error.kind),
+                            format!(
+                                "navigation context {context} lost source authority before replacement failed: {}",
+                                error.message
+                            ),
+                        ));
+                    }
+                };
+                let process = replacement.process();
+                self.contexts.insert(context, process);
+                Ok(NavigationTransition {
+                    context,
+                    previous_process,
+                    process,
+                    kind: NavigationTransitionKind::CapacityReplacement,
+                    source_loss: Some(source_loss),
+                })
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn close_context(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<Option<SiteLoss>, NavigationError> {
+        let process = self
+            .contexts
+            .remove(&context)
+            .ok_or_else(|| NavigationError::unknown_context(context))?;
+        self.retire_if_unreferenced(process)
+    }
+
+    pub fn grant_capability(
+        &mut self,
+        context: NavigationContextId,
+        class: CapabilityClass,
+    ) -> Result<CapabilityGrant, NavigationError> {
+        let process = self.require_context(context)?;
+        Ok(self.host.grant_capability(process, class)?)
+    }
+
+    pub fn authorize_capability(
+        &self,
+        context: NavigationContextId,
+        id: CapabilityId,
+        class: CapabilityClass,
+    ) -> Result<(), NavigationError> {
+        let process = self.require_context(context)?;
+        Ok(self.host.authorize_capability(process, id, class)?)
+    }
+
+    fn allocate_context(&mut self) -> Result<NavigationContextId, NavigationError> {
+        let next = self.next_context.ok_or_else(|| {
+            NavigationError::new(
+                NavigationErrorKind::IdentitySpaceExhausted,
+                "navigation context identity space is exhausted",
+            )
+        })?;
+        self.next_context = NonZeroU64::new(next.get().wrapping_add(1));
+        Ok(NavigationContextId(next))
+    }
+
+    fn require_context(
+        &self,
+        context: NavigationContextId,
+    ) -> Result<SiteProcessId, NavigationError> {
+        self.process_for_context(context)
+            .ok_or_else(|| NavigationError::unknown_context(context))
+    }
+
+    fn context_ref_count(&self, process: SiteProcessId) -> usize {
+        self.contexts
+            .values()
+            .filter(|candidate| **candidate == process)
+            .count()
+    }
+
+    fn retire_if_unreferenced(
+        &mut self,
+        process: SiteProcessId,
+    ) -> Result<Option<SiteLoss>, NavigationError> {
+        if self.context_ref_count(process) != 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.host.process_lost(process)?))
     }
 }
 
@@ -544,6 +901,205 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.kind, HostControlErrorKind::UnknownSiteProcess);
+    }
+
+
+    fn navigation_limits(max_contexts: usize) -> NavigationLimits {
+        NavigationLimits { max_contexts }
+    }
+
+    #[test]
+    fn navigation_contexts_reuse_same_site_and_replace_cross_site_authority() {
+        let mut navigation =
+            NavigationControlPlane::try_new(test_limits(2, 4), navigation_limits(4)).unwrap();
+        let opened = navigation
+            .open_context(site("https://a.example.com/"))
+            .unwrap();
+
+        let same = navigation
+            .transition_context(opened.context(), site("https://b.example.com/path"))
+            .unwrap();
+        assert_eq!(same.kind(), NavigationTransitionKind::SameSite);
+        assert_eq!(same.process(), opened.process());
+        assert!(same.source_loss().is_none());
+
+        let cross_site = navigation
+            .transition_context(opened.context(), site("https://example.org/"))
+            .unwrap();
+        assert_eq!(cross_site.kind(), NavigationTransitionKind::CreatedSite);
+        assert_ne!(cross_site.process(), opened.process());
+        assert_eq!(
+            cross_site.source_loss().unwrap().process(),
+            opened.process()
+        );
+        assert_eq!(navigation.active_contexts(), 1);
+        assert_eq!(navigation.active_site_processes(), 1);
+    }
+
+    #[test]
+    fn shared_source_site_stays_live_until_its_last_context_leaves() {
+        let mut navigation =
+            NavigationControlPlane::try_new(test_limits(2, 4), navigation_limits(4)).unwrap();
+        let first = navigation
+            .open_context(site("https://a.example.com/"))
+            .unwrap();
+        let second = navigation
+            .open_context(site("https://b.example.com/"))
+            .unwrap();
+        assert_eq!(first.process(), second.process());
+
+        let capability = navigation
+            .grant_capability(first.context(), CapabilityClass::Network)
+            .unwrap();
+        let moved = navigation
+            .transition_context(first.context(), site("https://example.org/"))
+            .unwrap();
+
+        assert!(moved.source_loss().is_none());
+        assert_eq!(navigation.active_site_processes(), 2);
+        assert_eq!(
+            navigation
+                .authorize_capability(
+                    first.context(),
+                    capability.id(),
+                    CapabilityClass::Network,
+                )
+                .unwrap_err()
+                .kind,
+            NavigationErrorKind::Host(HostControlErrorKind::Capability(
+                CapabilityErrorKind::WrongOwner,
+            ))
+        );
+        assert_eq!(
+            navigation.authorize_capability(
+                second.context(),
+                capability.id(),
+                CapabilityClass::Network,
+            ),
+            Ok(())
+        );
+
+        let loss = navigation.close_context(second.context()).unwrap().unwrap();
+        assert_eq!(loss.process(), second.process());
+        assert_eq!(loss.revoked_capabilities(), 1);
+        assert_eq!(navigation.active_site_processes(), 1);
+    }
+
+    #[test]
+    fn one_slot_cross_site_transition_revokes_before_fresh_replacement() {
+        let mut navigation =
+            NavigationControlPlane::try_new(test_limits(1, 4), navigation_limits(2)).unwrap();
+        let opened = navigation
+            .open_context(site("https://example.com/"))
+            .unwrap();
+        let capability = navigation
+            .grant_capability(opened.context(), CapabilityClass::Clipboard)
+            .unwrap();
+
+        let moved = navigation
+            .transition_context(opened.context(), site("https://example.org/"))
+            .unwrap();
+
+        assert_eq!(
+            moved.kind(),
+            NavigationTransitionKind::CapacityReplacement
+        );
+        assert_ne!(moved.process(), opened.process());
+        assert_eq!(moved.source_loss().unwrap().revoked_capabilities(), 1);
+        assert_eq!(navigation.active_site_processes(), 1);
+        assert_eq!(navigation.active_capabilities(), 0);
+        assert_eq!(
+            navigation
+                .authorize_capability(
+                    opened.context(),
+                    capability.id(),
+                    CapabilityClass::Clipboard,
+                )
+                .unwrap_err()
+                .kind,
+            NavigationErrorKind::Host(HostControlErrorKind::Capability(
+                CapabilityErrorKind::UnknownCapability,
+            ))
+        );
+    }
+
+    #[test]
+    fn shared_source_never_weakens_isolation_to_fit_one_process_slot() {
+        let mut navigation =
+            NavigationControlPlane::try_new(test_limits(1, 2), navigation_limits(3)).unwrap();
+        let first = navigation
+            .open_context(site("https://a.example.com/"))
+            .unwrap();
+        let second = navigation
+            .open_context(site("https://b.example.com/"))
+            .unwrap();
+
+        let error = navigation
+            .transition_context(first.context(), site("https://example.org/"))
+            .unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            NavigationErrorKind::Host(HostControlErrorKind::Process(
+                ProcessTopologyErrorKind::ProcessLimitExceeded,
+            ))
+        );
+        assert_eq!(
+            navigation.process_for_context(first.context()),
+            Some(first.process())
+        );
+        assert_eq!(
+            navigation.process_for_context(second.context()),
+            Some(second.process())
+        );
+        assert_eq!(navigation.active_site_processes(), 1);
+    }
+
+    #[test]
+    fn opaque_site_identity_is_propagated_exactly_across_navigation_contexts() {
+        let url = WebUrl::parse("data:text/plain,hello").unwrap();
+        let first_site = url.origin().unwrap().site();
+        let exact_same_site = first_site.clone();
+        let distinct_opaque_site = url.origin().unwrap().site();
+        let mut navigation =
+            NavigationControlPlane::try_new(test_limits(2, 2), navigation_limits(2)).unwrap();
+        let opened = navigation.open_context(first_site).unwrap();
+
+        let same = navigation
+            .transition_context(opened.context(), exact_same_site)
+            .unwrap();
+        assert_eq!(same.kind(), NavigationTransitionKind::SameSite);
+        assert_eq!(same.process(), opened.process());
+
+        let distinct = navigation
+            .transition_context(opened.context(), distinct_opaque_site)
+            .unwrap();
+        assert_ne!(distinct.process(), opened.process());
+        assert_eq!(distinct.kind(), NavigationTransitionKind::CreatedSite);
+    }
+
+    #[test]
+    fn navigation_contexts_are_bounded_and_identities_are_not_reused() {
+        let mut navigation =
+            NavigationControlPlane::try_new(test_limits(1, 2), navigation_limits(1)).unwrap();
+        let first = navigation
+            .open_context(site("https://example.com/"))
+            .unwrap();
+
+        assert_eq!(
+            navigation
+                .open_context(site("https://example.com/"))
+                .unwrap_err()
+                .kind,
+            NavigationErrorKind::ContextLimitExceeded
+        );
+
+        navigation.close_context(first.context()).unwrap();
+        let replacement = navigation
+            .open_context(site("https://example.com/"))
+            .unwrap();
+        assert_ne!(first.context(), replacement.context());
+        assert_ne!(first.process(), replacement.process());
     }
 
     #[test]

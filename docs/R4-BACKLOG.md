@@ -10,7 +10,8 @@ Tracking issue: #231.
 - [x] Add bounded Host-owned schemeful-site assignment with explicit reuse only for the same `SiteIdentity`.
 - [x] Fail closed when the Site-process budget is exhausted instead of sharing a process across distinct sites.
 - [x] Retire Site-process assignments without reusing stale process identities.
-- [ ] Connect document/navigation lifecycle to explicit Site-process assignment and replacement.
+- [x] Add bounded Host-owned navigation contexts with explicit Site-process assignment and replacement policy (#239).
+- [ ] Wire embedder document/navigation entry points to Host-owned navigation contexts.
 
 ## B — IPC
 
@@ -35,9 +36,9 @@ Tracking issue: #231.
 
 ## E — Site isolation integration
 
-- [ ] Make cross-site process separation the default navigation policy.
-- [ ] Define same-site reuse and cross-site replacement rules.
-- [ ] Preserve opaque-origin/site isolation through explicit environment-owned identity propagation.
+- [x] Make cross-site process separation the default Host navigation policy (#239).
+- [x] Define same-site reuse, shared-site retention and cross-site replacement rules (#239).
+- [x] Preserve opaque-origin/site isolation through explicit environment-owned identity propagation (#239).
 - [x] Connect Site-process authority to Host-bound IPC and broker ownership without address-space assumptions (#236).
 
 ## F — Crash recovery
