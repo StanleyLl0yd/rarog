@@ -128,7 +128,7 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-process` — Rarog-owned Host/Site process identities and bounded site-assignment topology
 - `rarog-ipc` — versioned Host/Site IPC envelopes, correlation, backpressure and disconnect semantics
 - `rarog-broker` — Host-owned bounded capability grants, authorization and process-scoped revocation
-- `rarog-host` — portable Host control plane for Site assignment, channel binding, authority revocation and recovery
+- `rarog-host` — portable Host control plane for document/Site assignment, navigation transitions, channel binding, authority revocation and recovery
 - `rarog-fetch` — bounded Fetch values and embedder network-capability boundary
 - `rarog-script` — replaceable script-runtime, realm and rooted-value contracts
 - `rarog-script-spidermonkey` — isolated SpiderMonkey adapter behind `rarog-script`
