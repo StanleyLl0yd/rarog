@@ -155,6 +155,9 @@ mod imp {
     struct AttributeList {
         storage: Vec<usize>,
         list: windows_sys::Win32::System::Threading::LPPROC_THREAD_ATTRIBUTE_LIST,
+        mitigation: Box<u64>,
+        child_policy: Box<u32>,
+        jobs: Box<[HANDLE; 1]>,
     }
 
     impl AttributeList {
@@ -180,14 +183,14 @@ mod imp {
                 ));
             }
 
-            let mitigation = MITIGATION_POLICY;
+            let mitigation = Box::new(MITIGATION_POLICY);
             if unsafe {
                 UpdateProcThreadAttribute(
                     list,
                     0,
                     PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY as usize,
-                    (&mitigation as *const u64).cast(),
-                    size_of_val(&mitigation),
+                    (&*mitigation as *const u64).cast(),
+                    size_of_val(&*mitigation),
                     null_mut(),
                     null(),
                 )
@@ -202,14 +205,14 @@ mod imp {
                 ));
             }
 
-            let child_policy = PROCESS_CREATION_CHILD_PROCESS_RESTRICTED;
+            let child_policy = Box::new(PROCESS_CREATION_CHILD_PROCESS_RESTRICTED);
             if unsafe {
                 UpdateProcThreadAttribute(
                     list,
                     0,
                     PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY as usize,
-                    (&child_policy as *const u32).cast(),
-                    size_of_val(&child_policy),
+                    (&*child_policy as *const u32).cast(),
+                    size_of_val(&*child_policy),
                     null_mut(),
                     null(),
                 )
@@ -224,14 +227,14 @@ mod imp {
                 ));
             }
 
-            let jobs = [job];
+            let jobs = Box::new([job]);
             if unsafe {
                 UpdateProcThreadAttribute(
                     list,
                     0,
                     PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
                     jobs.as_ptr().cast(),
-                    size_of_val(&jobs),
+                    size_of_val(&*jobs),
                     null_mut(),
                     null(),
                 )
@@ -246,7 +249,13 @@ mod imp {
                 ));
             }
 
-            Ok(Self { storage, list })
+            Ok(Self {
+                storage,
+                list,
+                mitigation,
+                child_policy,
+                jobs,
+            })
         }
     }
 
@@ -255,7 +264,12 @@ mod imp {
             unsafe {
                 DeleteProcThreadAttributeList(self.list);
             }
-            let _ = self.storage.len();
+            let _ = (
+                self.storage.len(),
+                *self.mitigation,
+                *self.child_policy,
+                self.jobs.len(),
+            );
         }
     }
 
