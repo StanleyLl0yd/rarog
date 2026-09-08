@@ -11,6 +11,7 @@ Tracking issue: #231.
 - [x] Fail closed when the Site-process budget is exhausted instead of sharing a process across distinct sites.
 - [x] Retire Site-process assignments without reusing stale process identities.
 - [x] Connect document/navigation lifecycle to explicit Site-process assignment and replacement (#241).
+- [x] Add bounded Host-owned navigation contexts with last-reference Site-process lifetime and fail-closed one-slot replacement (#248).
 
 ## B — IPC
 
@@ -24,6 +25,7 @@ Tracking issue: #231.
 - [x] Define Host-owned brokered capability identities, classes and revocation (#234).
 - [x] Bind capability authority to the owning Site-process identity and provide process-scoped revocation (#234).
 - [x] Route privileged Network/Clipboard operations through explicit broker checks with Host-owned network-operation authority (#243).
+- [x] Scope privileged capability handles to exact Host navigation contexts so same-process contexts cannot interchange authority (#248).
 - [x] Prove numeric references, wrong-owner/class use and revoked capability reuse fail closed (#234).
 
 ## D — Windows process hardening
@@ -39,6 +41,7 @@ Tracking issue: #231.
 - [x] Define same-site reuse and cross-site replacement rules (#241).
 - [x] Preserve opaque-origin/site isolation through explicit environment-owned identity propagation (#241).
 - [x] Connect Site-process authority to Host-bound IPC and broker ownership without address-space assumptions (#236).
+- [x] Resolve production navigation authority from Host context state rather than embedder-supplied Site-process identity (#248).
 
 ## F — Crash recovery
 
