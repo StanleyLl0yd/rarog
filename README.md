@@ -90,7 +90,7 @@ The completed R0–R3 foundation includes:
 - a replaceable script-runtime contract plus an isolated SpiderMonkey ESR backend with opaque realm/root identities;
 - Event/EventTarget foundations and bounded engine-owned task/microtask scheduling connected to retained render checkpoints;
 - Rarog-owned URL/origin/site identity and Fetch request/response/network-capability boundaries;
-- R4 process/site identity, bounded Host/Site IPC, Host-owned capabilities and fail-closed Site lifecycle/recovery foundations;
+- R4 process/site identity, bounded Host/Site IPC, Host-owned capabilities, broker-gated Network/Clipboard routing and fail-closed Site lifecycle/recovery foundations;
 - platform-neutral keyboard, pointer, wheel, text-input and clipboard contracts with bounded Windows input/IME/clipboard adapters;
 - bounded Flexbox/Grid slices with explicit fail-closed behavior for unsupported geometry;
 - backend-neutral frame planning, bounded compositor workers and a replaceable `wgpu` staging backend;
@@ -128,7 +128,7 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-process` — Rarog-owned Host/Site process identities and bounded site-assignment topology
 - `rarog-ipc` — versioned Host/Site IPC envelopes, correlation, backpressure and disconnect semantics
 - `rarog-broker` — Host-owned bounded capability grants, authorization and process-scoped revocation
-- `rarog-host` — portable Host control plane for document/Site assignment, navigation transitions, channel binding, authority revocation and recovery
+- `rarog-host` — portable Host control plane for document/Site assignment, navigation transitions, channel binding, privileged routing, authority revocation and recovery
 - `rarog-fetch` — bounded Fetch values and embedder network-capability boundary
 - `rarog-script` — replaceable script-runtime, realm and rooted-value contracts
 - `rarog-script-spidermonkey` — isolated SpiderMonkey adapter behind `rarog-script`

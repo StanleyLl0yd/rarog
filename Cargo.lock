@@ -2274,7 +2274,9 @@ name = "rarog-host"
 version = "0.1.0"
 dependencies = [
  "rarog-broker",
+ "rarog-fetch",
  "rarog-ipc",
+ "rarog-platform",
  "rarog-process",
  "rarog-url",
 ]
