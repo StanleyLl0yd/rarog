@@ -325,9 +325,7 @@ mod tests {
         let mut broker = CapabilityBroker::try_new(1).unwrap();
         broker.grant(owner, CapabilityClass::Network).unwrap();
 
-        let error = broker
-            .grant(owner, CapabilityClass::Clipboard)
-            .unwrap_err();
+        let error = broker.grant(owner, CapabilityClass::Clipboard).unwrap_err();
 
         assert_eq!(error.kind, CapabilityErrorKind::CapacityExceeded);
         assert_eq!(broker.active_capabilities(), 1);
