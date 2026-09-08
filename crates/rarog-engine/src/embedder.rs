@@ -944,8 +944,7 @@ impl View {
                 let source_bytes = response.body().len();
                 let status = response.status();
                 let base_url = BaseUrl::new(final_url.as_str());
-                if let Err(error) =
-                    self.install_document(source, base_url, Some(final_url.clone()))
+                if let Err(error) = self.install_document(source, base_url, Some(final_url.clone()))
                 {
                     let error = navigation_engine_error(error);
                     self.shared
@@ -1981,7 +1980,9 @@ mod tests {
         assert_eq!(first.superseded(), None);
 
         let second = match view
-            .begin_navigation(NavigationRequest::new("https://b.example.test/path#fragment"))
+            .begin_navigation(NavigationRequest::new(
+                "https://b.example.test/path#fragment",
+            ))
             .unwrap()
         {
             NavigationStartOutcome::Started(start) => start,
@@ -2108,8 +2109,7 @@ mod tests {
         )
         .unwrap();
 
-        let NavigationCompletion::Failed(error) =
-            view.complete_navigation(navigation, response)
+        let NavigationCompletion::Failed(error) = view.complete_navigation(navigation, response)
         else {
             panic!("unsupported encoding unexpectedly committed");
         };
@@ -2138,8 +2138,7 @@ mod tests {
         let response =
             FetchResponse::try_new(None, 200, headers, b"<p>x</p>".to_vec(), 1024).unwrap();
 
-        let NavigationCompletion::Failed(error) =
-            view.complete_navigation(navigation, response)
+        let NavigationCompletion::Failed(error) = view.complete_navigation(navigation, response)
         else {
             panic!("response without URL unexpectedly committed");
         };
