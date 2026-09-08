@@ -28,7 +28,7 @@ Tracking issue: #231.
 
 ## D — Windows process hardening
 
-- [ ] Define the narrow Windows Host/Site process launch adapter.
+- [x] Define the narrow Windows Host/Site process launch/loss adapter (#245).
 - [ ] Apply Windows-first process mitigation/sandbox policy for Site processes.
 - [ ] Keep Windows handles, tokens, job objects and mitigation APIs outside portable engine crates.
 - [ ] Add Windows-specific process/sandbox validation to CI.
@@ -42,7 +42,7 @@ Tracking issue: #231.
 
 ## F — Crash recovery
 
-- [ ] Detect Site-process loss and invalidate the corresponding process/channel state.
+- [x] Detect Windows Site-process loss and invalidate the corresponding process/channel state (#245).
 - [x] Revoke all brokered capabilities owned by a lost Site process before retirement/recovery (#236).
 - [x] Recreate logical Site state with a fresh process identity and empty channel authority (#236).
 - [x] Reject stale process/channel/capability authority after loss and replacement (#236).

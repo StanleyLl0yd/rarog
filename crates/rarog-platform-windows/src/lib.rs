@@ -1,12 +1,17 @@
 mod clipboard;
 mod gpu;
 mod input;
+mod process;
 
 pub use clipboard::WindowsClipboardService;
 #[cfg(target_os = "windows")]
 pub use gpu::WindowsPresentingCompositor;
 pub use gpu::{WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery};
 pub use input::WindowsInputService;
+pub use process::{
+    DEFAULT_MAX_SITE_PROCESS_ARGS, WindowsSiteProcess, WindowsSiteProcessCommand,
+    WindowsSiteProcessError, WindowsSiteProcessErrorKind,
+};
 
 use rarog_platform::{
     ClipboardError, PlatformCapabilities, PlatformClipboardService, PlatformFontError,

@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rarog-host = { path = "../rarog-host" }
 rarog-platform = { path = "../rarog-platform" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -16,8 +17,11 @@ rarog-compositor-wgpu = { path = "../rarog-compositor-wgpu" }
 wgpu = { version = "=26.0.1", default-features = false, features = ["std", "dx12"] }
 
 [dev-dependencies]
+rarog-broker = { path = "../rarog-broker" }
+rarog-fetch = { path = "../rarog-fetch" }
 rarog-layout = { path = "../rarog-layout" }
 rarog-text-opentype = { path = "../rarog-text-opentype" }
+rarog-url = { path = "../rarog-url" }
 
 [lints]
 workspace = true
