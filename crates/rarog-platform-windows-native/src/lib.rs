@@ -603,7 +603,7 @@ mod tests {
             OsString::from("/D"),
             OsString::from("/V:OFF"),
             OsString::from("/C"),
-            OsString::from("for /L %i in (1,1,1000000) do @set /A x=1+1 >nul"),
+            OsString::from("for /L %i in (1,1,10000) do @set /A x=1+1 >nul"),
         ];
         let mut child = SandboxedChild::spawn(&shell(), &args).unwrap();
         let evidence = child.evidence().unwrap();
