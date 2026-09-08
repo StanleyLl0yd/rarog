@@ -96,6 +96,14 @@ Direct Site↔Site and Host↔Host routes are rejected by the portable protocol.
 
 The protocol crate does not choose named pipes, sockets, shared memory, serialization or Windows handles. Those are later transport concerns behind this validated envelope/lifetime contract. See ADR-0103.
 
+### R4 capability broker boundary
+
+`rarog-broker` owns Host-issued capability identities independently from IPC request identities and OS handles. A `CapabilityId` received from a Site process is only an untrusted reference. Authorization succeeds only when the Host broker still has a live grant for that identity, the authenticated channel owner matches the grant's `SiteProcessId`, and the requested capability class matches exactly.
+
+Capability identities are monotonically allocated and never reused after revocation. The broker is bounded by an explicit grant count. Capacity or identity exhaustion fails closed. Revoking a Site process removes every capability owned by that process so crash/replacement handling can invalidate authority before assigning a fresh process identity.
+
+The initial concrete classes are Network and Clipboard because both already have Rarog-owned policy/platform boundaries. A Network grant reaches the Host-owned Fetch/network policy boundary; it does not bypass Fetch policy. Concrete privileged-operation routing remains a later R4 integration slice. See ADR-0104.
+
 ## Rendering model
 
 ```text

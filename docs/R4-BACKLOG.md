@@ -21,10 +21,10 @@ Tracking issue: #231.
 
 ## C — Capability broker
 
-- [ ] Define Host-owned brokered capability identities, scopes and revocation.
-- [ ] Bind capability authority to the owning Site-process identity and lifecycle.
+- [x] Define Host-owned brokered capability identities, classes and revocation (#234).
+- [x] Bind capability authority to the owning Site-process identity and provide process-scoped revocation (#234).
 - [ ] Route privileged network/platform operations through explicit broker checks.
-- [ ] Prove Site-side inputs cannot mint, widen or reuse revoked capability authority.
+- [x] Prove numeric references, wrong-owner/class use and revoked capability reuse fail closed (#234).
 
 ## D — Windows process hardening
 
