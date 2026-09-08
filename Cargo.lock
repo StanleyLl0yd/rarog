@@ -2355,9 +2355,17 @@ dependencies = [
  "rarog-ipc",
  "rarog-layout",
  "rarog-platform",
+ "rarog-platform-windows-native",
  "rarog-text-opentype",
  "rarog-url",
  "wgpu",
+]
+
+[[package]]
+name = "rarog-platform-windows-native"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

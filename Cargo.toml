@@ -24,6 +24,7 @@ members = [
   "crates/rarog-compositor",
   "crates/rarog-compositor-wgpu",
   "crates/rarog-platform",
+  "crates/rarog-platform-windows-native",
   "crates/rarog-platform-windows",
   "crates/rarog-engine",
   "crates/rarog-shell",

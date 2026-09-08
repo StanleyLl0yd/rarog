@@ -1,9 +1,7 @@
 use rarog_host::{HostControlPlane, SiteLease, SiteLoss};
+use rarog_platform_windows_native::{SandboxEvidence, SandboxedChild};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::process::Child;
-#[cfg(target_os = "windows")]
-use std::process::{Command, Stdio};
 
 pub const DEFAULT_MAX_SITE_PROCESS_ARGS: usize = 64;
 
@@ -16,6 +14,7 @@ pub enum WindowsSiteProcessErrorKind {
     LaunchFailed,
     WaitFailed,
     HostControl,
+    SandboxEvidence,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,7 +97,7 @@ impl WindowsSiteProcessCommand {
 #[derive(Debug)]
 pub struct WindowsSiteProcess {
     lease: SiteLease,
-    child: Option<Child>,
+    child: Option<SandboxedChild>,
     loss_reported: bool,
 }
 
@@ -122,10 +121,10 @@ impl WindowsSiteProcess {
             ));
         }
 
-        let child = spawn_windows_child(command).map_err(|error| {
+        let child = SandboxedChild::spawn(command.program(), &command.args).map_err(|error| {
             WindowsSiteProcessError::new(
                 WindowsSiteProcessErrorKind::LaunchFailed,
-                format!("Windows Site-process launch failed: {error}"),
+                format!("Windows Site-process sandbox launch failed: {error}"),
             )
         })?;
         Ok(Self {
@@ -194,31 +193,30 @@ impl WindowsSiteProcess {
             return Ok(None);
         };
 
-        match child.try_wait().map_err(|error| {
+        child.terminate().map_err(|error| {
             WindowsSiteProcessError::new(
                 WindowsSiteProcessErrorKind::WaitFailed,
-                format!("Windows Site-process status check failed: {error}"),
+                format!("Windows Site-process termination failed: {error}"),
             )
-        })? {
-            Some(_) => {}
-            None => {
-                child.kill().map_err(|error| {
-                    WindowsSiteProcessError::new(
-                        WindowsSiteProcessErrorKind::WaitFailed,
-                        format!("Windows Site-process termination failed: {error}"),
-                    )
-                })?;
-                child.wait().map_err(|error| {
-                    WindowsSiteProcessError::new(
-                        WindowsSiteProcessErrorKind::WaitFailed,
-                        format!("Windows Site-process reap failed: {error}"),
-                    )
-                })?;
-            }
-        }
+        })?;
 
         self.child.take();
         self.report_loss(host).map(Some)
+    }
+
+    pub fn sandbox_evidence(&self) -> Result<SandboxEvidence, WindowsSiteProcessError> {
+        let child = self.child.as_ref().ok_or_else(|| {
+            WindowsSiteProcessError::new(
+                WindowsSiteProcessErrorKind::SandboxEvidence,
+                "Windows Site-process sandbox evidence is unavailable after process loss",
+            )
+        })?;
+        child.evidence().map_err(|error| {
+            WindowsSiteProcessError::new(
+                WindowsSiteProcessErrorKind::SandboxEvidence,
+                format!("Windows Site-process sandbox evidence query failed: {error}"),
+            )
+        })
     }
 
     fn report_loss(
@@ -238,35 +236,10 @@ impl WindowsSiteProcess {
 impl Drop for WindowsSiteProcess {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate();
         }
         self.child.take();
     }
-}
-
-#[cfg(target_os = "windows")]
-fn spawn_windows_child(command: &WindowsSiteProcessCommand) -> std::io::Result<Child> {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    let mut child = Command::new(command.program());
-    child
-        .args(command.args())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW);
-    child.spawn()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn spawn_windows_child(_command: &WindowsSiteProcessCommand) -> std::io::Result<Child> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "Windows Site-process launch is unavailable on this target",
-    ))
 }
 
 #[cfg(test)]
@@ -371,6 +344,7 @@ mod tests {
             .try_arg("exit 0")
             .unwrap();
         let mut process = WindowsSiteProcess::launch(&host, lease, &command).unwrap();
+        assert!(process.sandbox_evidence().unwrap().satisfies_r4_policy());
         let loss = process.wait_for_loss(&mut host).unwrap().unwrap();
 
         assert_eq!(loss.process(), lease.process());
