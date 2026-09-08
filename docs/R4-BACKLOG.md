@@ -1,6 +1,6 @@
 # R4 — Sky backlog
 
-Status: **in progress**.
+Status: **complete**.
 
 Tracking issue: #231.
 
@@ -52,6 +52,6 @@ Tracking issue: #231.
 
 ## Closure
 
-R4 closes only after the bounded Sky scope is integrated into production paths, `docs/R4-EXIT.md` is complete, a dedicated `r4_exit` integration gate is present, and Windows-primary/Linux-portability/security CI are green.
+R4 closes with the bounded Sky scope integrated into the production-facing authority paths, `docs/R4-EXIT.md` complete, the dedicated `r4_exit` integration gate present on Windows and Linux, and Windows-primary/Linux-portability/security CI green.
 
 R4 completion will not imply a complete browser sandbox, storage/worker/media support, general-Web compatibility or browser readiness.

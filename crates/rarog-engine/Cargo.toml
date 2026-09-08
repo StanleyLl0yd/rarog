@@ -20,5 +20,12 @@ rarog-scheduler = { path = "../rarog-scheduler" }
 rarog-types = { path = "../rarog-types" }
 rarog-url = { path = "../rarog-url" }
 
+[dev-dependencies]
+rarog-broker = { path = "../rarog-broker" }
+rarog-host = { path = "../rarog-host" }
+rarog-ipc = { path = "../rarog-ipc" }
+rarog-platform-windows = { path = "../rarog-platform-windows" }
+rarog-process = { path = "../rarog-process" }
+
 [lints]
 workspace = true

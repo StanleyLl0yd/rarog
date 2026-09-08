@@ -1,6 +1,6 @@
 # R4 — Sky exit gate
 
-Status: **in progress**.
+Status: **complete**.
 
 ## Purpose
 
@@ -15,9 +15,9 @@ R4 establishes the first process-isolation architecture required by ADR-0003:
 
 The completed R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, explicit document-to-Site navigation bindings, bounded Host-owned navigation contexts with last-reference Site lifetime, context-scoped privileged authority, broker-gated Network/Clipboard routing, Windows child-process launch/loss observation, bounded local IPC, and a concrete Windows Site-process mitigation/Job Object containment baseline. They do not claim that the current engine workload has already been migrated wholesale into Site children or that the bounded R4 sandbox is equivalent to a mature browser sandbox.
 
-## Required automated gate
+## Automated gate
 
-Before R4 can close, a dedicated `crates/rarog-engine/tests/r4_exit.rs` gate must verify at minimum:
+The dedicated `crates/rarog-engine/tests/r4_exit.rs` gate verifies the public R4 authority model and closure manifest, while narrower workspace/platform tests retain detailed fault-injection and Win32 evidence coverage:
 
 - the R4 backlog has no unchecked milestone items;
 - distinct schemeful sites cannot share Site-process authority;
@@ -41,7 +41,7 @@ Before R4 can close, a dedicated `crates/rarog-engine/tests/r4_exit.rs` gate mus
 - Windows process creation applies the R4 mitigation, child-process restriction and Job Object containment policy before Site code can execute;
 - ordinary portable/platform crates remain under workspace `unsafe_code = "forbid"`, with unavoidable Win32 handle operations isolated in the dedicated native crate.
 
-The full workspace suite remains responsible for narrower protocol, process, broker, navigation and platform regressions.
+The full workspace suite remains responsible for narrower protocol, process, broker, navigation and platform regressions. Windows-primary additionally runs the concrete child-lifecycle, sandbox, wire-codec and local-transport gates before `r4_exit`; Linux portability runs `r4_exit` against the same portable authority contracts.
 
 ## Architecture invariants
 

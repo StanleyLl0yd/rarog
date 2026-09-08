@@ -467,9 +467,9 @@ Two independent test tracks are mandatory:
 
 ## CI platform policy
 
-Windows is the primary CI platform lane. It runs format, compile checks, Clippy, workspace tests, dedicated R4 child-lifecycle/sandbox/IPC-wire/IPC-transport gates, the R0/P1/R0.1/R1/R2/R3 gates and the bootstrap render. A dedicated Windows SpiderMonkey feature lane runs check, Clippy and adapter tests.
+Windows is the primary CI platform lane. It runs format, compile checks, Clippy, workspace tests, dedicated R4 child-lifecycle/sandbox/IPC-wire/IPC-transport gates, the R0/P1/R0.1/R1/R2/R3/R4 gates and the bootstrap render. A dedicated Windows SpiderMonkey feature lane runs check, Clippy and adapter tests.
 
-Linux remains the portability lane so accidental Windows-only dependencies in engine-core crates are caught early. It runs workspace checks/tests, the milestone gates, bootstrap render and fuzz-target compilation; a dedicated Linux SpiderMonkey feature lane runs check, Clippy and adapter tests. Rust 1.85 has a separate MSRV job, and dependency advisories are checked by the RustSec workflow.
+Linux remains the portability lane so accidental Windows-only dependencies in engine-core crates are caught early. It runs workspace checks/tests, the milestone gates through R4, bootstrap render and fuzz-target compilation; a dedicated Linux SpiderMonkey feature lane runs check, Clippy and adapter tests. Rust 1.85 has a separate MSRV job, and dependency advisories are checked by the RustSec workflow.
 
 When macOS support becomes an active target it should gain an equivalent portability lane, but absence of a macOS lane must not block Windows-first engine progress.
 

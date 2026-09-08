@@ -81,7 +81,7 @@ R4 does not begin immediately after R3. The complete repository is audited and r
 
 ## R4 — Sky
 
-Status: **in progress**. Tracking issue: #231.
+Status: **complete**. Tracking issue: #231.
 
 - Rarog-owned Host/Site process identity and bounded site-assignment topology;
 - Host process;
@@ -90,7 +90,10 @@ Status: **in progress**. Tracking issue: #231.
 - Windows sandbox/process hardening first;
 - capability broker;
 - site isolation by default;
-- crash recovery.
+- crash recovery;
+- dedicated cross-platform R4 exit gate with Windows sandbox/process evidence.
+
+See `R4-BACKLOG.md` and `R4-EXIT.md` for the completed bounded Sky scope and explicit deferrals.
 
 ## R5 — Web
 
