@@ -7,10 +7,12 @@ rust-version.workspace = true
 
 [dependencies]
 rarog-host = { path = "../rarog-host" }
+rarog-ipc = { path = "../rarog-ipc" }
 rarog-platform = { path = "../rarog-platform" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = { version = "5.4.1", default-features = false, features = ["std"] }
+interprocess = { version = "=2.4.3", default-features = false }
 font-kit = { version = "0.14.3", default-features = false, features = ["source"] }
 rarog-compositor = { path = "../rarog-compositor" }
 rarog-compositor-wgpu = { path = "../rarog-compositor-wgpu" }

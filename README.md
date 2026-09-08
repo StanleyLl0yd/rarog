@@ -28,7 +28,7 @@ Rarog is an experimental, independent, Rust-first Web engine designed around fou
 
 The **primary target platform is Windows**. Rarog is being designed so the engine core can remain portable, but the first production-quality host integration, GPU/compositor path, sandboxing, input integration, accessibility work and reference browser will target **Windows 10/11** first.
 
-The workspace version is **0.1.0**. **R0 — Ember is complete**: it established deterministic rendering, invalidation, paint, embedder and platform ownership boundaries. **R1 — Flame is complete**: it replaced the bootstrap HTML/CSS paths with standards-oriented adapters, established scoped block/inline formatting foundations, connected production OpenType shaping and Windows font discovery, and broadened retained incremental rendering and damage-aware paint. **R2 — Flight is complete**: it established normalized WebIDL and replaceable script-runtime boundaries, the first SpiderMonkey adapter, events and engine-owned task/microtask scheduling, URL/origin/Fetch foundations, script-driven retained rendering checkpoints, and Windows input/IME/clipboard adapters. **R3 — Wings is complete**: bounded Flexbox/Grid work, the compositor worker, replaceable `wgpu` backend, Windows-first GPU presentation, asynchronous image decode, scrolling and engine-owned frame scheduling are protected by a dedicated exit gate. **R4 — Sky is in progress**: the mandatory pre-R4 audit/refactor gate is complete; the portable process/site, bounded IPC, Host lifecycle, navigation-context authority and broker-gated Network/Clipboard foundations are established, and the first Windows Site-process launch/loss adapter is present. Windows IPC transport, concrete sandbox mitigations and production Site execution remain active R4 work.
+The workspace version is **0.1.0**. **R0 — Ember is complete**: it established deterministic rendering, invalidation, paint, embedder and platform ownership boundaries. **R1 — Flame is complete**: it replaced the bootstrap HTML/CSS paths with standards-oriented adapters, established scoped block/inline formatting foundations, connected production OpenType shaping and Windows font discovery, and broadened retained incremental rendering and damage-aware paint. **R2 — Flight is complete**: it established normalized WebIDL and replaceable script-runtime boundaries, the first SpiderMonkey adapter, events and engine-owned task/microtask scheduling, URL/origin/Fetch foundations, script-driven retained rendering checkpoints, and Windows input/IME/clipboard adapters. **R3 — Wings is complete**: bounded Flexbox/Grid work, the compositor worker, replaceable `wgpu` backend, Windows-first GPU presentation, asynchronous image decode, scrolling and engine-owned frame scheduling are protected by a dedicated exit gate. **R4 — Sky is in progress**: the mandatory pre-R4 audit/refactor gate is complete; process/site authority, navigation-context authority, bounded IPC with a fixed wire codec, broker-gated privileged operations, real Windows child-process loss handling and Windows local IPC foundations are established. Concrete Windows sandbox mitigations, production Site execution and the final R4 exit gate remain active work.
 
 > Rarog has standards-oriented foundations, not a claim of general-Web compatibility or standards completeness. Broad DOM/Web API bindings, mature script/network integration, Flexbox/Grid completeness, production GPU/compositor maturity, process isolation and browser readiness remain roadmap work.
 
@@ -90,7 +90,7 @@ The completed R0–R3 foundation includes:
 - a replaceable script-runtime contract plus an isolated SpiderMonkey ESR backend with opaque realm/root identities;
 - Event/EventTarget foundations and bounded engine-owned task/microtask scheduling connected to retained render checkpoints;
 - Rarog-owned URL/origin/site identity and Fetch request/response/network-capability boundaries;
-- R4 process/site identity, bounded Host/Site IPC, Host-owned navigation contexts/capabilities, broker-gated Network/Clipboard routing, Windows child-process launch/loss detection and fail-closed Site lifecycle/recovery foundations;
+- R4 process/site identity, bounded Host/Site IPC, Host-owned navigation contexts/capabilities, broker-gated Network/Clipboard routing, Windows child-process launch/loss detection, bounded Windows local IPC and fail-closed Site lifecycle/recovery foundations;
 - platform-neutral keyboard, pointer, wheel, text-input and clipboard contracts with bounded Windows input/IME/clipboard adapters;
 - bounded Flexbox/Grid slices with explicit fail-closed behavior for unsupported geometry;
 - backend-neutral frame planning, bounded compositor workers and a replaceable `wgpu` staging backend;
@@ -126,7 +126,7 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-webidl` — Rarog-owned normalized WebIDL IR, validation and parser frontend boundary
 - `rarog-url` — Rarog-owned URL, origin and site identity primitives
 - `rarog-process` — Rarog-owned Host/Site process identities and bounded site-assignment topology
-- `rarog-ipc` — versioned Host/Site IPC envelopes, correlation, backpressure and disconnect semantics
+- `rarog-ipc` — versioned Host/Site IPC envelopes, fixed bounded wire codec, correlation, backpressure and disconnect semantics
 - `rarog-broker` — Host-owned bounded capability grants, authorization and process-scoped revocation
 - `rarog-host` — portable Host control plane for document/Site assignment, bounded navigation contexts, channel binding, context-scoped privileged routing, authority revocation and recovery
 - `rarog-fetch` — bounded Fetch values and embedder network-capability boundary
@@ -138,7 +138,7 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-compositor` — backend-neutral frame planning, scheduling and bounded compositor-worker contracts
 - `rarog-compositor-wgpu` — replaceable `wgpu` upload/presentation staging backend
 - `rarog-platform` — platform-neutral host, font, input and clipboard capability contracts
-- `rarog-platform-windows` — Windows-specific font, input, IME and clipboard adapters
+- `rarog-platform-windows` — Windows-specific font, input, IME, clipboard, Site-process lifecycle and local IPC adapters
 - `rarog-engine` — rendering, persistent incremental session, event-loop bridge, observability and embedder boundary
 - `rarog-shell` — minimal CLI test shell
 
@@ -169,6 +169,6 @@ Rarog is dual-licensed under **Apache-2.0 OR MIT**, at your option. See `LICENSE
 
 ## Project status
 
-**R0 — Ember, R1 — Flame, R2 — Flight and R3 — Wings are complete. R4 — Sky is in progress.** The mandatory pre-R4 audit/refactor gate is complete; the portable R4 process/IPC/broker/Host navigation-lifecycle foundation and the first Windows child launch/loss adapter are established while Windows IPC, sandbox hardening and production Site execution remain. Rarog remains experimental and does not claim browser readiness or complete production sandboxing.
+**R0 — Ember, R1 — Flame, R2 — Flight and R3 — Wings are complete. R4 — Sky is in progress.** The portable R4 authority/lifecycle foundation, fixed-wire IPC, Windows child launch/loss and Windows local transport are established; sandbox hardening, production Site execution and the dedicated R4 exit gate remain. Rarog remains experimental and does not claim browser readiness or Chromium-equivalent sandbox maturity.
 
 Created by **Stanley Lloyd**. Contributions are welcome; see `CONTRIBUTING.md`.

@@ -1,6 +1,7 @@
 mod clipboard;
 mod gpu;
 mod input;
+mod ipc;
 mod process;
 
 pub use clipboard::WindowsClipboardService;
@@ -8,6 +9,10 @@ pub use clipboard::WindowsClipboardService;
 pub use gpu::WindowsPresentingCompositor;
 pub use gpu::{WindowsGpuDevice, WindowsGpuError, WindowsGpuSurface, WindowsSurfaceRecovery};
 pub use input::WindowsInputService;
+pub use ipc::{
+    DEFAULT_MAX_WINDOWS_IPC_ENDPOINT_BYTES, WindowsIpcConnection, WindowsIpcEndpointName,
+    WindowsIpcError, WindowsIpcErrorKind, WindowsIpcListener, WindowsIpcSiteStream,
+};
 pub use process::{
     DEFAULT_MAX_SITE_PROCESS_ARGS, WindowsSiteProcess, WindowsSiteProcessCommand,
     WindowsSiteProcessError, WindowsSiteProcessErrorKind,

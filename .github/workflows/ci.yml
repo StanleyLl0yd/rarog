@@ -36,6 +36,10 @@ jobs:
         run: cargo test --locked --workspace
       - name: R4 Windows process lifecycle gate
         run: cargo test --locked -p rarog-platform-windows windows_site_process
+      - name: R4 IPC wire codec gate
+        run: cargo test --locked -p rarog-ipc wire_
+      - name: R4 Windows IPC transport gate
+        run: cargo test --locked -p rarog-platform-windows windows_ipc_
       - name: R0 exit gate
         run: cargo test --locked -p rarog-engine --test r0_exit
       - name: P1 embedder exit gate

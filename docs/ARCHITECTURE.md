@@ -88,13 +88,13 @@ This establishes the identity/lifetime contract required by later R4 IPC, capabi
 
 ### R4 IPC protocol boundary
 
-`rarog-ipc` defines a transport-independent Host↔Site protocol envelope before any Windows IPC transport is selected. Every envelope carries the current protocol version, explicit endpoint roles, a request/reply/event kind and a bounded owned payload. Request identities are correlation values only; they do not grant process or capability authority.
+`rarog-ipc` defines the transport-independent Host↔Site protocol envelope and a deterministic fixed-header wire representation. Every envelope carries the current protocol version, explicit endpoint roles, a request/reply/event kind and a bounded owned payload. Request identities are correlation values only; they do not grant process or capability authority.
 
-The initial channel model is bounded in both message count and queued payload bytes. Enqueue returns explicit backpressure errors rather than growing without limit. Disconnect discards queued work and makes subsequent send/receive operations fail until a new channel object is established.
+The initial channel model is bounded in both message count and queued payload bytes. Enqueue returns explicit backpressure errors rather than growing without limit. Disconnect discards queued work and makes subsequent send/receive operations fail until a new channel object is established. The 24-byte Rarog wire header validates magic/version/roles/kind/correlation/payload length before payload allocation and rejects malformed, truncated or trailing data.
 
-Direct Site↔Site and Host↔Host routes are rejected by the portable protocol. Site-process authority is intentionally not accepted from a self-asserted payload field: later Host control-plane code binds a channel to the `SiteProcessId` it launched/authenticated and capability checks use that Host-owned binding.
+Direct Site↔Site and Host↔Host routes are rejected by the portable protocol. Site-process authority is not accepted from a self-asserted wire or payload field: Host control-plane/platform code binds a channel/transport endpoint to the `SiteProcessId` it launched and capability checks use that Host-owned binding.
 
-The protocol crate does not choose named pipes, sockets, shared memory, serialization or Windows handles. Those are later transport concerns behind this validated envelope/lifetime contract. See ADR-0103.
+The portable protocol crate contains no named-pipe handles, OS endpoints or Windows types. Windows transport selection remains behind the platform boundary while the Rarog-owned codec defines the bytes that cross it. See ADR-0103 and ADR-0110.
 
 ### R4 capability broker boundary
 
@@ -122,7 +122,7 @@ The production-facing Host navigation boundary additionally wraps document bindi
 
 Privileges used by a navigation context are represented by `NavigationContextCapability`, which binds the Host-issued capability to the exact context in addition to the broker's process/class ownership. This prevents two same-site contexts sharing one Site process from treating each other's numeric capability references as authority. Context-scoped Network/Clipboard entry points resolve process authority from Host state before delegating to the existing broker-gated routes; cross-site navigation, context close and process loss make stale context capability/operation references unusable. See ADR-0109.
 
-This remains a portable authority model. The Windows launch/loss adapter now owns concrete child-process lifecycle and feeds observed loss back into Host revocation/retirement, while the future Windows IPC transport must bind authenticated OS endpoints to the same Host-owned identities. See ADR-0105 and ADR-0108.
+This remains a portable authority model. The Windows launch/loss adapter owns concrete child-process lifecycle and feeds observed loss back into Host revocation/retirement, while the Windows IPC adapter binds accepted local endpoints to live Host-produced `SiteLease` values separately from decoded wire fields. Neither child PID nor envelope contents select Rarog process authority. See ADR-0105, ADR-0108 and ADR-0110.
 
 ## Rendering model
 
@@ -404,7 +404,7 @@ R0 isolates host-platform integration behind two crate layers. `rarog-platform` 
 
 `EngineBuilder` accepts a platform host and defaults to `NullPlatformHost`, so headless tests and portability lanes do not need to impersonate a desktop integration. The engine exposes only the host name and capability data. No Win32, WinRT, DirectWrite, Direct3D, HWND, COM, or other Windows-specific type enters DOM/HTML/CSS/layout/paint or the embedder API.
 
-The Windows boundary began empty in R0. R1 added system-font integration, R2 added normalized input/IME and clipboard services, and R3 added target-specific GPU selection/surface presentation behind compositor/platform adapters. R4 adds a narrow Site-process launch/loss adapter in `rarog-platform-windows`; the child handle, OS PID and launch mechanics remain private to that target crate. `WindowsPlatformHost::try_new` still succeeds only on a Windows compilation target, while the crate remains buildable on Linux for portability CI. Accessibility and the actual sandbox/mitigation policy remain unimplemented. See ADR-0030 and ADR-0108.
+The Windows boundary began empty in R0. R1 added system-font integration, R2 added normalized input/IME and clipboard services, and R3 added target-specific GPU selection/surface presentation behind compositor/platform adapters. R4 adds a narrow Site-process launch/loss adapter plus bounded local IPC transport in `rarog-platform-windows`; child/process details and local transport objects remain private to that target crate. `WindowsPlatformHost::try_new` still succeeds only on a Windows compilation target, while the crate remains buildable on Linux for portability CI. Accessibility and the actual sandbox/mitigation policy remain unimplemented. See ADR-0030, ADR-0108 and ADR-0110.
 
 ## Engine and embedder boundary
 
@@ -467,7 +467,7 @@ Two independent test tracks are mandatory:
 
 ## CI platform policy
 
-Windows is the primary CI platform lane. It runs format, compile checks, Clippy, workspace tests, the R0/P1/R0.1/R1/R2/R3 gates and the bootstrap render. A dedicated Windows SpiderMonkey feature lane now runs check, Clippy and adapter tests.
+Windows is the primary CI platform lane. It runs format, compile checks, Clippy, workspace tests, dedicated R4 child-lifecycle/IPC-wire/IPC-transport gates, the R0/P1/R0.1/R1/R2/R3 gates and the bootstrap render. A dedicated Windows SpiderMonkey feature lane runs check, Clippy and adapter tests.
 
 Linux remains the portability lane so accidental Windows-only dependencies in engine-core crates are caught early. It runs workspace checks/tests, the milestone gates, bootstrap render and fuzz-target compilation; a dedicated Linux SpiderMonkey feature lane runs check, Clippy and adapter tests. Rust 1.85 has a separate MSRV job, and dependency advisories are checked by the RustSec workflow.
 

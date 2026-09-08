@@ -1,3 +1,6 @@
+mod wire;
+pub use wire::*;
+
 use std::collections::VecDeque;
 use std::fmt;
 use std::num::NonZeroU64;
@@ -98,6 +101,10 @@ pub enum IpcErrorKind {
     QueueMessageLimitExceeded,
     QueueByteLimitExceeded,
     Disconnected,
+    InvalidWireMagic,
+    InvalidWireEncoding,
+    TruncatedWireFrame,
+    TrailingWireBytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
