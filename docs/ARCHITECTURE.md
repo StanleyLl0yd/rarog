@@ -102,7 +102,7 @@ The protocol crate does not choose named pipes, sockets, shared memory, serializ
 
 Capability identities are monotonically allocated and never reused after revocation. The broker is bounded by an explicit grant count. Capacity or identity exhaustion fails closed. Revoking a Site process removes every capability owned by that process so crash/replacement handling can invalidate authority before assigning a fresh process identity.
 
-The initial concrete classes are Network and Clipboard because both already have Rarog-owned policy/platform boundaries. A Network grant reaches the Host-owned Fetch/network policy boundary; it does not bypass Fetch policy. Concrete privileged-operation routing remains a later R4 integration slice. See ADR-0104.
+The initial concrete classes are Network and Clipboard because both already have Rarog-owned policy/platform boundaries. A Network grant reaches the Host-owned Fetch/network transport boundary after Fetch has produced a bounded `NetworkRequest`; the broker route does not own or widen Fetch CORS/origin/credentials/redirect policy. Clipboard access reaches `PlatformClipboardService` only after exact process/capability/class authorization. See ADR-0104 and ADR-0107.
 
 ### R4 Host control-plane boundary
 
@@ -111,6 +111,8 @@ The initial concrete classes are Network and Clipboard because both already have
 Inbound transport plumbing must supply the Host-owned Site-process binding separately from the decoded IPC envelope. The envelope's source/destination roles are checked against that binding path; payload values do not select another process or authority owner.
 
 When a Site process is reported lost, the Host control plane disconnects and discards its queued IPC work, revokes every capability owned by that process, then retires its topology identity. Recovery allocates a fresh Site-process identity and a fresh empty channel. Stale process IDs and capability references therefore remain invalid even when the same schemeful site is recovered.
+
+Privileged Network operations never expose backend `NetworkTicket` values as Site authority. `rarog-host` allocates a separate bounded monotonic `NetworkOperationId`, binds it to the authenticated Site process and exact Network capability, and validates that binding before poll/cancel reaches the backend. Completion, cancellation, capability revocation and process loss remove the Host operation authority. Clipboard reads/writes similarly authorize the exact Clipboard capability before touching the platform service and revalidate text against the concrete service limit. Rejected references therefore cannot cause privileged backend side effects. See ADR-0107.
 
 Document navigation is bound at the Host boundary rather than inside Web-controlled payloads. A `DocumentSiteBinding` stores the owning `SiteIdentity` and Host-assigned `SiteProcessId`. Initial and same-site navigation use the bounded topology normally; cross-site or cross-scheme navigation replaces the document binding with a distinct Site-process identity. Opaque URLs create a fresh identity for a new environment, while inherited opaque environments pass their stored `SiteIdentity` explicitly so identity is never accidentally regenerated. A stale binding is rejected before a target process is allocated. See ADR-0106.
 

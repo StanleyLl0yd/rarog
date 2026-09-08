@@ -2,7 +2,11 @@ use rarog_broker::{
     CapabilityBroker, CapabilityClass, CapabilityError, CapabilityErrorKind, CapabilityGrant,
     CapabilityId, DEFAULT_MAX_CAPABILITIES,
 };
+use rarog_fetch::{
+    FetchError, FetchErrorKind, NetworkCapability, NetworkPoll, NetworkRequest, NetworkTicket,
+};
 use rarog_ipc::{EndpointRole, IpcChannel, IpcEnvelope, IpcError, IpcErrorKind, IpcLimits};
+use rarog_platform::{ClipboardError, ClipboardText, PlatformClipboardService};
 use rarog_process::{
     DEFAULT_MAX_SITE_PROCESSES, ProcessTopology, ProcessTopologyError, ProcessTopologyErrorKind,
     SiteAssignmentKind, SiteProcessId,
@@ -10,17 +14,24 @@ use rarog_process::{
 use rarog_url::{SiteIdentity, UrlError, UrlErrorKind};
 use std::collections::HashMap;
 use std::fmt;
+use std::num::NonZeroU64;
+
+pub const DEFAULT_MAX_NETWORK_OPERATIONS: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostLimits {
     pub max_site_processes: usize,
     pub ipc: IpcLimits,
     pub max_capabilities: usize,
+    pub max_network_operations: usize,
 }
 
 impl HostLimits {
     pub fn is_valid(self) -> bool {
-        self.max_site_processes > 0 && self.ipc.is_valid() && self.max_capabilities > 0
+        self.max_site_processes > 0
+            && self.ipc.is_valid()
+            && self.max_capabilities > 0
+            && self.max_network_operations > 0
     }
 }
 
@@ -30,6 +41,7 @@ impl Default for HostLimits {
             max_site_processes: DEFAULT_MAX_SITE_PROCESSES,
             ipc: IpcLimits::default(),
             max_capabilities: DEFAULT_MAX_CAPABILITIES,
+            max_network_operations: DEFAULT_MAX_NETWORK_OPERATIONS,
         }
     }
 }
@@ -44,7 +56,13 @@ pub enum HostControlErrorKind {
     Ipc(IpcErrorKind),
     Capability(CapabilityErrorKind),
     Url(UrlErrorKind),
+    Fetch(FetchErrorKind),
+    Clipboard(ClipboardError),
     InvalidDocumentBinding,
+    InvalidNetworkOperationId,
+    NetworkOperationLimitExceeded,
+    NetworkOperationIdentitySpaceExhausted,
+    InvalidNetworkOperationAuthority,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +119,18 @@ impl From<UrlError> for HostControlError {
     }
 }
 
+impl From<FetchError> for HostControlError {
+    fn from(error: FetchError) -> Self {
+        Self::new(HostControlErrorKind::Fetch(error.kind), error.message)
+    }
+}
+
+impl From<ClipboardError> for HostControlError {
+    fn from(error: ClipboardError) -> Self {
+        Self::new(HostControlErrorKind::Clipboard(error), error.to_string())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SiteLease {
     process: SiteProcessId,
@@ -126,6 +156,7 @@ pub struct SiteLoss {
     process: SiteProcessId,
     site: SiteIdentity,
     revoked_capabilities: usize,
+    revoked_network_operations: usize,
 }
 
 impl SiteLoss {
@@ -139,6 +170,10 @@ impl SiteLoss {
 
     pub fn revoked_capabilities(&self) -> usize {
         self.revoked_capabilities
+    }
+
+    pub fn revoked_network_operations(&self) -> usize {
+        self.revoked_network_operations
     }
 }
 
@@ -190,6 +225,55 @@ impl NavigationTransition {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NetworkOperationId(NonZeroU64);
+
+impl NetworkOperationId {
+    pub fn try_new(raw: u64) -> Result<Self, HostControlError> {
+        NonZeroU64::new(raw).map(Self).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::InvalidNetworkOperationId,
+                "network operation identity must be non-zero",
+            )
+        })
+    }
+
+    pub fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+#[derive(Debug)]
+struct NetworkOperationIdAllocator {
+    next: Option<NonZeroU64>,
+}
+
+impl NetworkOperationIdAllocator {
+    fn new() -> Self {
+        Self {
+            next: NonZeroU64::new(1),
+        }
+    }
+
+    fn allocate(&mut self) -> Result<NetworkOperationId, HostControlError> {
+        let next = self.next.ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::NetworkOperationIdentitySpaceExhausted,
+                "network operation identity space is exhausted",
+            )
+        })?;
+        self.next = NonZeroU64::new(next.get().wrapping_add(1));
+        Ok(NetworkOperationId(next))
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NetworkOperation {
+    owner: SiteProcessId,
+    capability: CapabilityId,
+    ticket: NetworkTicket,
+}
+
 #[derive(Debug)]
 struct SiteInstance {
     site: SiteIdentity,
@@ -201,6 +285,9 @@ pub struct HostControlPlane {
     topology: ProcessTopology,
     broker: CapabilityBroker,
     ipc_limits: IpcLimits,
+    max_network_operations: usize,
+    network_operation_allocator: NetworkOperationIdAllocator,
+    network_operations: HashMap<NetworkOperationId, NetworkOperation>,
     sites: HashMap<SiteProcessId, SiteInstance>,
 }
 
@@ -209,7 +296,7 @@ impl HostControlPlane {
         if !limits.is_valid() {
             return Err(HostControlError::new(
                 HostControlErrorKind::InvalidLimits,
-                "Host limits must contain non-zero process/capability limits and valid IPC limits",
+                "Host limits must contain non-zero process/capability/network-operation limits and valid IPC limits",
             ));
         }
 
@@ -217,6 +304,9 @@ impl HostControlPlane {
             topology: ProcessTopology::try_new(limits.max_site_processes)?,
             broker: CapabilityBroker::try_new(limits.max_capabilities)?,
             ipc_limits: limits.ipc,
+            max_network_operations: limits.max_network_operations,
+            network_operation_allocator: NetworkOperationIdAllocator::new(),
+            network_operations: HashMap::new(),
             sites: HashMap::new(),
         })
     }
@@ -235,6 +325,10 @@ impl HostControlPlane {
 
     pub fn active_capabilities(&self) -> usize {
         self.broker.active_capabilities()
+    }
+
+    pub fn active_network_operations(&self) -> usize {
+        self.network_operations.len()
     }
 
     pub fn ensure_site(&mut self, site: SiteIdentity) -> Result<SiteLease, HostControlError> {
@@ -369,7 +463,10 @@ impl HostControlPlane {
         &mut self,
         id: CapabilityId,
     ) -> Result<CapabilityGrant, HostControlError> {
-        Ok(self.broker.revoke(id)?)
+        let grant = self.broker.revoke(id)?;
+        self.network_operations
+            .retain(|_, operation| operation.capability != id);
+        Ok(grant)
     }
 
     pub fn process_lost(&mut self, process: SiteProcessId) -> Result<SiteLoss, HostControlError> {
@@ -379,6 +476,11 @@ impl HostControlPlane {
             .ok_or_else(|| HostControlError::unknown_process(process))?;
 
         instance.channel.disconnect();
+        let network_operations_before = self.network_operations.len();
+        self.network_operations
+            .retain(|_, operation| operation.owner != process);
+        let revoked_network_operations =
+            network_operations_before.saturating_sub(self.network_operations.len());
         let revoked_capabilities = self.broker.revoke_all_for_process(process);
         let topology_site = self.topology.retire_site_process(process)?;
         if topology_site != instance.site {
@@ -392,11 +494,131 @@ impl HostControlPlane {
             process,
             site: instance.site,
             revoked_capabilities,
+            revoked_network_operations,
         })
     }
 
     pub fn recover_site(&mut self, site: SiteIdentity) -> Result<SiteLease, HostControlError> {
         self.ensure_site(site)
+    }
+
+    pub fn start_network_operation(
+        &mut self,
+        process: SiteProcessId,
+        capability: CapabilityId,
+        request: NetworkRequest,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<NetworkOperationId, HostControlError> {
+        self.authorize_capability(process, capability, CapabilityClass::Network)?;
+        if self.network_operations.len() >= self.max_network_operations {
+            return Err(HostControlError::new(
+                HostControlErrorKind::NetworkOperationLimitExceeded,
+                format!(
+                    "network operation limit {} reached",
+                    self.max_network_operations
+                ),
+            ));
+        }
+
+        let operation = self.network_operation_allocator.allocate()?;
+        let ticket = network.start(request)?;
+
+        if let Some(existing) = self.network_operations.iter().find_map(|(id, active)| {
+            (active.ticket == ticket).then_some(*id)
+        }) {
+            self.network_operations.remove(&existing);
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "network backend reused a live ticket; affected Host operation authority was revoked",
+            ));
+        }
+
+        if self
+            .network_operations
+            .insert(
+                operation,
+                NetworkOperation {
+                    owner: process,
+                    capability,
+                    ticket,
+                },
+            )
+            .is_some()
+        {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "network operation allocator reused a live identity",
+            ));
+        }
+
+        Ok(operation)
+    }
+
+    pub fn poll_network_operation(
+        &mut self,
+        process: SiteProcessId,
+        capability: CapabilityId,
+        operation: NetworkOperationId,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<NetworkPoll, HostControlError> {
+        self.authorize_capability(process, capability, CapabilityClass::Network)?;
+        let ticket = self.network_ticket(process, capability, operation)?;
+
+        let poll = match network.poll(ticket) {
+            Ok(poll) => poll,
+            Err(error) => {
+                self.network_operations.remove(&operation);
+                return Err(error.into());
+            }
+        };
+        if matches!(&poll, NetworkPoll::Complete(_)) {
+            self.network_operations.remove(&operation);
+        }
+        Ok(poll)
+    }
+
+    pub fn cancel_network_operation(
+        &mut self,
+        process: SiteProcessId,
+        capability: CapabilityId,
+        operation: NetworkOperationId,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<(), HostControlError> {
+        self.authorize_capability(process, capability, CapabilityClass::Network)?;
+        let ticket = self.network_ticket(process, capability, operation)?;
+        self.network_operations.remove(&operation);
+        network.cancel(ticket)?;
+        Ok(())
+    }
+
+    pub fn read_clipboard_text(
+        &self,
+        process: SiteProcessId,
+        capability: CapabilityId,
+        clipboard: &dyn PlatformClipboardService,
+    ) -> Result<Option<ClipboardText>, HostControlError> {
+        self.authorize_capability(process, capability, CapabilityClass::Clipboard)?;
+        let limits = clipboard.limits();
+        if !limits.is_valid() {
+            return Err(ClipboardError::InvalidLimits.into());
+        }
+        clipboard
+            .read_text()?
+            .map(|text| ClipboardText::try_new(text.as_str(), limits).map_err(HostControlError::from))
+            .transpose()
+    }
+
+    pub fn write_clipboard_text(
+        &self,
+        process: SiteProcessId,
+        capability: CapabilityId,
+        text: &ClipboardText,
+        clipboard: &dyn PlatformClipboardService,
+    ) -> Result<(), HostControlError> {
+        self.authorize_capability(process, capability, CapabilityClass::Clipboard)?;
+        let bounded = ClipboardText::try_new(text.as_str(), clipboard.limits())?;
+        clipboard.write_text(&bounded)?;
+        Ok(())
     }
 
     pub fn begin_document_navigation(
@@ -478,6 +700,24 @@ impl HostControlPlane {
         Ok(())
     }
 
+    fn network_ticket(
+        &self,
+        process: SiteProcessId,
+        capability: CapabilityId,
+        operation: NetworkOperationId,
+    ) -> Result<NetworkTicket, HostControlError> {
+        self.network_operations
+            .get(&operation)
+            .filter(|active| active.owner == process && active.capability == capability)
+            .map(|active| active.ticket)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidNetworkOperationAuthority,
+                    "unknown network operation or operation authority does not match",
+                )
+            })
+    }
+
     fn site(&self, process: SiteProcessId) -> Result<&SiteInstance, HostControlError> {
         self.sites
             .get(&process)
@@ -511,8 +751,11 @@ fn validate_direction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rarog_fetch::{FetchRequest, FetchResponse, HeaderList};
     use rarog_ipc::{IpcEnvelope, RequestId};
+    use rarog_platform::ClipboardLimits;
     use rarog_url::WebUrl;
+    use std::sync::Mutex;
 
     fn site(url: &str) -> SiteIdentity {
         WebUrl::parse(url).unwrap().site_identity().unwrap()
@@ -527,6 +770,103 @@ mod tests {
                 max_queued_bytes: 64,
             },
             max_capabilities,
+            max_network_operations: 4,
+        }
+    }
+
+    fn network_request(url: &str) -> NetworkRequest {
+        let url = WebUrl::parse(url).unwrap();
+        let origin = WebUrl::parse("https://app.example.com/")
+            .unwrap()
+            .origin()
+            .unwrap();
+        FetchRequest::new(url, origin).network_request()
+    }
+
+    struct FixtureNetwork {
+        next_ticket: u64,
+        starts: usize,
+        polls: usize,
+        cancels: usize,
+    }
+
+    impl Default for FixtureNetwork {
+        fn default() -> Self {
+            Self {
+                next_ticket: 1,
+                starts: 0,
+                polls: 0,
+                cancels: 0,
+            }
+        }
+    }
+
+    impl NetworkCapability for FixtureNetwork {
+        fn start(&mut self, _request: NetworkRequest) -> Result<NetworkTicket, FetchError> {
+            self.starts += 1;
+            let ticket = NetworkTicket::new(NonZeroU64::new(self.next_ticket).unwrap());
+            self.next_ticket += 1;
+            Ok(ticket)
+        }
+
+        fn poll(&mut self, _ticket: NetworkTicket) -> Result<NetworkPoll, FetchError> {
+            self.polls += 1;
+            Ok(NetworkPoll::Complete(
+                FetchResponse::try_new(None, 204, HeaderList::default(), Vec::new(), 1).unwrap(),
+            ))
+        }
+
+        fn cancel(&mut self, _ticket: NetworkTicket) -> Result<(), FetchError> {
+            self.cancels += 1;
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct ClipboardState {
+        reads: usize,
+        writes: usize,
+        text: Option<ClipboardText>,
+    }
+
+    struct FixtureClipboard {
+        limits: ClipboardLimits,
+        state: Mutex<ClipboardState>,
+    }
+
+    impl FixtureClipboard {
+        fn new(max_text_bytes: usize) -> Self {
+            Self {
+                limits: ClipboardLimits { max_text_bytes },
+                state: Mutex::new(ClipboardState::default()),
+            }
+        }
+
+        fn reads(&self) -> usize {
+            self.state.lock().unwrap().reads
+        }
+
+        fn writes(&self) -> usize {
+            self.state.lock().unwrap().writes
+        }
+    }
+
+    impl PlatformClipboardService for FixtureClipboard {
+        fn limits(&self) -> ClipboardLimits {
+            self.limits
+        }
+
+        fn read_text(&self) -> Result<Option<ClipboardText>, ClipboardError> {
+            let mut state = self.state.lock().unwrap();
+            state.reads += 1;
+            Ok(state.text.clone())
+        }
+
+        fn write_text(&self, text: &ClipboardText) -> Result<(), ClipboardError> {
+            let mut state = self.state.lock().unwrap();
+            state.writes += 1;
+            state.text = Some(text.clone());
+            Ok(())
         }
     }
 
@@ -682,6 +1022,291 @@ mod tests {
     }
 
     #[test]
+    fn network_operations_are_host_owned_and_backend_tickets_are_not_authority() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let first = host
+            .ensure_site(site("https://example.com/"))
+            .unwrap()
+            .process();
+        let second = host
+            .ensure_site(site("https://example.org/"))
+            .unwrap()
+            .process();
+        let first_capability = host
+            .grant_capability(first, CapabilityClass::Network)
+            .unwrap();
+        let second_capability = host
+            .grant_capability(second, CapabilityClass::Network)
+            .unwrap();
+        let mut network = FixtureNetwork::default();
+
+        let operation = host
+            .start_network_operation(
+                first,
+                first_capability.id(),
+                network_request("https://api.example.com/data"),
+                &mut network,
+            )
+            .unwrap();
+
+        assert_eq!(network.starts, 1);
+        assert_eq!(host.active_network_operations(), 1);
+
+        let guessed = NetworkOperationId::try_new(operation.get() + 1).unwrap();
+        assert_eq!(
+            host.poll_network_operation(
+                first,
+                first_capability.id(),
+                guessed,
+                &mut network
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::InvalidNetworkOperationAuthority
+        );
+        assert_eq!(network.polls, 0);
+
+        assert_eq!(
+            host.poll_network_operation(
+                second,
+                second_capability.id(),
+                operation,
+                &mut network
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::InvalidNetworkOperationAuthority
+        );
+        assert_eq!(network.polls, 0);
+
+        assert!(matches!(
+            host.poll_network_operation(
+                first,
+                first_capability.id(),
+                operation,
+                &mut network
+            )
+            .unwrap(),
+            NetworkPoll::Complete(_)
+        ));
+        assert_eq!(network.polls, 1);
+        assert_eq!(host.active_network_operations(), 0);
+
+        assert_eq!(
+            host.poll_network_operation(
+                first,
+                first_capability.id(),
+                operation,
+                &mut network
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::InvalidNetworkOperationAuthority
+        );
+        assert_eq!(network.polls, 1);
+    }
+
+    #[test]
+    fn network_operation_capacity_revocation_and_process_loss_fail_closed() {
+        let mut limits = test_limits(1, 8);
+        limits.max_network_operations = 1;
+        let mut host = HostControlPlane::try_new(limits).unwrap();
+        let process = host
+            .ensure_site(site("https://example.com/"))
+            .unwrap()
+            .process();
+        let first_capability = host
+            .grant_capability(process, CapabilityClass::Network)
+            .unwrap();
+        let mut network = FixtureNetwork::default();
+
+        let first_operation = host
+            .start_network_operation(
+                process,
+                first_capability.id(),
+                network_request("https://api.example.com/one"),
+                &mut network,
+            )
+            .unwrap();
+
+        assert_eq!(
+            host.start_network_operation(
+                process,
+                first_capability.id(),
+                network_request("https://api.example.com/two"),
+                &mut network,
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::NetworkOperationLimitExceeded
+        );
+        assert_eq!(network.starts, 1);
+
+        host.revoke_capability(first_capability.id()).unwrap();
+        assert_eq!(host.active_network_operations(), 0);
+        assert_eq!(
+            host.poll_network_operation(
+                process,
+                first_capability.id(),
+                first_operation,
+                &mut network
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::Capability(CapabilityErrorKind::UnknownCapability)
+        );
+        assert_eq!(network.polls, 0);
+
+        let replacement_capability = host
+            .grant_capability(process, CapabilityClass::Network)
+            .unwrap();
+        let replacement_operation = host
+            .start_network_operation(
+                process,
+                replacement_capability.id(),
+                network_request("https://api.example.com/three"),
+                &mut network,
+            )
+            .unwrap();
+
+        let loss = host.process_lost(process).unwrap();
+        assert_eq!(loss.revoked_network_operations(), 1);
+        assert_eq!(host.active_network_operations(), 0);
+        assert_eq!(
+            host.poll_network_operation(
+                process,
+                replacement_capability.id(),
+                replacement_operation,
+                &mut network
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::UnknownSiteProcess
+        );
+        assert_eq!(network.polls, 0);
+    }
+
+    #[test]
+    fn network_cancel_revokes_host_operation_before_backend_result() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 4)).unwrap();
+        let process = host
+            .ensure_site(site("https://example.com/"))
+            .unwrap()
+            .process();
+        let capability = host
+            .grant_capability(process, CapabilityClass::Network)
+            .unwrap();
+        let mut network = FixtureNetwork::default();
+        let operation = host
+            .start_network_operation(
+                process,
+                capability.id(),
+                network_request("https://api.example.com/"),
+                &mut network,
+            )
+            .unwrap();
+
+        host.cancel_network_operation(process, capability.id(), operation, &mut network)
+            .unwrap();
+
+        assert_eq!(network.cancels, 1);
+        assert_eq!(host.active_network_operations(), 0);
+        assert_eq!(
+            host.cancel_network_operation(process, capability.id(), operation, &mut network)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::InvalidNetworkOperationAuthority
+        );
+        assert_eq!(network.cancels, 1);
+    }
+
+    #[test]
+    fn clipboard_route_authorizes_before_backend_and_revalidates_limits() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let first = host
+            .ensure_site(site("https://example.com/"))
+            .unwrap()
+            .process();
+        let second = host
+            .ensure_site(site("https://example.org/"))
+            .unwrap()
+            .process();
+        let clipboard_capability = host
+            .grant_capability(first, CapabilityClass::Clipboard)
+            .unwrap();
+        let network_capability = host
+            .grant_capability(first, CapabilityClass::Network)
+            .unwrap();
+        let second_clipboard = host
+            .grant_capability(second, CapabilityClass::Clipboard)
+            .unwrap();
+        let clipboard = FixtureClipboard::new(8);
+        let text = ClipboardText::try_new(
+            "Rarog",
+            ClipboardLimits {
+                max_text_bytes: 32,
+            },
+        )
+        .unwrap();
+
+        host.write_clipboard_text(first, clipboard_capability.id(), &text, &clipboard)
+            .unwrap();
+        assert_eq!(clipboard.writes(), 1);
+
+        assert_eq!(
+            host.write_clipboard_text(first, network_capability.id(), &text, &clipboard)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::Capability(CapabilityErrorKind::WrongClass)
+        );
+        assert_eq!(clipboard.writes(), 1);
+
+        assert_eq!(
+            host.read_clipboard_text(second, clipboard_capability.id(), &clipboard)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::Capability(CapabilityErrorKind::WrongOwner)
+        );
+        assert_eq!(clipboard.reads(), 0);
+
+        let oversized = ClipboardText::try_new(
+            "0123456789",
+            ClipboardLimits {
+                max_text_bytes: 32,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            host.write_clipboard_text(first, clipboard_capability.id(), &oversized, &clipboard)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::Clipboard(ClipboardError::TextLimitExceeded {
+                bytes: 10,
+                limit: 8
+            })
+        );
+        assert_eq!(clipboard.writes(), 1);
+
+        assert_eq!(
+            host.read_clipboard_text(second, second_clipboard.id(), &clipboard)
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            "Rarog"
+        );
+        assert_eq!(clipboard.reads(), 1);
+
+        host.revoke_capability(second_clipboard.id()).unwrap();
+        assert_eq!(
+            host.read_clipboard_text(second, second_clipboard.id(), &clipboard)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::Capability(CapabilityErrorKind::UnknownCapability)
+        );
+        assert_eq!(clipboard.reads(), 1);
+    }
+
+    #[test]
     fn initial_and_same_site_navigation_reuse_host_assignment() {
         let mut host = HostControlPlane::try_new(test_limits(2, 2)).unwrap();
         let first_url = WebUrl::parse("https://a.example.com/start").unwrap();
@@ -812,6 +1437,13 @@ mod tests {
     fn invalid_composed_limits_are_rejected() {
         let mut limits = test_limits(1, 1);
         limits.ipc.max_message_bytes = limits.ipc.max_queued_bytes + 1;
+        assert_eq!(
+            HostControlPlane::try_new(limits).unwrap_err().kind,
+            HostControlErrorKind::InvalidLimits
+        );
+
+        let mut limits = test_limits(1, 1);
+        limits.max_network_operations = 0;
         assert_eq!(
             HostControlPlane::try_new(limits).unwrap_err().kind,
             HostControlErrorKind::InvalidLimits
