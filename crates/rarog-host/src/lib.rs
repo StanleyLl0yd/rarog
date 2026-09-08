@@ -685,9 +685,7 @@ mod tests {
     fn initial_and_same_site_navigation_reuse_host_assignment() {
         let mut host = HostControlPlane::try_new(test_limits(2, 2)).unwrap();
         let first_url = WebUrl::parse("https://a.example.com/start").unwrap();
-        let first = host
-            .begin_document_navigation(None, &first_url)
-            .unwrap();
+        let first = host.begin_document_navigation(None, &first_url).unwrap();
 
         assert_eq!(first.kind(), NavigationTransitionKind::Initial);
         assert!(first.previous().is_none());
@@ -748,20 +746,14 @@ mod tests {
             .begin_document_navigation_to_site(Some(&first), first.site().clone())
             .unwrap();
 
-        assert_eq!(
-            inherited.kind(),
-            NavigationTransitionKind::SameSiteReuse
-        );
+        assert_eq!(inherited.kind(), NavigationTransitionKind::SameSiteReuse);
         assert_eq!(inherited.current(), &first);
 
         let fresh = host
             .begin_document_navigation(Some(&first), &opaque_url)
             .unwrap();
 
-        assert_eq!(
-            fresh.kind(),
-            NavigationTransitionKind::CrossSiteReplacement
-        );
+        assert_eq!(fresh.kind(), NavigationTransitionKind::CrossSiteReplacement);
         assert!(fresh.current().site().is_opaque());
         assert_ne!(fresh.current().site(), first.site());
         assert_ne!(fresh.current().process(), first.process());
@@ -784,9 +776,10 @@ mod tests {
 
         assert_eq!(error.kind, HostControlErrorKind::UnknownSiteProcess);
         assert_eq!(host.active_site_processes(), 0);
-        assert!(host
-            .process_for_site(&target.site_identity().unwrap())
-            .is_none());
+        assert!(
+            host.process_for_site(&target.site_identity().unwrap())
+                .is_none()
+        );
     }
 
     #[test]
@@ -809,9 +802,10 @@ mod tests {
         );
         assert_eq!(host.active_site_processes(), 1);
         assert_eq!(host.site_for_process(first.process()), Some(first.site()));
-        assert!(host
-            .process_for_site(&target.site_identity().unwrap())
-            .is_none());
+        assert!(
+            host.process_for_site(&target.site_identity().unwrap())
+                .is_none()
+        );
     }
 
     #[test]
