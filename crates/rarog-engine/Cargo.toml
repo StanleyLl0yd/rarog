@@ -9,6 +9,7 @@ rust-version.workspace = true
 rarog-compositor = { path = "../rarog-compositor" }
 rarog-css = { path = "../rarog-css" }
 rarog-dom = { path = "../rarog-dom" }
+rarog-fetch = { path = "../rarog-fetch" }
 rarog-html = { path = "../rarog-html" }
 rarog-layout = { path = "../rarog-layout" }
 rarog-paint = { path = "../rarog-paint" }
@@ -17,6 +18,7 @@ rarog-resources = { path = "../rarog-resources" }
 rarog-scroll = { path = "../rarog-scroll" }
 rarog-scheduler = { path = "../rarog-scheduler" }
 rarog-types = { path = "../rarog-types" }
+rarog-url = { path = "../rarog-url" }
 
 [lints]
 workspace = true
