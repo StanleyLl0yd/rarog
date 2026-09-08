@@ -358,13 +358,8 @@ mod tests {
         )
         .network_request();
         let mut network = PendingNetwork;
-        host.start_network_operation(
-            lease.process(),
-            capability.id(),
-            request,
-            &mut network,
-        )
-        .unwrap();
+        host.start_network_operation(lease.process(), capability.id(), request, &mut network)
+            .unwrap();
 
         let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| OsString::from("cmd.exe"));
         let command = WindowsSiteProcessCommand::try_new(shell)
