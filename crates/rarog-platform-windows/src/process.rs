@@ -1,7 +1,9 @@
 use rarog_host::{HostControlPlane, SiteLease, SiteLoss};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
+#[cfg(target_os = "windows")]
+use std::process::{Command, Stdio};
 
 pub const DEFAULT_MAX_SITE_PROCESS_ARGS: usize = 64;
 
@@ -270,6 +272,7 @@ fn spawn_windows_child(_command: &WindowsSiteProcessCommand) -> std::io::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "windows")]
     use rarog_broker::CapabilityClass;
     #[cfg(target_os = "windows")]
     use rarog_fetch::{
