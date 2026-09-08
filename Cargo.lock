@@ -2270,6 +2270,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-host"
+version = "0.1.0"
+dependencies = [
+ "rarog-broker",
+ "rarog-ipc",
+ "rarog-process",
+ "rarog-url",
+]
+
+[[package]]
 name = "rarog-html"
 version = "0.1.0"
 dependencies = [

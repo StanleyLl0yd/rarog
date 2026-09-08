@@ -104,6 +104,16 @@ Capability identities are monotonically allocated and never reused after revocat
 
 The initial concrete classes are Network and Clipboard because both already have Rarog-owned policy/platform boundaries. A Network grant reaches the Host-owned Fetch/network policy boundary; it does not bypass Fetch policy. Concrete privileged-operation routing remains a later R4 integration slice. See ADR-0104.
 
+### R4 Host control-plane boundary
+
+`rarog-host` composes the portable R4 process topology, IPC and capability broker without exposing their mutable ownership to Site-side code. A Host control plane owns each logical Site instance, binds one bounded IPC channel to its Host-assigned `SiteProcessId`, and grants capabilities only to currently live Site-process identities.
+
+Inbound transport plumbing must supply the Host-owned Site-process binding separately from the decoded IPC envelope. The envelope's source/destination roles are checked against that binding path; payload values do not select another process or authority owner.
+
+When a Site process is reported lost, the Host control plane disconnects and discards its queued IPC work, revokes every capability owned by that process, then retires its topology identity. Recovery allocates a fresh Site-process identity and a fresh empty channel. Stale process IDs and capability references therefore remain invalid even when the same schemeful site is recovered.
+
+This is still a logical/portable control plane. The later Windows launcher/transport is responsible for detecting OS process loss and binding authenticated OS endpoints to these identities. See ADR-0105.
+
 ## Rendering model
 
 ```text
