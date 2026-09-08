@@ -964,6 +964,13 @@ impl HostControlPlane {
         })
     }
 
+    pub fn grant_navigation_context_network_capability(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<NavigationContextCapability, HostControlError> {
+        self.grant_navigation_context_capability(context, CapabilityClass::Network)
+    }
+
     pub fn grant_navigation_context_capability(
         &mut self,
         context: NavigationContextId,
@@ -1963,6 +1970,26 @@ mod tests {
         assert!(closed.source_retired());
         assert_eq!(host.active_navigation_contexts(), 0);
         assert_eq!(host.active_site_processes(), 0);
+    }
+
+    #[test]
+    fn network_grant_helper_preserves_context_scoped_authority() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let context = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+
+        let capability = host
+            .grant_navigation_context_network_capability(context.context())
+            .unwrap();
+
+        assert_eq!(capability.context(), context.context());
+        assert_eq!(capability.class(), CapabilityClass::Network);
+        assert_eq!(host.active_capabilities(), 1);
+
+        let closed = host.close_navigation_context(context.context()).unwrap();
+        assert_eq!(closed.revoked_capabilities(), 1);
+        assert_eq!(host.active_capabilities(), 0);
     }
 
     #[test]
