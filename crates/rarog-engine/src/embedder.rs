@@ -2017,12 +2017,15 @@ mod tests {
             panic!("current navigation did not commit");
         };
         assert_eq!(commit.navigation(), second_id);
-        assert_eq!(commit.url().as_str(), "https://b.example.test/path");
+        assert_eq!(
+            commit.url().as_str(),
+            "https://b.example.test/path#fragment"
+        );
         assert_eq!(commit.status(), 200);
         assert_eq!(view.document_url(), Some(commit.url()));
         assert_eq!(
             view.base_url().map(BaseUrl::as_str),
-            Some("https://b.example.test/path")
+            Some("https://b.example.test/path#fragment")
         );
         assert_eq!(view.pending_navigation(), None);
 
@@ -2114,6 +2117,34 @@ mod tests {
         assert_eq!(view.base_url(), Some(&BaseUrl::about_blank()));
         assert!(view.document_url().is_none());
         assert_eq!(view.pending_navigation(), None);
+    }
+
+    #[test]
+    fn document_response_without_transport_url_fails_closed() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        let start = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/start"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let navigation = start.transport().navigation();
+        let mut headers = rarog_fetch::HeaderList::default();
+        headers
+            .append("Content-Type", "text/html; charset=utf-8")
+            .unwrap();
+        let response =
+            FetchResponse::try_new(None, 200, headers, b"<p>x</p>".to_vec(), 1024).unwrap();
+
+        let NavigationCompletion::Failed(error) =
+            view.complete_navigation(navigation, response)
+        else {
+            panic!("response without URL unexpectedly committed");
+        };
+        assert_eq!(error.kind(), NavigationErrorKind::MissingResponseUrl);
+        assert!(view.document_url().is_none());
     }
 
     #[test]
