@@ -523,9 +523,11 @@ impl HostControlPlane {
         let operation = self.network_operation_allocator.allocate()?;
         let ticket = network.start(request)?;
 
-        if let Some(existing) = self.network_operations.iter().find_map(|(id, active)| {
-            (active.ticket == ticket).then_some(*id)
-        }) {
+        if let Some(existing) = self
+            .network_operations
+            .iter()
+            .find_map(|(id, active)| (active.ticket == ticket).then_some(*id))
+        {
             self.network_operations.remove(&existing);
             return Err(HostControlError::new(
                 HostControlErrorKind::InconsistentState,
@@ -604,7 +606,9 @@ impl HostControlPlane {
         }
         clipboard
             .read_text()?
-            .map(|text| ClipboardText::try_new(text.as_str(), limits).map_err(HostControlError::from))
+            .map(|text| {
+                ClipboardText::try_new(text.as_str(), limits).map_err(HostControlError::from)
+            })
             .transpose()
     }
 
@@ -1054,53 +1058,33 @@ mod tests {
 
         let guessed = NetworkOperationId::try_new(operation.get() + 1).unwrap();
         assert_eq!(
-            host.poll_network_operation(
-                first,
-                first_capability.id(),
-                guessed,
-                &mut network
-            )
-            .unwrap_err()
-            .kind,
+            host.poll_network_operation(first, first_capability.id(), guessed, &mut network)
+                .unwrap_err()
+                .kind,
             HostControlErrorKind::InvalidNetworkOperationAuthority
         );
         assert_eq!(network.polls, 0);
 
         assert_eq!(
-            host.poll_network_operation(
-                second,
-                second_capability.id(),
-                operation,
-                &mut network
-            )
-            .unwrap_err()
-            .kind,
+            host.poll_network_operation(second, second_capability.id(), operation, &mut network)
+                .unwrap_err()
+                .kind,
             HostControlErrorKind::InvalidNetworkOperationAuthority
         );
         assert_eq!(network.polls, 0);
 
         assert!(matches!(
-            host.poll_network_operation(
-                first,
-                first_capability.id(),
-                operation,
-                &mut network
-            )
-            .unwrap(),
+            host.poll_network_operation(first, first_capability.id(), operation, &mut network)
+                .unwrap(),
             NetworkPoll::Complete(_)
         ));
         assert_eq!(network.polls, 1);
         assert_eq!(host.active_network_operations(), 0);
 
         assert_eq!(
-            host.poll_network_operation(
-                first,
-                first_capability.id(),
-                operation,
-                &mut network
-            )
-            .unwrap_err()
-            .kind,
+            host.poll_network_operation(first, first_capability.id(), operation, &mut network)
+                .unwrap_err()
+                .kind,
             HostControlErrorKind::InvalidNetworkOperationAuthority
         );
         assert_eq!(network.polls, 1);
@@ -1241,13 +1225,7 @@ mod tests {
             .grant_capability(second, CapabilityClass::Clipboard)
             .unwrap();
         let clipboard = FixtureClipboard::new(8);
-        let text = ClipboardText::try_new(
-            "Rarog",
-            ClipboardLimits {
-                max_text_bytes: 32,
-            },
-        )
-        .unwrap();
+        let text = ClipboardText::try_new("Rarog", ClipboardLimits { max_text_bytes: 32 }).unwrap();
 
         host.write_clipboard_text(first, clipboard_capability.id(), &text, &clipboard)
             .unwrap();
@@ -1269,13 +1247,8 @@ mod tests {
         );
         assert_eq!(clipboard.reads(), 0);
 
-        let oversized = ClipboardText::try_new(
-            "0123456789",
-            ClipboardLimits {
-                max_text_bytes: 32,
-            },
-        )
-        .unwrap();
+        let oversized =
+            ClipboardText::try_new("0123456789", ClipboardLimits { max_text_bytes: 32 }).unwrap();
         assert_eq!(
             host.write_clipboard_text(first, clipboard_capability.id(), &oversized, &clipboard)
                 .unwrap_err()
