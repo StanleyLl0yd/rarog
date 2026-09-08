@@ -33,6 +33,7 @@ impl SandboxError {
         }
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn unsupported() -> Self {
         Self::new(
             SandboxErrorKind::UnsupportedTarget,
