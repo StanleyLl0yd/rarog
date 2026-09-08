@@ -18,6 +18,8 @@ Rarog owns Fetch data and lifecycle contracts in the dependency-light `rarog-fet
 
 `NetworkCapability` is object-safe and completion-oriented. `start` accepts a `NetworkRequest` and returns a capability-scoped opaque `NetworkTicket`; `poll` returns `Pending` or a completed `FetchResponse`; `cancel` terminates outstanding work. This does not require a particular threading, reactor, async-runtime or callback model and therefore remains usable by future platform/network adapters.
 
+A `NetworkCapability` performs one transport exchange for the supplied `NetworkRequest`. It must not automatically follow redirects, reinterpret redirect policy, or substitute a different final response URL. Redirect processing is Fetch/Web policy owned by Rarog above the transport boundary. A caller that receives a redirect response must return it to that Rarog-owned policy layer before another transport request can be issued.
+
 Headers are stored as an ordered list rather than a map so repeated fields remain representable. Header names are validated as HTTP tokens and normalized to lowercase. Header values reject NUL/CR/LF and trim HTTP whitespace at their edges. The initial header model does not yet implement Fetch header guards or forbidden-request/response-header filtering.
 
 Common Fetch methods are normalized, CONNECT/TRACE/TRACK are rejected, and GET/HEAD bodies are rejected. Request URLs and response URLs are fragment-free. Explicit limits bound header count, total header bytes and request/response body sizes before broader streaming support exists.

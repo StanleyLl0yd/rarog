@@ -9,6 +9,10 @@ use rarog_compositor::{
     FrameRequestId, FrameRequestReasons, FrameScheduler, FrameSchedulerError,
     ScheduledFrameRequest, SurfaceSize,
 };
+use rarog_fetch::{
+    CredentialsMode, FetchLimits, FetchRequest, FetchResponse, NetworkRequest, RedirectMode,
+    RequestDestination as FetchRequestDestination, RequestMode,
+};
 use rarog_paint::{
     DamageRegion, DisplayList, Framebuffer, FramebufferError, MAX_FRAMEBUFFER_PIXELS,
 };
@@ -19,6 +23,7 @@ use rarog_resources::{
 };
 use rarog_scroll::{ScrollDelta, ScrollNodeId, ScrollTree, ScrollTreeError};
 use rarog_types::{Color, Point, Rect, Size};
+use rarog_url::{Origin, WebUrl};
 use std::fmt;
 use std::sync::{
     Arc,
@@ -110,6 +115,148 @@ impl NavigationRequest {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NavigationId(u64);
+
+impl NavigationId {
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationTransportRequest {
+    navigation: NavigationId,
+    request: NetworkRequest,
+}
+
+impl NavigationTransportRequest {
+    pub const fn navigation(&self) -> NavigationId {
+        self.navigation
+    }
+
+    pub fn request(&self) -> &NetworkRequest {
+        &self.request
+    }
+
+    pub fn into_parts(self) -> (NavigationId, NetworkRequest) {
+        (self.navigation, self.request)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationStart {
+    transport: NavigationTransportRequest,
+    superseded: Option<NavigationId>,
+}
+
+impl NavigationStart {
+    pub fn transport(&self) -> &NavigationTransportRequest {
+        &self.transport
+    }
+
+    pub const fn superseded(&self) -> Option<NavigationId> {
+        self.superseded
+    }
+
+    pub fn into_parts(self) -> (NavigationTransportRequest, Option<NavigationId>) {
+        (self.transport, self.superseded)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NavigationStartOutcome {
+    Started(Box<NavigationStart>),
+    Blocked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationErrorKind {
+    InvalidUrl,
+    UnsupportedScheme,
+    NavigationIdentitySpaceExhausted,
+    FetchPolicy,
+    MissingResponseUrl,
+    UnexpectedResponseUrl,
+    InformationalResponse,
+    NoDocumentResponse,
+    RedirectUnsupported,
+    UnsupportedContentType,
+    UnsupportedEncoding,
+    InvalidDocumentEncoding,
+    DocumentSourceLimitExceeded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationError {
+    kind: NavigationErrorKind,
+    message: String,
+}
+
+impl NavigationError {
+    fn new(kind: NavigationErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub const fn kind(&self) -> NavigationErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for NavigationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NavigationError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationCommit {
+    navigation: NavigationId,
+    url: WebUrl,
+    status: u16,
+    source_bytes: usize,
+}
+
+impl NavigationCommit {
+    pub const fn navigation(&self) -> NavigationId {
+        self.navigation
+    }
+
+    pub fn url(&self) -> &WebUrl {
+        &self.url
+    }
+
+    pub const fn status(&self) -> u16 {
+        self.status
+    }
+
+    pub const fn source_bytes(&self) -> usize {
+        self.source_bytes
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NavigationCompletion {
+    Committed(NavigationCommit),
+    Failed(NavigationError),
+    Stale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationCancelOutcome {
+    Cancelled,
+    Stale,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestDisposition {
     ForwardToEmbedder,
@@ -152,6 +299,31 @@ pub enum ViewEvent {
     NavigationBlocked {
         view: ViewId,
         request: NavigationRequest,
+    },
+    NavigationStarted {
+        view: ViewId,
+        navigation: NavigationId,
+        url: WebUrl,
+    },
+    NavigationSuperseded {
+        view: ViewId,
+        navigation: NavigationId,
+        url: WebUrl,
+    },
+    NavigationCancelled {
+        view: ViewId,
+        navigation: NavigationId,
+        url: WebUrl,
+    },
+    NavigationCommitted {
+        view: ViewId,
+        commit: NavigationCommit,
+    },
+    NavigationFailed {
+        view: ViewId,
+        navigation: NavigationId,
+        url: WebUrl,
+        error: NavigationError,
     },
     ResourceRequested {
         view: ViewId,
@@ -385,6 +557,9 @@ impl Engine {
             shared: Arc::clone(&self.shared),
             options,
             loaded: None,
+            document_origin: None,
+            next_navigation_id: 1,
+            pending_navigation: None,
             viewport: None,
             session: None,
             scroll_tree: None,
@@ -410,6 +585,13 @@ impl Default for ViewOptions {
 struct LoadedDocument {
     source: String,
     base_url: BaseUrl,
+    document_url: Option<WebUrl>,
+}
+
+struct PendingNavigation {
+    id: NavigationId,
+    requested_url: WebUrl,
+    fetch_request: FetchRequest,
 }
 
 pub struct View {
@@ -417,6 +599,9 @@ pub struct View {
     shared: Arc<EngineShared>,
     options: ViewOptions,
     loaded: Option<LoadedDocument>,
+    document_origin: Option<Origin>,
+    next_navigation_id: u64,
+    pending_navigation: Option<PendingNavigation>,
     viewport: Option<Size>,
     session: Option<RenderSession>,
     scroll_tree: Option<ScrollTree>,
@@ -431,6 +616,16 @@ impl View {
 
     pub fn base_url(&self) -> Option<&BaseUrl> {
         self.loaded.as_ref().map(|loaded| &loaded.base_url)
+    }
+
+    pub fn document_url(&self) -> Option<&WebUrl> {
+        self.loaded
+            .as_ref()
+            .and_then(|loaded| loaded.document_url.as_ref())
+    }
+
+    pub fn pending_navigation(&self) -> Option<NavigationId> {
+        self.pending_navigation.as_ref().map(|pending| pending.id)
     }
 
     pub fn request_frame(&mut self, cause: FrameCause) {
@@ -581,27 +776,10 @@ impl View {
         base_url: impl Into<BaseUrl>,
     ) -> Result<(), EngineError> {
         let source = source.into();
-        let limit = self.shared.budget.max_document_source_bytes;
-        if source.len() > limit {
-            return Err(EngineError::DocumentSourceLimitExceeded {
-                bytes: source.len(),
-                limit,
-            });
-        }
-
-        let base_url = base_url.into();
-        self.shared.event_sink.on_event(&ViewEvent::DocumentLoaded {
-            view: self.id,
-            base_url: base_url.clone(),
-            source_bytes: source.len(),
-        });
-        self.loaded = Some(LoadedDocument { source, base_url });
-        self.viewport = None;
-        self.session = None;
-        self.scroll_tree = None;
-        self.pending_scroll_damage = DamageRegion::default();
-        self.frame_scheduler = FrameScheduler::new();
-        self.frame_scheduler.request(FrameCause::Initial);
+        self.validate_document_source(&source)?;
+        self.cancel_pending_navigation();
+        self.install_document(source, base_url.into(), None)?;
+        self.document_origin = None;
         Ok(())
     }
 
@@ -623,6 +801,311 @@ impl View {
                 });
             RequestDisposition::Blocked
         }
+    }
+
+    pub fn begin_navigation(
+        &mut self,
+        request: NavigationRequest,
+    ) -> Result<NavigationStartOutcome, NavigationError> {
+        if !self.shared.host_policy.allow_navigation(self.id, &request) {
+            self.shared
+                .event_sink
+                .on_event(&ViewEvent::NavigationBlocked {
+                    view: self.id,
+                    request,
+                });
+            return Ok(NavigationStartOutcome::Blocked);
+        }
+
+        self.shared
+            .event_sink
+            .on_event(&ViewEvent::NavigationRequested {
+                view: self.id,
+                request: request.clone(),
+            });
+
+        let target = WebUrl::parse(request.url.as_str()).map_err(|error| {
+            NavigationError::new(NavigationErrorKind::InvalidUrl, error.to_string())
+        })?;
+        if !matches!(target.scheme(), "http" | "https") {
+            return Err(NavigationError::new(
+                NavigationErrorKind::UnsupportedScheme,
+                format!(
+                    "document navigation scheme '{}' is not supported by the network contract",
+                    target.scheme()
+                ),
+            ));
+        }
+
+        let origin = match &self.document_origin {
+            Some(origin) => origin.clone(),
+            None => {
+                let origin = WebUrl::parse("about:blank")
+                    .and_then(|url| url.origin())
+                    .map_err(|error| {
+                        NavigationError::new(
+                            NavigationErrorKind::InvalidUrl,
+                            format!("failed to establish initial document origin: {error}"),
+                        )
+                    })?;
+                self.document_origin = Some(origin.clone());
+                origin
+            }
+        };
+
+        let mut limits = FetchLimits::default();
+        limits.max_response_body_bytes = limits
+            .max_response_body_bytes
+            .min(self.shared.budget.max_document_source_bytes);
+        let requested_url = target.clone();
+        let mut fetch_request = FetchRequest::try_new(target, origin, limits).map_err(|error| {
+            NavigationError::new(NavigationErrorKind::FetchPolicy, error.to_string())
+        })?;
+        fetch_request.set_mode(RequestMode::Navigate);
+        fetch_request.set_credentials(CredentialsMode::Include);
+        fetch_request.set_redirect(RedirectMode::Manual);
+        fetch_request.set_destination(FetchRequestDestination::Document);
+
+        let navigation = self.allocate_navigation_id()?;
+        let superseded = self
+            .pending_navigation
+            .replace(PendingNavigation {
+                id: navigation,
+                requested_url: requested_url.clone(),
+                fetch_request: fetch_request.clone(),
+            })
+            .map(|pending| {
+                self.shared
+                    .event_sink
+                    .on_event(&ViewEvent::NavigationSuperseded {
+                        view: self.id,
+                        navigation: pending.id,
+                        url: pending.requested_url,
+                    });
+                pending.id
+            });
+
+        self.shared
+            .event_sink
+            .on_event(&ViewEvent::NavigationStarted {
+                view: self.id,
+                navigation,
+                url: requested_url,
+            });
+
+        Ok(NavigationStartOutcome::Started(Box::new(NavigationStart {
+            transport: NavigationTransportRequest {
+                navigation,
+                request: fetch_request.network_request(),
+            },
+            superseded,
+        })))
+    }
+
+    pub fn cancel_navigation(&mut self, navigation: NavigationId) -> NavigationCancelOutcome {
+        if self.pending_navigation() != Some(navigation) {
+            return NavigationCancelOutcome::Stale;
+        }
+        self.cancel_pending_navigation();
+        NavigationCancelOutcome::Cancelled
+    }
+
+    pub fn cancel_pending_navigation(&mut self) -> Option<NavigationId> {
+        let pending = self.pending_navigation.take()?;
+        self.shared
+            .event_sink
+            .on_event(&ViewEvent::NavigationCancelled {
+                view: self.id,
+                navigation: pending.id,
+                url: pending.requested_url,
+            });
+        Some(pending.id)
+    }
+
+    pub fn complete_navigation(
+        &mut self,
+        navigation: NavigationId,
+        response: FetchResponse,
+    ) -> NavigationCompletion {
+        if self.pending_navigation() != Some(navigation) {
+            return NavigationCompletion::Stale;
+        }
+        let pending = self
+            .pending_navigation
+            .take()
+            .expect("matching navigation requires pending state");
+        let target = pending.requested_url.clone();
+
+        match self.prepare_navigation_document(&pending, &response) {
+            Ok((source, final_url, origin)) => {
+                let source_bytes = response.body().len();
+                let status = response.status();
+                let base_url = BaseUrl::new(final_url.as_str());
+                if let Err(error) = self.install_document(source, base_url, Some(final_url.clone()))
+                {
+                    let error = navigation_engine_error(error);
+                    self.shared
+                        .event_sink
+                        .on_event(&ViewEvent::NavigationFailed {
+                            view: self.id,
+                            navigation,
+                            url: target,
+                            error: error.clone(),
+                        });
+                    return NavigationCompletion::Failed(error);
+                }
+                self.document_origin = Some(origin);
+                let commit = NavigationCommit {
+                    navigation,
+                    url: final_url,
+                    status,
+                    source_bytes,
+                };
+                self.shared
+                    .event_sink
+                    .on_event(&ViewEvent::NavigationCommitted {
+                        view: self.id,
+                        commit: commit.clone(),
+                    });
+                NavigationCompletion::Committed(commit)
+            }
+            Err(error) => {
+                self.shared
+                    .event_sink
+                    .on_event(&ViewEvent::NavigationFailed {
+                        view: self.id,
+                        navigation,
+                        url: target,
+                        error: error.clone(),
+                    });
+                NavigationCompletion::Failed(error)
+            }
+        }
+    }
+
+    fn allocate_navigation_id(&mut self) -> Result<NavigationId, NavigationError> {
+        let current = self.next_navigation_id;
+        self.next_navigation_id = current.checked_add(1).ok_or_else(|| {
+            NavigationError::new(
+                NavigationErrorKind::NavigationIdentitySpaceExhausted,
+                "view navigation identity space is exhausted",
+            )
+        })?;
+        Ok(NavigationId(current))
+    }
+
+    fn prepare_navigation_document(
+        &self,
+        pending: &PendingNavigation,
+        response: &FetchResponse,
+    ) -> Result<(String, WebUrl, Origin), NavigationError> {
+        let transport_url = pending.fetch_request.url();
+        let response_url = response.url().ok_or_else(|| {
+            NavigationError::new(
+                NavigationErrorKind::MissingResponseUrl,
+                "document response must identify the transport response URL",
+            )
+        })?;
+        if response_url != transport_url {
+            return Err(NavigationError::new(
+                NavigationErrorKind::UnexpectedResponseUrl,
+                "network backend changed the response URL outside Rarog redirect policy",
+            ));
+        }
+        let final_url = pending.requested_url.clone();
+
+        match response.status() {
+            100..=199 => {
+                return Err(NavigationError::new(
+                    NavigationErrorKind::InformationalResponse,
+                    "informational HTTP response cannot complete document navigation",
+                ));
+            }
+            204 | 205 => {
+                return Err(NavigationError::new(
+                    NavigationErrorKind::NoDocumentResponse,
+                    "HTTP response does not create a replacement document",
+                ));
+            }
+            300..=399 => {
+                return Err(NavigationError::new(
+                    NavigationErrorKind::RedirectUnsupported,
+                    "HTTP redirect requires Rarog-owned redirect processing",
+                ));
+            }
+            _ => {}
+        }
+
+        let limit = self.shared.budget.max_document_source_bytes;
+        if response.body().len() > limit {
+            return Err(NavigationError::new(
+                NavigationErrorKind::DocumentSourceLimitExceeded,
+                format!(
+                    "document response requires {} bytes; limit is {limit}",
+                    response.body().len()
+                ),
+            ));
+        }
+
+        require_utf8_html_content_type(response)?;
+        let body = response
+            .body()
+            .strip_prefix(&[0xEF, 0xBB, 0xBF])
+            .unwrap_or(response.body());
+        let source = std::str::from_utf8(body)
+            .map_err(|error| {
+                NavigationError::new(
+                    NavigationErrorKind::InvalidDocumentEncoding,
+                    format!("document response is not valid UTF-8: {error}"),
+                )
+            })?
+            .to_owned();
+        let origin = final_url.origin().map_err(|error| {
+            NavigationError::new(
+                NavigationErrorKind::InvalidUrl,
+                format!("failed to derive committed document origin: {error}"),
+            )
+        })?;
+
+        Ok((source, final_url, origin))
+    }
+
+    fn validate_document_source(&self, source: &str) -> Result<(), EngineError> {
+        let limit = self.shared.budget.max_document_source_bytes;
+        if source.len() > limit {
+            return Err(EngineError::DocumentSourceLimitExceeded {
+                bytes: source.len(),
+                limit,
+            });
+        }
+        Ok(())
+    }
+
+    fn install_document(
+        &mut self,
+        source: String,
+        base_url: BaseUrl,
+        document_url: Option<WebUrl>,
+    ) -> Result<(), EngineError> {
+        self.validate_document_source(&source)?;
+
+        self.shared.event_sink.on_event(&ViewEvent::DocumentLoaded {
+            view: self.id,
+            base_url: base_url.clone(),
+            source_bytes: source.len(),
+        });
+        self.loaded = Some(LoadedDocument {
+            source,
+            base_url,
+            document_url,
+        });
+        self.viewport = None;
+        self.session = None;
+        self.scroll_tree = None;
+        self.pending_scroll_damage = DamageRegion::default();
+        self.frame_scheduler = FrameScheduler::new();
+        self.frame_scheduler.request(FrameCause::Initial);
+        Ok(())
     }
 
     pub fn request_resource(&self, request: ResourceRequest) -> RequestDisposition {
@@ -811,6 +1294,64 @@ impl ViewFrame<'_> {
             cause,
         )
     }
+}
+
+fn navigation_engine_error(error: EngineError) -> NavigationError {
+    match error {
+        EngineError::DocumentSourceLimitExceeded { bytes, limit } => NavigationError::new(
+            NavigationErrorKind::DocumentSourceLimitExceeded,
+            format!("document source requires {bytes} bytes; limit is {limit}"),
+        ),
+        other => NavigationError::new(
+            NavigationErrorKind::FetchPolicy,
+            format!("navigation document commit failed: {other}"),
+        ),
+    }
+}
+
+fn require_utf8_html_content_type(response: &FetchResponse) -> Result<(), NavigationError> {
+    let value = response
+        .headers()
+        .get_first("content-type")
+        .ok_or_else(|| {
+            NavigationError::new(
+                NavigationErrorKind::UnsupportedContentType,
+                "document response is missing Content-Type",
+            )
+        })?;
+    let mut parts = value.split(';');
+    let media_type = parts.next().unwrap_or_default().trim();
+    if !media_type.eq_ignore_ascii_case("text/html") {
+        return Err(NavigationError::new(
+            NavigationErrorKind::UnsupportedContentType,
+            format!("document Content-Type '{media_type}' is not supported"),
+        ));
+    }
+
+    let mut charset = None;
+    for parameter in parts {
+        let Some((name, value)) = parameter.split_once('=') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case("charset") {
+            let value = value.trim().trim_matches('"');
+            charset = Some(value);
+            break;
+        }
+    }
+    let Some(charset) = charset else {
+        return Err(NavigationError::new(
+            NavigationErrorKind::UnsupportedEncoding,
+            "HTML response must declare charset=utf-8 until HTML encoding sniffing is implemented",
+        ));
+    };
+    if !charset.eq_ignore_ascii_case("utf-8") {
+        return Err(NavigationError::new(
+            NavigationErrorKind::UnsupportedEncoding,
+            format!("HTML charset '{charset}' is not supported yet"),
+        ));
+    }
+    Ok(())
 }
 
 fn viewport_pixel_count(size: Size) -> Result<u64, RenderError> {
@@ -1394,6 +1935,253 @@ mod tests {
         let request = NavigationRequest::new("https://example.test/").with_user_initiated(true);
 
         assert_eq!(view.navigate(request.clone()), RequestDisposition::Blocked);
+        assert!(events.snapshot().contains(&ViewEvent::NavigationBlocked {
+            view: view.id(),
+            request,
+        }));
+    }
+
+    fn html_navigation_response(url: &str, body: &str) -> FetchResponse {
+        let mut headers = rarog_fetch::HeaderList::default();
+        headers
+            .append("Content-Type", "text/html; charset=utf-8")
+            .unwrap();
+        FetchResponse::try_new(
+            Some(WebUrl::parse(url).unwrap()),
+            200,
+            headers,
+            body.as_bytes().to_vec(),
+            1024 * 1024,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn navigation_transaction_supersession_rejects_stale_completion() {
+        let events = RecordingEvents::default();
+        let engine = Engine::builder()
+            .event_sink(events.clone())
+            .build()
+            .unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+
+        let first = match view
+            .begin_navigation(NavigationRequest::new("https://a.example.test/"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let first_id = first.transport().navigation();
+        assert_eq!(first_id.get(), 1);
+        assert_eq!(first.superseded(), None);
+
+        let second = match view
+            .begin_navigation(NavigationRequest::new(
+                "https://b.example.test/path#fragment",
+            ))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let second_id = second.transport().navigation();
+        assert_eq!(second_id.get(), 2);
+        assert_eq!(second.superseded(), Some(first_id));
+        assert_eq!(
+            second.transport().request().url().as_str(),
+            "https://b.example.test/path"
+        );
+        assert_eq!(view.pending_navigation(), Some(second_id));
+
+        assert_eq!(
+            view.complete_navigation(
+                first_id,
+                html_navigation_response("https://a.example.test/", "<p>stale</p>")
+            ),
+            NavigationCompletion::Stale
+        );
+        assert_eq!(view.pending_navigation(), Some(second_id));
+        assert!(view.document_url().is_none());
+
+        let completion = view.complete_navigation(
+            second_id,
+            html_navigation_response(
+                "https://b.example.test/path",
+                "<!doctype html><p>current</p>",
+            ),
+        );
+        let NavigationCompletion::Committed(commit) = completion else {
+            panic!("current navigation did not commit");
+        };
+        assert_eq!(commit.navigation(), second_id);
+        assert_eq!(
+            commit.url().as_str(),
+            "https://b.example.test/path#fragment"
+        );
+        assert_eq!(commit.status(), 200);
+        assert_eq!(view.document_url(), Some(commit.url()));
+        assert_eq!(
+            view.base_url().map(BaseUrl::as_str),
+            Some("https://b.example.test/path#fragment")
+        );
+        assert_eq!(view.pending_navigation(), None);
+
+        let snapshot = events.snapshot();
+        assert!(snapshot.iter().any(|event| matches!(
+            event,
+            ViewEvent::NavigationSuperseded {
+                navigation,
+                ..
+            } if *navigation == first_id
+        )));
+        assert!(snapshot.iter().any(|event| matches!(
+            event,
+            ViewEvent::NavigationCommitted {
+                commit: event_commit,
+                ..
+            } if event_commit.navigation() == second_id
+        )));
+    }
+
+    #[test]
+    fn cancelled_navigation_cannot_commit_and_ids_are_not_reused() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+
+        let first = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/one"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let first_id = first.transport().navigation();
+        assert_eq!(
+            view.cancel_navigation(first_id),
+            NavigationCancelOutcome::Cancelled
+        );
+        assert_eq!(
+            view.complete_navigation(
+                first_id,
+                html_navigation_response("https://example.test/one", "<p>late</p>")
+            ),
+            NavigationCompletion::Stale
+        );
+
+        let second = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/two"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        assert!(second.transport().navigation().get() > first_id.get());
+        assert_eq!(second.superseded(), None);
+    }
+
+    #[test]
+    fn navigation_response_policy_fails_closed_without_replacing_document() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        view.load_html("<p>existing</p>", BaseUrl::about_blank())
+            .unwrap();
+
+        let start = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/next"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let navigation = start.transport().navigation();
+        let mut headers = rarog_fetch::HeaderList::default();
+        headers.append("Content-Type", "text/html").unwrap();
+        let response = FetchResponse::try_new(
+            Some(WebUrl::parse("https://example.test/next").unwrap()),
+            200,
+            headers,
+            vec![0xE9],
+            1024,
+        )
+        .unwrap();
+
+        let NavigationCompletion::Failed(error) = view.complete_navigation(navigation, response)
+        else {
+            panic!("unsupported encoding unexpectedly committed");
+        };
+        assert_eq!(error.kind(), NavigationErrorKind::UnsupportedEncoding);
+        assert_eq!(view.base_url(), Some(&BaseUrl::about_blank()));
+        assert!(view.document_url().is_none());
+        assert_eq!(view.pending_navigation(), None);
+    }
+
+    #[test]
+    fn document_response_without_transport_url_fails_closed() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        let start = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/start"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let navigation = start.transport().navigation();
+        let mut headers = rarog_fetch::HeaderList::default();
+        headers
+            .append("Content-Type", "text/html; charset=utf-8")
+            .unwrap();
+        let response =
+            FetchResponse::try_new(None, 200, headers, b"<p>x</p>".to_vec(), 1024).unwrap();
+
+        let NavigationCompletion::Failed(error) = view.complete_navigation(navigation, response)
+        else {
+            panic!("response without URL unexpectedly committed");
+        };
+        assert_eq!(error.kind(), NavigationErrorKind::MissingResponseUrl);
+        assert!(view.document_url().is_none());
+    }
+
+    #[test]
+    fn backend_cannot_hide_redirect_by_changing_final_response_url() {
+        let engine = Engine::builder().build().unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        let start = match view
+            .begin_navigation(NavigationRequest::new("https://example.test/start"))
+            .unwrap()
+        {
+            NavigationStartOutcome::Started(start) => start,
+            NavigationStartOutcome::Blocked => panic!("navigation unexpectedly blocked"),
+        };
+        let navigation = start.transport().navigation();
+
+        let NavigationCompletion::Failed(error) = view.complete_navigation(
+            navigation,
+            html_navigation_response("https://example.test/final", "<p>redirected</p>"),
+        ) else {
+            panic!("backend-controlled final URL unexpectedly committed");
+        };
+        assert_eq!(error.kind(), NavigationErrorKind::UnexpectedResponseUrl);
+        assert!(view.document_url().is_none());
+    }
+
+    #[test]
+    fn navigation_policy_blocks_transaction_before_transport_projection() {
+        let events = RecordingEvents::default();
+        let engine = Engine::builder()
+            .host_policy(BlockNavigation)
+            .event_sink(events.clone())
+            .build()
+            .unwrap();
+        let mut view = engine.create_view(ViewOptions::default()).unwrap();
+        let request = NavigationRequest::new("https://example.test/");
+
+        assert_eq!(
+            view.begin_navigation(request.clone()).unwrap(),
+            NavigationStartOutcome::Blocked
+        );
+        assert_eq!(view.pending_navigation(), None);
         assert!(events.snapshot().contains(&ViewEvent::NavigationBlocked {
             view: view.id(),
             request,
