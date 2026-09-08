@@ -90,7 +90,7 @@ The completed R0–R3 foundation includes:
 - a replaceable script-runtime contract plus an isolated SpiderMonkey ESR backend with opaque realm/root identities;
 - Event/EventTarget foundations and bounded engine-owned task/microtask scheduling connected to retained render checkpoints;
 - Rarog-owned URL/origin/site identity and Fetch request/response/network-capability boundaries;
-- R4 process/site identity, bounded Host/Site IPC, Host-owned capabilities, broker-gated Network/Clipboard routing and fail-closed Site lifecycle/recovery foundations;
+- R4 process/site identity, bounded Host/Site IPC, Host-owned capabilities, broker-gated Network/Clipboard routing, Windows child-process loss detection and fail-closed Site lifecycle/recovery foundations;
 - platform-neutral keyboard, pointer, wheel, text-input and clipboard contracts with bounded Windows input/IME/clipboard adapters;
 - bounded Flexbox/Grid slices with explicit fail-closed behavior for unsupported geometry;
 - backend-neutral frame planning, bounded compositor workers and a replaceable `wgpu` staging backend;

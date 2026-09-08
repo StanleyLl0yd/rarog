@@ -34,6 +34,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked --workspace
+      - name: R4 Windows process lifecycle gate
+        run: cargo test --locked -p rarog-platform-windows windows_site_process
       - name: R0 exit gate
         run: cargo test --locked -p rarog-engine --test r0_exit
       - name: P1 embedder exit gate

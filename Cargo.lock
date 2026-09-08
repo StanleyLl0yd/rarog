@@ -2327,11 +2327,15 @@ version = "0.1.0"
 dependencies = [
  "clipboard-win",
  "font-kit",
+ "rarog-broker",
  "rarog-compositor",
  "rarog-compositor-wgpu",
+ "rarog-fetch",
+ "rarog-host",
  "rarog-layout",
  "rarog-platform",
  "rarog-text-opentype",
+ "rarog-url",
  "wgpu",
 ]
 
