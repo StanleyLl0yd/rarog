@@ -92,6 +92,11 @@ mod imp {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         QueryInformationJobObject, SetInformationJobObject,
     };
+    use windows_sys::Win32::System::SystemServices::{
+        PROCESS_MITIGATION_ASLR_POLICY, PROCESS_MITIGATION_CHILD_PROCESS_POLICY,
+        PROCESS_MITIGATION_DEP_POLICY, PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY,
+        PROCESS_MITIGATION_SEHOP_POLICY, PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY,
+    };
     use windows_sys::Win32::System::Threading::{
         CREATE_NO_WINDOW, CreateProcessW, DeleteProcThreadAttributeList,
         EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, GetProcessMitigationPolicy, INFINITE,
@@ -369,13 +374,25 @@ mod imp {
         }
 
         pub fn evidence(&self) -> Result<SandboxEvidence, SandboxError> {
-            let dep = query_mitigation(self.process.raw(), ProcessDEPPolicy)?;
-            let aslr = query_mitigation(self.process.raw(), ProcessASLRPolicy)?;
-            let strict = query_mitigation(self.process.raw(), ProcessStrictHandleCheckPolicy)?;
-            let extension =
+            let dep: PROCESS_MITIGATION_DEP_POLICY =
+                query_mitigation(self.process.raw(), ProcessDEPPolicy)?;
+            let aslr: PROCESS_MITIGATION_ASLR_POLICY =
+                query_mitigation(self.process.raw(), ProcessASLRPolicy)?;
+            let strict: PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY =
+                query_mitigation(self.process.raw(), ProcessStrictHandleCheckPolicy)?;
+            let extension: PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY =
                 query_mitigation(self.process.raw(), ProcessExtensionPointDisablePolicy)?;
-            let sehop = query_mitigation(self.process.raw(), ProcessSEHOPPolicy)?;
-            let child = query_mitigation(self.process.raw(), ProcessChildProcessPolicy)?;
+            let sehop: PROCESS_MITIGATION_SEHOP_POLICY =
+                query_mitigation(self.process.raw(), ProcessSEHOPPolicy)?;
+            let child: PROCESS_MITIGATION_CHILD_PROCESS_POLICY =
+                query_mitigation(self.process.raw(), ProcessChildProcessPolicy)?;
+
+            let dep_flags = unsafe { dep.Anonymous.Flags };
+            let aslr_flags = unsafe { aslr.Anonymous.Flags };
+            let strict_flags = unsafe { strict.Anonymous.Flags };
+            let extension_flags = unsafe { extension.Anonymous.Flags };
+            let sehop_flags = unsafe { sehop.Anonymous.Flags };
+            let child_flags = unsafe { child.Anonymous.Flags };
 
             let mut job_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             if unsafe {
@@ -401,14 +418,14 @@ mod imp {
 
             let limit_flags = job_info.BasicLimitInformation.LimitFlags;
             Ok(SandboxEvidence {
-                dep_enabled: dep & 0x1 != 0,
-                bottom_up_aslr: aslr & 0x1 != 0,
-                force_relocate_images: aslr & 0x2 != 0,
-                high_entropy_aslr: aslr & 0x4 != 0,
-                strict_handle_checks: strict & 0x1 != 0,
-                extension_points_disabled: extension & 0x1 != 0,
-                sehop_enabled: sehop & 0x1 != 0,
-                child_process_restricted: child & 0x1 != 0,
+                dep_enabled: dep_flags & 0x1 != 0,
+                bottom_up_aslr: aslr_flags & 0x1 != 0,
+                force_relocate_images: aslr_flags & 0x2 != 0,
+                high_entropy_aslr: aslr_flags & 0x4 != 0,
+                strict_handle_checks: strict_flags & 0x1 != 0,
+                extension_points_disabled: extension_flags & 0x1 != 0,
+                sehop_enabled: sehop_flags & 0x1 != 0,
+                child_process_restricted: child_flags & 0x1 != 0,
                 job_active_process_limit: job_info.BasicLimitInformation.ActiveProcessLimit,
                 job_kill_on_close: limit_flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
                     && limit_flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0,
@@ -467,16 +484,16 @@ mod imp {
         Ok(job)
     }
 
-    fn query_mitigation(
+    fn query_mitigation<T: Default>(
         process: HANDLE,
         policy: windows_sys::Win32::System::Threading::PROCESS_MITIGATION_POLICY,
-    ) -> Result<u32, SandboxError> {
-        let mut value = 0u32;
+    ) -> Result<T, SandboxError> {
+        let mut value = T::default();
         if unsafe {
             GetProcessMitigationPolicy(
                 process,
                 policy,
-                (&mut value as *mut u32).cast::<c_void>(),
+                (&mut value as *mut T).cast::<c_void>(),
                 size_of_val(&value),
             )
         } == 0
