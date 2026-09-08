@@ -38,14 +38,14 @@ Tracking issue: #231.
 - [ ] Make cross-site process separation the default navigation policy.
 - [ ] Define same-site reuse and cross-site replacement rules.
 - [ ] Preserve opaque-origin/site isolation through explicit environment-owned identity propagation.
-- [ ] Connect Site-process authority to IPC and broker ownership without address-space assumptions.
+- [x] Connect Site-process authority to Host-bound IPC and broker ownership without address-space assumptions (#236).
 
 ## F — Crash recovery
 
 - [ ] Detect Site-process loss and invalidate the corresponding process/channel state.
-- [ ] Revoke all brokered capabilities owned by a lost Site process.
-- [ ] Recreate recoverable Site state with a fresh process identity.
-- [ ] Fail closed when recovery state or authority cannot be proven valid.
+- [x] Revoke all brokered capabilities owned by a lost Site process before retirement/recovery (#236).
+- [x] Recreate logical Site state with a fresh process identity and empty channel authority (#236).
+- [x] Reject stale process/channel/capability authority after loss and replacement (#236).
 
 ## Closure
 

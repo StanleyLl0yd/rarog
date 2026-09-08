@@ -1,0 +1,16 @@
+[package]
+name = "rarog-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-broker = { path = "../rarog-broker" }
+rarog-ipc = { path = "../rarog-ipc" }
+rarog-process = { path = "../rarog-process" }
+rarog-url = { path = "../rarog-url" }
+
+[lints]
+workspace = true

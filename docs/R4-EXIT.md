@@ -13,7 +13,7 @@ R4 establishes the first process-isolation architecture required by ADR-0003:
 - site isolation by default;
 - crash/replacement handling with stale-authority revocation.
 
-The completed R4 foundation slices establish process/site identities, bounded host-side assignment, a versioned bounded Host/Site IPC protocol, and Host-owned bounded capability authorization with process-scoped revocation. They do not claim OS process separation, a Windows transport, privileged-operation routing or sandboxing yet.
+The completed portable R4 foundation slices establish process/site identities, bounded Host/Site IPC, Host-owned capability authorization, and a Host control plane that disconnects channels, revokes process-owned authority, retires identities and creates fresh logical replacements. They do not claim OS process separation, a Windows transport, automatic process-loss detection, privileged-operation routing or sandboxing yet.
 
 ## Required automated gate
 
