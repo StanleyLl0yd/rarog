@@ -166,7 +166,7 @@ impl NavigationStart {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NavigationStartOutcome {
-    Started(NavigationStart),
+    Started(Box<NavigationStart>),
     Blocked,
 }
 
@@ -625,10 +625,7 @@ impl View {
     }
 
     pub fn pending_navigation(&self) -> Option<NavigationId> {
-        match &self.pending_navigation {
-            Some(pending) => Some(pending.id),
-            None => None,
-        }
+        self.pending_navigation.as_ref().map(|pending| pending.id)
     }
 
     pub fn request_frame(&mut self, cause: FrameCause) {
@@ -896,13 +893,13 @@ impl View {
                 url: requested_url,
             });
 
-        Ok(NavigationStartOutcome::Started(NavigationStart {
+        Ok(NavigationStartOutcome::Started(Box::new(NavigationStart {
             transport: NavigationTransportRequest {
                 navigation,
                 request: fetch_request.network_request(),
             },
             superseded,
-        }))
+        })))
     }
 
     pub fn cancel_navigation(&mut self, navigation: NavigationId) -> NavigationCancelOutcome {
