@@ -34,7 +34,7 @@ PATTERNS = {
 ALLOWED_PRODUCTION_PANICS = {
     (
         "crates/rarog-html/src/standards.rs",
-        'panic!("tree builder requested an element name from a non-element")',
+        '_ => panic!("tree builder requested an element name from a non-element"),',
     ),
 }
 
