@@ -432,24 +432,17 @@ No engine crate outside the script adapter should depend directly on SpiderMonke
 
 ## Resource model
 
-The current single-process engine uses explicit bounded structures rather than claiming accounting it does not yet implement. `ResourceBudget` covers document/render complexity, while image, font, scheduler, event, clipboard/input and compositor queues/stores enforce subsystem-specific limits.
+The current engine execution path still runs primarily in the embedding process, but its externally influenced structures are explicitly bounded rather than relying on estimated accounting. `ResourceBudget` covers document/render complexity, while image, font, scheduler, event, clipboard/input and compositor queues/stores enforce subsystem-specific limits. R4 additionally established bounded per-Site process/IPC/capability authority; that does not imply that all engine execution or resident memory has already moved into Site children.
 
-Long-term per-site resident-memory, graphics-cache, background-CPU and lifecycle accounting belongs to the R4+ process/resource model. Those future policies must preserve the same security boundaries regardless of lifecycle state.
+Long-term per-site resident-memory, graphics-cache, background-CPU and broader lifecycle accounting remain future work. Those policies must preserve the completed R4 authority boundaries regardless of lifecycle state.
 
 ## Security model
 
-A future site process can request operations but cannot directly access privileged OS resources. The Host/Broker issues scoped capabilities, for example:
+R4 Site-process authority cannot directly select privileged OS resources. The Host/Broker currently issues bounded revocable `Network` and `Clipboard` capability classes to a live Host-owned `SiteProcessId`; production navigation routes additionally bind those grants to the exact `NavigationContextId`. Network origin, credentials, redirect and related Web policy remain owned by the Fetch/navigation layer rather than being inferred from the capability ID.
 
-```text
-CameraCapability(origin, device, expiry)
-FileReadCapability(origin, path-scope, expiry)
-ClipboardReadCapability(origin, expiry)
-ScreenCaptureCapability(origin, target, expiry)
-```
+Future capabilities such as camera, file access or screen capture must add their own explicitly scoped authority and broker checks before any platform side effect. They are examples of later policy design, not capabilities implemented by R4.
 
-Capabilities are origin-bound, operation-bound and revocable.
-
-On Windows, sandbox/process primitives will be implemented behind the Host/Broker platform layer rather than exposed to Web-facing crates.
+On Windows, the R4 process boundary already applies the bounded creation-time mitigation, child-process restriction and Job Object containment policy behind `rarog-platform-windows-native`. This is a concrete containment baseline, not an AppContainer or Chromium-equivalent sandbox claim.
 
 ## Compatibility model
 

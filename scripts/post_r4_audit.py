@@ -36,6 +36,8 @@ STALE_DOC_PATTERNS = {
     "single_process_current": re.compile(r"current single-process", re.I),
     "planned_r4_security": re.compile(r"planned multi-process isolation|sandbox milestones are implemented", re.I),
     "dependency_review_disabled": re.compile(r"Dependency Review remains intentionally disabled", re.I),
+    "future_site_process": re.compile(r"A future site process", re.I),
+    "planned_windows_sandbox": re.compile(r"sandbox/process primitives will be implemented", re.I),
 }
 
 def lines(path: Path):
