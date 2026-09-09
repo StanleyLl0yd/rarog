@@ -1,6 +1,6 @@
 # Post-R4 repository-wide audit report
 
-Status: **complete at the verified code endpoint; final report-head CI is required before merge**.
+Status: **complete; final merge is pending exact-head verification of this report-only closure update**.
 
 This report records the mandatory full repository-wide audit/refactor/code review after R4 — Sky and before any R5 work. R5 is explicitly outside scope.
 
@@ -113,7 +113,7 @@ Exact verified code endpoint `1dd92fbc4c0bda72f560b0debaed221852ba0229` is green
 - CodeQL run 34386810711 — success;
 - Post-R4 Full Audit run 34386810657 — success.
 
-The report commit changes documentation only, but PR #259 must also be green on its exact final head before merge.
+The implementation/report head `de1efdeffb785f9c371ce7035520c4fdf2a29176` completed every required workflow successfully. This closure update changes documentation only; PR #259 must also be green on its new exact head before merge.
 
 ## Limitations
 
@@ -132,8 +132,9 @@ The report commit changes documentation only, but PR #259 must also be green on 
 - Manifests/dependencies review: complete.
 - CI/security/scripts review: complete.
 - Documentation/ADR review: complete.
-- Full PR diff review: required once this report is committed.
-- Final exact-head GitHub verification: required after this report commit.
-- Obsolete branch proof/deletion: required before merge.
+- Full PR diff review: complete; all 21 changed files at `de1efde…` were reviewed against `0dea3dc…` with no additional actionable finding.
+- Exact-head GitHub verification at `de1efde…`: complete; CI, Security, Security Audit/RustSec, CodeQL and Post-R4 Full Audit all succeeded.
+- Obsolete branch proof/deletion: complete; `backup/navigation-context-authority-pre249` and `r4/navigation-site-transitions` were proven superseded and deleted, leaving only `main` and this audit branch before merge.
+- Final report-only closure head verification: required before merge.
 - PR #259 squash merge and issue #258 closure: required.
 - R5: **do not start**.
