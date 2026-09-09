@@ -1803,7 +1803,8 @@ mod tests {
         assert_eq!(network.starts, 1);
 
         assert_eq!(
-            host.cancel_pending_network_operations(&mut network).unwrap(),
+            host.cancel_pending_network_operations(&mut network)
+                .unwrap(),
             1
         );
         assert_eq!(network.cancels, 1);
@@ -1838,7 +1839,8 @@ mod tests {
         assert_eq!(network.polls, 0);
 
         assert_eq!(
-            host.cancel_pending_network_operations(&mut network).unwrap(),
+            host.cancel_pending_network_operations(&mut network)
+                .unwrap(),
             1
         );
         assert_eq!(network.cancels, 2);
@@ -1897,7 +1899,8 @@ mod tests {
 
         network.fail_cancel = false;
         assert_eq!(
-            host.cancel_pending_network_operations(&mut network).unwrap(),
+            host.cancel_pending_network_operations(&mut network)
+                .unwrap(),
             1
         );
         assert_eq!(host.tracked_network_operations(), 0);

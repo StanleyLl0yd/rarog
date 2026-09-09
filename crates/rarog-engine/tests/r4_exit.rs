@@ -507,7 +507,8 @@ fn r4_exit_process_loss_revokes_authority_before_fresh_recovery() {
     );
     assert_eq!(network.polls, 0);
     assert_eq!(
-        host.cancel_pending_network_operations(&mut network).unwrap(),
+        host.cancel_pending_network_operations(&mut network)
+            .unwrap(),
         1
     );
     assert_eq!(network.cancels, 1);
