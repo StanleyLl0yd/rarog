@@ -2264,14 +2264,19 @@ version = "0.1.0"
 name = "rarog-engine"
 version = "0.1.0"
 dependencies = [
+ "rarog-broker",
  "rarog-compositor",
  "rarog-css",
  "rarog-dom",
  "rarog-fetch",
+ "rarog-host",
  "rarog-html",
+ "rarog-ipc",
  "rarog-layout",
  "rarog-paint",
  "rarog-platform",
+ "rarog-platform-windows",
+ "rarog-process",
  "rarog-resources",
  "rarog-scheduler",
  "rarog-scroll",
