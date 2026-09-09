@@ -1613,28 +1613,31 @@ fn parse_grid_track_list(value: &str) -> Option<GridTrackList> {
     if value.eq_ignore_ascii_case("none") {
         return Some(GridTrackList::default());
     }
-    let tracks = value
-        .split_whitespace()
-        .map(|part| {
-            if part.eq_ignore_ascii_case("auto") {
-                Some(GridTrackSize::Auto)
-            } else if part.eq_ignore_ascii_case("min-content") {
-                Some(GridTrackSize::MinContent)
-            } else if part.eq_ignore_ascii_case("max-content") {
-                Some(GridTrackSize::MaxContent)
-            } else if let Some(factor) = parse_fr(part) {
-                Some(GridTrackSize::Fraction(factor))
-            } else {
-                parse_px(part)
-                    .filter(|size| *size >= 0.0)
-                    .map(GridTrackSize::Fixed)
-            }
-        })
-        .collect::<Option<Vec<_>>>()?;
-    if tracks.is_empty() {
+
+    let mut tracks = [GridTrackSize::Fixed(0.0); MAX_EXPLICIT_GRID_TRACKS];
+    let mut len = 0usize;
+    for part in value.split_whitespace() {
+        if len == MAX_EXPLICIT_GRID_TRACKS {
+            return None;
+        }
+        let track = if part.eq_ignore_ascii_case("auto") {
+            GridTrackSize::Auto
+        } else if part.eq_ignore_ascii_case("min-content") {
+            GridTrackSize::MinContent
+        } else if part.eq_ignore_ascii_case("max-content") {
+            GridTrackSize::MaxContent
+        } else if let Some(factor) = parse_fr(part) {
+            GridTrackSize::Fraction(factor)
+        } else {
+            GridTrackSize::Fixed(parse_px(part).filter(|size| *size >= 0.0)?)
+        };
+        tracks[len] = track;
+        len += 1;
+    }
+    if len == 0 {
         return None;
     }
-    GridTrackList::from_tracks(&tracks)
+    GridTrackList::from_tracks(&tracks[..len])
 }
 
 fn parse_fr(value: &str) -> Option<f32> {
@@ -1731,22 +1734,26 @@ fn parse_bounded_cross_alignment(value: &str) -> Option<AlignItems> {
 }
 
 fn push_gap_shorthand(output: &mut Vec<Declaration>, value: &str, important: bool) {
-    let parts = value.split_whitespace().collect::<Vec<_>>();
-    let (row, column) = match parts.as_slice() {
-        [both] => {
-            let Some(value) = parse_gap_component(both) else {
+    let mut parts = value.split_whitespace();
+    let Some(row) = parts.next() else {
+        return;
+    };
+    let column = parts.next();
+    if parts.next().is_some() {
+        return;
+    }
+
+    let Some(row) = parse_gap_component(row) else {
+        return;
+    };
+    let column = match column {
+        Some(column) => {
+            let Some(column) = parse_gap_component(column) else {
                 return;
             };
-            (value, value)
+            column
         }
-        [row, column] => {
-            let (Some(row), Some(column)) = (parse_gap_component(row), parse_gap_component(column))
-            else {
-                return;
-            };
-            (row, column)
-        }
-        _ => return,
+        None => row,
     };
 
     output.push(Declaration {
@@ -1839,21 +1846,21 @@ fn parse_px(value: &str) -> Option<f32> {
 }
 
 fn parse_edge_sizes(value: &str) -> Option<EdgeSizes> {
-    let values = value
-        .split_whitespace()
-        .map(parse_px)
-        .collect::<Option<Vec<_>>>()?;
+    let mut values = [0.0; 4];
+    let mut len = 0usize;
+    for part in value.split_whitespace() {
+        if len == values.len() {
+            return None;
+        }
+        values[len] = parse_px(part)?;
+        len += 1;
+    }
 
-    match values.as_slice() {
-        [all] => Some(EdgeSizes::all(*all)),
-        [vertical, horizontal] => Some(EdgeSizes::new(
-            *vertical,
-            *horizontal,
-            *vertical,
-            *horizontal,
-        )),
-        [top, horizontal, bottom] => Some(EdgeSizes::new(*top, *horizontal, *bottom, *horizontal)),
-        [top, right, bottom, left] => Some(EdgeSizes::new(*top, *right, *bottom, *left)),
+    match len {
+        1 => Some(EdgeSizes::all(values[0])),
+        2 => Some(EdgeSizes::new(values[0], values[1], values[0], values[1])),
+        3 => Some(EdgeSizes::new(values[0], values[1], values[2], values[1])),
+        4 => Some(EdgeSizes::new(values[0], values[1], values[2], values[3])),
         _ => None,
     }
 }
@@ -2770,6 +2777,16 @@ mod finite_geometry_tests {
 
         let too_many = "10px 10px 10px 10px 10px 10px 10px 10px 10px";
         assert!(parse_declarations(&format!("grid-template-columns:{too_many}")).is_empty());
+    }
+
+    #[test]
+    fn bounded_css_component_parsers_fail_closed_past_supported_arity() {
+        assert!(parse_grid_track_list("1px 2px 3px 4px 5px 6px 7px 8px 9px").is_none());
+        assert!(parse_edge_sizes("1px 2px 3px 4px 5px").is_none());
+
+        let mut declarations = Vec::new();
+        push_gap_shorthand(&mut declarations, "1px 2px 3px", false);
+        assert!(declarations.is_empty());
     }
 
     #[test]
