@@ -41,10 +41,21 @@ STALE_DOC_PATTERNS = {
 def lines(path: Path):
     return (ROOT / path).read_text(encoding="utf-8").splitlines()
 
-def findings(pattern: re.Pattern[str], paths: list[Path]):
+def production_lines(path: Path):
+    source = lines(path)
+    for index, line in enumerate(source):
+        if line.strip() != "#[cfg(test)]":
+            continue
+        lookahead = source[index + 1 : index + 5]
+        if any(re.match(r"\s*(?:pub\s+)?mod\s+tests\s*\{", candidate) for candidate in lookahead):
+            return source[:index]
+    return source
+
+def findings(pattern: re.Pattern[str], paths: list[Path], *, production: bool = False):
     result = []
     for path in paths:
-        for number, line in enumerate(lines(path), start=1):
+        source = production_lines(path) if production else lines(path)
+        for number, line in enumerate(source, start=1):
             if pattern.search(line):
                 result.append({"path": str(path), "line": number, "text": line.strip()[:240]})
     return result
@@ -54,7 +65,10 @@ def crate_for(path: Path) -> str | None:
         return path.parts[1]
     return None
 
-prod_findings = {name: findings(pattern, PRODUCTION_RUST) for name, pattern in PATTERNS.items()}
+prod_findings = {
+    name: findings(pattern, PRODUCTION_RUST, production=True)
+    for name, pattern in PATTERNS.items()
+}
 all_findings = {name: findings(pattern, RUST) for name, pattern in PATTERNS.items()}
 
 unsafe_outside_boundary = []
@@ -108,6 +122,16 @@ for name, pattern in STALE_DOC_PATTERNS.items():
     if hits:
         stale_docs[name] = hits
 
+adr_0108_references = []
+for path in TRACKED:
+    if path.suffix.lower() not in {".md", ".rs", ".py", ".toml", ".yml", ".yaml"}:
+        continue
+    for number, line in enumerate(lines(path), start=1):
+        if "ADR-0108" in line or "0108-engine-document-navigation-transactions" in line:
+            adr_0108_references.append(
+                {"path": str(path), "line": number, "text": line.strip()[:240]}
+            )
+
 extensions = Counter(path.suffix.lower() or "<none>" for path in TRACKED)
 line_counts = Counter()
 for path in TRACKED:
@@ -130,6 +154,7 @@ summary = {
     "adr_collisions": adr_collisions,
     "large_rust": large_rust,
     "stale_docs": stale_docs,
+    "adr_0108_references": adr_0108_references,
 }
 
 print("=== POST-R4 REPOSITORY AUDIT SUMMARY ===")
