@@ -35,7 +35,7 @@ The dedicated `crates/rarog-engine/tests/r4_exit.rs` gate verifies the public R4
 - production navigation-context Network/Clipboard routes require exact Host context/process/capability authorization before reaching a backend;
 - lower-level process-owned privileged routes remain authenticated Host/transport building blocks rather than Site-selected authority;
 - two contexts sharing one Site process cannot interchange context-scoped capability authority;
-- backend Network tickets are hidden behind bounded Host-owned operation identities and stale operation authority is rejected;
+- backend Network tickets are hidden behind bounded Host-owned operation identities, stale operation authority is rejected, and revoked/process-lost backend tickets remain privately budgeted until confirmed cancellation;
 - real Windows child-process loss invokes Host revocation/retirement once and produces fresh replacement authority;
 - the Windows process/sandbox adapter passes its platform-specific contract;
 - Windows process creation applies the R4 mitigation, child-process restriction and Job Object containment policy before Site code can execute;
