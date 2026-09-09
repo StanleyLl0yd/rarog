@@ -35,6 +35,7 @@ cargo test -p rarog-engine --test r01_correctness
 cargo test -p rarog-engine --test r1_exit
 cargo test -p rarog-engine --test r2_exit
 cargo test -p rarog-engine --test r3_exit
+cargo test -p rarog-engine --test r4_exit
 cargo check --manifest-path fuzz/Cargo.toml --bins
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```
@@ -43,4 +44,4 @@ If a change intentionally alters the deterministic R0 render signature, explain 
 
 GitHub Actions runs the full quality path on Windows, a portability and fuzz-build path on Linux, an explicit Rust 1.85 MSRV check, dedicated SpiderMonkey feature lanes on both platforms, and a separate RustSec advisory workflow. Push CI runs only for `main`; pull requests run the same gates before merge.
 
-Historical milestone backlogs remain records of completed scope. Do not reopen an earlier backlog for later milestone work unless an invariant owned by that milestone is actually incorrect. The R3 → R4 transition is governed by `docs/PRE-R4-AUDIT.md` until that gate is complete.
+Historical milestone backlogs and transition gates remain records of completed scope. Do not reopen an earlier backlog or transition gate for later milestone work unless an invariant owned by that milestone is actually incorrect. The active milestone state is defined by `docs/ROADMAP.md`.

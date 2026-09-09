@@ -70,11 +70,11 @@ Host application (Zorya / Rarog View embedder)
        Compositor/GPU ◄──────────────────────┘
 ```
 
-The v0.1 bootstrap runs in one process, but its crate boundaries intentionally mirror future security/process boundaries.
+The core engine workload still runs primarily in the embedding process. R4 established separate bounded Host/Site process authority, child lifecycle, IPC and Windows containment infrastructure without claiming wholesale engine-workload migration into Site children; crate boundaries continue to mirror the security/process boundaries required for that migration.
 
 ### R4 process identity and site assignment boundary
 
-R4 begins with a process-placement-independent topology in `rarog-process`. The Host owns engine-level Host/Site process identities and assigns a schemeful `SiteIdentity` to a bounded Site-process identity. These identities are not OS process IDs, handles or transport endpoints; Windows launch/sandbox state remains behind a later platform boundary.
+R4 established a process-placement-independent topology in `rarog-process`. The Host owns engine-level Host/Site process identities and assigns a schemeful `SiteIdentity` to a bounded Site-process identity. These identities are not OS process IDs, handles or transport endpoints; concrete Windows launch/sandbox state remains isolated behind the platform/native boundary.
 
 The assignment contract is fail-closed:
 
@@ -84,7 +84,7 @@ The assignment contract is fail-closed:
 - exhausting the configured Site-process budget returns an error instead of sharing authority with another site;
 - retiring a Site process removes its site assignment, and replacement allocation receives a fresh identity rather than reusing stale authority.
 
-This establishes the identity/lifetime contract required by later R4 IPC, capability brokering and crash recovery without assuming that those components already run in separate OS processes. See ADR-0102.
+This identity/lifetime contract underpins the completed R4 IPC, capability-brokering and crash-recovery foundations without claiming that the engine workload itself already runs wholesale in Site children. See ADR-0102.
 
 ### R4 IPC protocol boundary
 
