@@ -104,6 +104,9 @@ for manifest in MANIFESTS:
 adr_ids = defaultdict(list)
 for path in TRACKED:
     if len(path.parts) >= 3 and path.parts[:2] == ("docs", "adr") and path.suffix == ".md":
+        text = (ROOT / path).read_text(encoding="utf-8")
+        if text.startswith("# Moved:"):
+            continue
         match = re.match(r"^(?:ADR-)?(\d{4})-", path.name)
         if match:
             adr_ids[match.group(1)].append(str(path))
@@ -122,13 +125,13 @@ for name, pattern in STALE_DOC_PATTERNS.items():
     if hits:
         stale_docs[name] = hits
 
-adr_0108_references = []
+stale_navigation_adr_references = []
 for path in TRACKED:
     if path.suffix.lower() not in {".md", ".rs", ".py", ".toml", ".yml", ".yaml"}:
         continue
     for number, line in enumerate(lines(path), start=1):
-        if "ADR-0108" in line or "0108-engine-document-navigation-transactions" in line:
-            adr_0108_references.append(
+        if "0108-engine-document-navigation-transactions" in line:
+            stale_navigation_adr_references.append(
                 {"path": str(path), "line": number, "text": line.strip()[:240]}
             )
 
@@ -154,7 +157,7 @@ summary = {
     "adr_collisions": adr_collisions,
     "large_rust": large_rust,
     "stale_docs": stale_docs,
-    "adr_0108_references": adr_0108_references,
+    "stale_navigation_adr_references": stale_navigation_adr_references,
 }
 
 print("=== POST-R4 REPOSITORY AUDIT SUMMARY ===")
@@ -174,5 +177,14 @@ for dep, users in sorted(direct_dependencies.items()):
 
 if unsafe_outside_boundary:
     raise SystemExit("unsafe Rust escaped the two explicit native/runtime boundaries")
-if any(item["issue"] == "ordinary crate does not inherit workspace lints" for item in manifest_policy):
-    raise SystemExit("ordinary crate lint inheritance is incomplete")
+if manifest_policy:
+    raise SystemExit("crate lint policy is incomplete: " + json.dumps(manifest_policy))
+if adr_collisions:
+    raise SystemExit("accepted ADR identifiers are not unique: " + json.dumps(adr_collisions))
+if stale_docs:
+    raise SystemExit("stale security/milestone documentation remains: " + json.dumps(stale_docs))
+if stale_navigation_adr_references:
+    raise SystemExit(
+        "legacy engine-navigation ADR path remains referenced: "
+        + json.dumps(stale_navigation_adr_references)
+    )
