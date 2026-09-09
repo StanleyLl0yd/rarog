@@ -14,6 +14,7 @@ rarog-css = { path = "../crates/rarog-css" }
 rarog-engine = { path = "../crates/rarog-engine" }
 rarog-fetch = { path = "../crates/rarog-fetch" }
 rarog-html = { path = "../crates/rarog-html" }
+rarog-ipc = { path = "../crates/rarog-ipc" }
 rarog-url = { path = "../crates/rarog-url" }
 rarog-webidl = { path = "../crates/rarog-webidl" }
 
@@ -58,3 +59,10 @@ path = "fuzz_targets/fetch_values.rs"
 test = false
 doc = false
 bench = false
+[[bin]]
+name = "ipc_wire"
+path = "fuzz_targets/ipc_wire.rs"
+test = false
+doc = false
+bench = false
+

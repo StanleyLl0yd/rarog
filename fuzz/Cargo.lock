@@ -484,6 +484,7 @@ dependencies = [
  "rarog-engine",
  "rarog-fetch",
  "rarog-html",
+ "rarog-ipc",
  "rarog-url",
  "rarog-webidl",
 ]
@@ -495,6 +496,10 @@ dependencies = [
  "html5ever",
  "rarog-dom",
 ]
+
+[[package]]
+name = "rarog-ipc"
+version = "0.1.0"
 
 [[package]]
 name = "rarog-layout"

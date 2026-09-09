@@ -63,7 +63,11 @@ R2 pins optional `mozjs` 0.21.6 in the isolated `rarog-script-spidermonkey` crat
 
 ### Windows platform adapters
 
-The Windows platform crate currently uses `font-kit` 0.14.3 for system-font selection and `clipboard-win` 5.4.1 for clipboard integration. Both dependencies remain target-specific implementation details behind `rarog-platform` contracts. Windows GPU selection and presentation enable the DX12 backend of the same pinned `wgpu` 26.0.1 release used by the compositor adapter.
+The Windows platform crate currently uses `font-kit` 0.14.3 for system-font selection, `clipboard-win` 5.4.1 for clipboard integration and pinned `interprocess` 2.4.3 for bounded local Host↔Site IPC transport. These remain target-specific implementation details behind Rarog-owned platform, IPC and Host contracts. Windows GPU selection and presentation enable the DX12 backend of the same pinned `wgpu` 26.0.1 release used by the compositor adapter.
+
+The isolated `rarog-platform-windows-native` crate pins `windows-sys` 0.61.2 only for the Win32 process, mitigation-policy and Job Object calls that require unsafe FFI. No HANDLE, PID, token or Job Object type crosses its safe public boundary, and ordinary workspace crates continue to inherit `unsafe_code = "forbid"`.
+
+The Windows shell pins `winit` 0.30.13 for the application window/event-loop boundary and `pollster` 0.4.0 only to synchronously enter the asynchronous GPU setup path. These shell/toolkit helpers do not enter DOM, CSS, layout, paint, Fetch, Host/IPC or other engine-core public contracts.
 
 ### `wgpu` 26.0.1
 

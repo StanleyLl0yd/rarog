@@ -20,9 +20,10 @@ For Network:
 - backend `NetworkTicket` values remain private to the Host;
 - Sites receive a bounded monotonic `NetworkOperationId` instead;
 - every poll/cancel re-authorizes the capability and verifies the operation's stored process+capability ownership before touching the backend;
-- completion, cancellation, capability revocation and process loss remove operation authority;
-- active Host network operations have an explicit configurable limit and identities are never reused;
-- if a backend reuses a still-live ticket, affected Host operation authority fails closed rather than aliasing two Site requests.
+- completion and explicit cancellation remove operation authority after the corresponding backend lifetime finishes;
+- capability revocation and process loss remove Site-visible operation authority immediately, quarantine the private backend ticket and keep that retired work charged to the same Host network-operation budget until the Host drives backend cancellation;
+- active plus quarantined Host network operations have one explicit configurable limit, and operation identities are never reused;
+- if a backend reuses a live or quarantine-pending ticket, affected Host operation authority fails closed rather than aliasing two Site requests.
 
 For Clipboard:
 
@@ -34,6 +35,6 @@ The Network route does not implement or bypass Fetch policy. It accepts only the
 
 ## Consequences
 
-A numeric capability or operation reference is never sufficient to reach a privileged backend. Network backend tickets are not security identities exposed to Site code, and stale process/capability/operation authority is removed by Host lifecycle events.
+A numeric capability or operation reference is never sufficient to reach a privileged backend. Network backend tickets are not security identities exposed to Site code, and stale process/capability/operation authority is removed by Host lifecycle events. Revoked backend work remains privately quarantined and budgeted until `cancel_pending_network_operations` confirms backend cancellation, so repeated grant/start/revoke cycles cannot bypass the Host operation limit.
 
 The portable Host crate now depends on the portable Fetch and Platform contracts, not on Windows implementations. Windows process/transport work can bind authenticated endpoints to this same route without placing Win32 handles or APIs in portable code.

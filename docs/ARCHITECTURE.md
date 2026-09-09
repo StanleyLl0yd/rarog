@@ -70,11 +70,11 @@ Host application (Zorya / Rarog View embedder)
        Compositor/GPU ◄──────────────────────┘
 ```
 
-The v0.1 bootstrap runs in one process, but its crate boundaries intentionally mirror future security/process boundaries.
+The core engine workload still runs primarily in the embedding process. R4 established separate bounded Host/Site process authority, child lifecycle, IPC and Windows containment infrastructure without claiming wholesale engine-workload migration into Site children; crate boundaries continue to mirror the security/process boundaries required for that migration.
 
 ### R4 process identity and site assignment boundary
 
-R4 begins with a process-placement-independent topology in `rarog-process`. The Host owns engine-level Host/Site process identities and assigns a schemeful `SiteIdentity` to a bounded Site-process identity. These identities are not OS process IDs, handles or transport endpoints; Windows launch/sandbox state remains behind a later platform boundary.
+R4 established a process-placement-independent topology in `rarog-process`. The Host owns engine-level Host/Site process identities and assigns a schemeful `SiteIdentity` to a bounded Site-process identity. These identities are not OS process IDs, handles or transport endpoints; concrete Windows launch/sandbox state remains isolated behind the platform/native boundary.
 
 The assignment contract is fail-closed:
 
@@ -84,7 +84,7 @@ The assignment contract is fail-closed:
 - exhausting the configured Site-process budget returns an error instead of sharing authority with another site;
 - retiring a Site process removes its site assignment, and replacement allocation receives a fresh identity rather than reusing stale authority.
 
-This establishes the identity/lifetime contract required by later R4 IPC, capability brokering and crash recovery without assuming that those components already run in separate OS processes. See ADR-0102.
+This identity/lifetime contract underpins the completed R4 IPC, capability-brokering and crash-recovery foundations without claiming that the engine workload itself already runs wholesale in Site children. See ADR-0102.
 
 ### R4 IPC protocol boundary
 
@@ -110,11 +110,11 @@ The initial concrete classes are Network and Clipboard because both already have
 
 Inbound transport plumbing must supply the Host-owned Site-process binding separately from the decoded IPC envelope. The envelope's source/destination roles are checked against that binding path; payload values do not select another process or authority owner.
 
-When a Site process is reported lost, the Host control plane disconnects and discards its queued IPC work, revokes every capability owned by that process, then retires its topology identity. Recovery allocates a fresh Site-process identity and a fresh empty channel. Stale process IDs and capability references therefore remain invalid even when the same schemeful site is recovered.
+When a Site process is reported lost, the Host control plane disconnects and discards its queued IPC work, revokes every capability owned by that process, quarantines any private backend Network tickets owned by that process, then retires its topology identity. Recovery allocates a fresh Site-process identity and a fresh empty channel. Stale process IDs and capability references therefore remain invalid even when the same schemeful site is recovered.
 
 On Windows, `WindowsSiteProcess` binds a real child lifetime to a live Host-produced `SiteLease`. Non-blocking observation, blocking wait and explicit termination all feed the child's exit into `HostControlPlane::process_lost` once. Concrete process creation is delegated to `rarog-platform-windows-native`, which atomically installs the bounded R4 exploit-mitigation, child-process restriction and per-Site Job Object policy through extended creation attributes before Site code can execute. Native handles and Job Object state stay inside that dedicated low-level crate; `rarog-platform-windows` consumes only its safe `SandboxedChild`/evidence API. Dropping a live child remains emergency containment, while coherent recovery uses explicit Host-reporting paths. See ADR-0108 and ADR-0111.
 
-Privileged Network operations never expose backend `NetworkTicket` values as Site authority. `rarog-host` allocates a separate bounded monotonic `NetworkOperationId`, binds it to the authenticated Site process and exact Network capability, and validates that binding before poll/cancel reaches the backend. Completion, cancellation, capability revocation and process loss remove the Host operation authority. Clipboard reads/writes similarly authorize the exact Clipboard capability before touching the platform service and revalidate text against the concrete service limit. Rejected references therefore cannot cause privileged backend side effects. See ADR-0107.
+Privileged Network operations never expose backend `NetworkTicket` values as Site authority. `rarog-host` allocates a separate bounded monotonic `NetworkOperationId`, binds it to the authenticated Site process and exact Network capability, and validates that binding before poll/cancel reaches the backend. Completion and explicit cancellation finish the tracked operation normally. Capability revocation and process loss remove Site-visible authority immediately but retain the private ticket in a Host cancellation quarantine; active and quarantined work share the same configured operation budget until `cancel_pending_network_operations` confirms backend cancellation. Repeated revocation therefore cannot manufacture fresh Host capacity while old backend work remains outstanding. Clipboard reads/writes similarly authorize the exact Clipboard capability before touching the platform service and revalidate text against the concrete service limit. Rejected references therefore cannot cause privileged backend side effects. See ADR-0107.
 
 Document navigation is bound at the Host boundary rather than inside Web-controlled payloads. A `DocumentSiteBinding` stores the owning `SiteIdentity` and Host-assigned `SiteProcessId`. Initial and same-site navigation use the bounded topology normally; cross-site or cross-scheme navigation replaces the document binding with a distinct Site-process identity. Opaque URLs create a fresh identity for a new environment, while inherited opaque environments pass their stored `SiteIdentity` explicitly so identity is never accidentally regenerated. A stale binding is rejected before a target process is allocated. See ADR-0106.
 
@@ -412,7 +412,7 @@ R0 exposes `Engine` and `View` above `RenderSession`. `Engine` owns shared host 
 
 The original R0 `NavigationRequest` and `ResourceRequest` forwarding seam remains available: `HostPolicy` can return `Blocked` or `ForwardToEmbedder`, and UI-neutral `ViewEvent` values remain independent of a toolkit or Windows API. Document navigation additionally has a Rarog-owned transaction boundary. `View::begin_navigation` canonicalizes an HTTP(S) target, constructs the high-level document `FetchRequest`, allocates a monotonic per-View navigation identity and exports only its bounded `NetworkRequest` transport projection. The embedder/Host maps that identity to an authorized R4 Host network operation; raw network capabilities, backend tickets, Host operation identities and process/capability authority do not enter `rarog-engine`. Superseded or cancelled transactions reject stale completion before document replacement.
 
-A matching `FetchResponse` is returned to the engine for commit policy. The transport is one-exchange-only and must surface redirects instead of following them; a changed backend final URL is rejected as a policy-boundary violation. The initial completion slice accepts only bounded, valid UTF-8 `text/html` responses with an explicit UTF-8 charset and fails explicitly for redirects, unsupported encodings/media types and no-document responses. Full redirect handling and HTML byte encoding sniffing extend the Rarog-owned Fetch/navigation layer later rather than being delegated to an embedder. Local `View::load_html` remains an inline-document embedding path; its `BaseUrl` is not treated as canonical Web security identity. See ADR-0058 and ADR-0108.
+A matching `FetchResponse` is returned to the engine for commit policy. The transport is one-exchange-only and must surface redirects instead of following them; a changed backend final URL is rejected as a policy-boundary violation. The initial completion slice accepts only bounded, valid UTF-8 `text/html` responses with an explicit UTF-8 charset and fails explicitly for redirects, unsupported encodings/media types and no-document responses. Full redirect handling and HTML byte encoding sniffing extend the Rarog-owned Fetch/navigation layer later rather than being delegated to an embedder. Local `View::load_html` remains an inline-document embedding path; its `BaseUrl` is not treated as canonical Web security identity. See ADR-0058 and ADR-0112.
 
 `ResourceBudget` now enforces document-source bytes, viewport pixels, DOM node count/depth, text scalars, CSS rules, fragment count and display-command count. The viewport limit cannot exceed the lower-level framebuffer safety cap. Separate resource stores and queues add their own image/font/input bounds. Resident-memory, graphics-cache, background-CPU and lifecycle accounting remain future extensions rather than invented estimates. `View::render` creates a stateful render session on first use, reuses it for an unchanged viewport, and performs a deterministic full session rebuild when the viewport changes. See ADR-0029.
 
@@ -432,24 +432,17 @@ No engine crate outside the script adapter should depend directly on SpiderMonke
 
 ## Resource model
 
-The current single-process engine uses explicit bounded structures rather than claiming accounting it does not yet implement. `ResourceBudget` covers document/render complexity, while image, font, scheduler, event, clipboard/input and compositor queues/stores enforce subsystem-specific limits.
+The current engine execution path still runs primarily in the embedding process, but its externally influenced structures are explicitly bounded rather than relying on estimated accounting. `ResourceBudget` covers document/render complexity, while image, font, scheduler, event, clipboard/input and compositor queues/stores enforce subsystem-specific limits. R4 additionally established bounded per-Site process/IPC/capability authority; that does not imply that all engine execution or resident memory has already moved into Site children.
 
-Long-term per-site resident-memory, graphics-cache, background-CPU and lifecycle accounting belongs to the R4+ process/resource model. Those future policies must preserve the same security boundaries regardless of lifecycle state.
+Long-term per-site resident-memory, graphics-cache, background-CPU and broader lifecycle accounting remain future work. Those policies must preserve the completed R4 authority boundaries regardless of lifecycle state.
 
 ## Security model
 
-A future site process can request operations but cannot directly access privileged OS resources. The Host/Broker issues scoped capabilities, for example:
+R4 Site-process authority cannot directly select privileged OS resources. The Host/Broker currently issues bounded revocable `Network` and `Clipboard` capability classes to a live Host-owned `SiteProcessId`; production navigation routes additionally bind those grants to the exact `NavigationContextId`. Network origin, credentials, redirect and related Web policy remain owned by the Fetch/navigation layer rather than being inferred from the capability ID.
 
-```text
-CameraCapability(origin, device, expiry)
-FileReadCapability(origin, path-scope, expiry)
-ClipboardReadCapability(origin, expiry)
-ScreenCaptureCapability(origin, target, expiry)
-```
+Future capabilities such as camera, file access or screen capture must add their own explicitly scoped authority and broker checks before any platform side effect. They are examples of later policy design, not capabilities implemented by R4.
 
-Capabilities are origin-bound, operation-bound and revocable.
-
-On Windows, sandbox/process primitives will be implemented behind the Host/Broker platform layer rather than exposed to Web-facing crates.
+On Windows, the R4 process boundary already applies the bounded creation-time mitigation, child-process restriction and Job Object containment policy behind `rarog-platform-windows-native`. This is a concrete containment baseline, not an AppContainer or Chromium-equivalent sandbox claim.
 
 ## Compatibility model
 
