@@ -1549,8 +1549,13 @@ mod tests {
         let request = RequestId::try_new(23).unwrap();
         host.enqueue_from_host(
             process,
-            IpcEnvelope::request(EndpointRole::Host, request, b"live".to_vec(), host.ipc_limits)
-                .unwrap(),
+            IpcEnvelope::request(
+                EndpointRole::Host,
+                request,
+                b"live".to_vec(),
+                host.ipc_limits,
+            )
+            .unwrap(),
         )
         .unwrap();
 
