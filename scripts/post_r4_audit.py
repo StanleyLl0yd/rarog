@@ -31,6 +31,13 @@ PATTERNS = {
     "unsafe_fn": re.compile(r"\bunsafe\s+fn\b"),
     "allow_attr": re.compile(r"#!?\s*\[allow\("),
 }
+ALLOWED_PRODUCTION_PANICS = {
+    (
+        "crates/rarog-html/src/standards.rs",
+        'panic!("tree builder requested an element name from a non-element")',
+    ),
+}
+
 STALE_DOC_PATTERNS = {
     "r4_in_progress": re.compile(r"R4[^\n]{0,80}(?:in progress|underway)", re.I),
     "single_process_current": re.compile(r"current single-process", re.I),
@@ -72,6 +79,12 @@ prod_findings = {
     for name, pattern in PATTERNS.items()
 }
 all_findings = {name: findings(pattern, RUST) for name, pattern in PATTERNS.items()}
+
+unexpected_production_panics = [
+    item
+    for item in prod_findings["panic"]
+    if (item["path"], item["text"]) not in ALLOWED_PRODUCTION_PANICS
+]
 
 unsafe_outside_boundary = []
 for category in ("unsafe_block", "unsafe_fn"):
@@ -156,6 +169,7 @@ summary = {
     "extensions": dict(extensions.most_common()),
     "production_pattern_counts": {name: len(items) for name, items in prod_findings.items()},
     "all_rust_pattern_counts": {name: len(items) for name, items in all_findings.items()},
+    "unexpected_production_panics": unexpected_production_panics,
     "unsafe_outside_boundary": unsafe_outside_boundary,
     "manifest_policy": manifest_policy,
     "adr_collisions": adr_collisions,
@@ -179,6 +193,18 @@ for dep, users in sorted(direct_dependencies.items()):
         for user in users:
             print(f"  {user['crate']} [{user['section']}]: {user['spec']}")
 
+if prod_findings["unwrap"]:
+    raise SystemExit("production unwrap() is forbidden: " + json.dumps(prod_findings["unwrap"]))
+if prod_findings["todo"] or prod_findings["unimplemented"]:
+    raise SystemExit(
+        "production TODO/unimplemented macros are forbidden: "
+        + json.dumps(prod_findings["todo"] + prod_findings["unimplemented"])
+    )
+if unexpected_production_panics:
+    raise SystemExit(
+        "unexpected production panic! outside the reviewed TreeSink invariant: "
+        + json.dumps(unexpected_production_panics)
+    )
 if unsafe_outside_boundary:
     raise SystemExit("unsafe Rust escaped the two explicit native/runtime boundaries")
 if manifest_policy:
