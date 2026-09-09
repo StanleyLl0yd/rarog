@@ -1390,6 +1390,7 @@ mod tests {
         starts: usize,
         polls: usize,
         cancels: usize,
+        fail_cancel: bool,
     }
 
     impl Default for FixtureNetwork {
@@ -1399,6 +1400,7 @@ mod tests {
                 starts: 0,
                 polls: 0,
                 cancels: 0,
+                fail_cancel: false,
             }
         }
     }
@@ -1419,6 +1421,9 @@ mod tests {
         }
 
         fn cancel(&mut self, _ticket: NetworkTicket) -> Result<(), FetchError> {
+            if self.fail_cancel {
+                return Err(FetchError::network("fixture cancellation failed"));
+            }
             self.cancels += 1;
             Ok(())
         }
@@ -1837,6 +1842,64 @@ mod tests {
             1
         );
         assert_eq!(network.cancels, 2);
+        assert_eq!(host.tracked_network_operations(), 0);
+    }
+
+    #[test]
+    fn failed_backend_cleanup_keeps_revoked_work_charged_to_the_limit() {
+        let mut limits = test_limits(1, 8);
+        limits.max_network_operations = 1;
+        let mut host = HostControlPlane::try_new(limits).unwrap();
+        let process = host
+            .ensure_site(site("https://example.com/"))
+            .unwrap()
+            .process();
+        let capability = host
+            .grant_capability(process, CapabilityClass::Network)
+            .unwrap();
+        let mut network = FixtureNetwork::default();
+
+        host.start_network_operation(
+            process,
+            capability.id(),
+            network_request("https://api.example.com/pending"),
+            &mut network,
+        )
+        .unwrap();
+        host.revoke_capability(capability.id()).unwrap();
+        assert_eq!(host.pending_network_cancellations(), 1);
+
+        network.fail_cancel = true;
+        assert_eq!(
+            host.cancel_pending_network_operations(&mut network)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::Fetch(FetchErrorKind::Network)
+        );
+        assert_eq!(host.pending_network_cancellations(), 1);
+        assert_eq!(host.tracked_network_operations(), 1);
+
+        let replacement = host
+            .grant_capability(process, CapabilityClass::Network)
+            .unwrap();
+        assert_eq!(
+            host.start_network_operation(
+                process,
+                replacement.id(),
+                network_request("https://api.example.com/blocked"),
+                &mut network,
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::NetworkOperationLimitExceeded
+        );
+        assert_eq!(network.starts, 1);
+
+        network.fail_cancel = false;
+        assert_eq!(
+            host.cancel_pending_network_operations(&mut network).unwrap(),
+            1
+        );
         assert_eq!(host.tracked_network_operations(), 0);
     }
 
