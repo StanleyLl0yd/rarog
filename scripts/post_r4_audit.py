@@ -129,6 +129,8 @@ for name, pattern in STALE_DOC_PATTERNS.items():
 
 stale_navigation_adr_references = []
 for path in TRACKED:
+    if path == Path("scripts/post_r4_audit.py"):
+        continue
     if path.suffix.lower() not in {".md", ".rs", ".py", ".toml", ".yml", ".yaml"}:
         continue
     for number, line in enumerate(lines(path), start=1):
