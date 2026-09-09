@@ -170,7 +170,9 @@ pub struct WindowsIpcConnection {
 
 #[cfg(not(target_os = "windows"))]
 #[derive(Debug)]
-pub struct WindowsIpcConnection;
+pub struct WindowsIpcConnection {
+    _private: (),
+}
 
 #[cfg(target_os = "windows")]
 impl WindowsIpcConnection {
@@ -192,10 +194,6 @@ impl WindowsIpcConnection {
 
 #[cfg(not(target_os = "windows"))]
 impl WindowsIpcConnection {
-    pub fn site_lease(&self) -> SiteLease {
-        panic!("Windows IPC connection cannot exist on a non-Windows target")
-    }
-
     pub fn receive_from_site(&mut self) -> Result<IpcEnvelope, WindowsIpcError> {
         Err(WindowsIpcError::unsupported_target())
     }

@@ -14,3 +14,6 @@ spidermonkey = ["dep:mozjs"]
 rarog-script = { path = "../rarog-script" }
 mozjs = { version = "=0.21.6", optional = true }
 
+[lints.rust]
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"

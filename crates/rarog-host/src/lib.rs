@@ -645,6 +645,20 @@ impl HostControlPlane {
     }
 
     pub fn process_lost(&mut self, process: SiteProcessId) -> Result<SiteLoss, HostControlError> {
+        let instance_site = self.site(process)?.site.clone();
+        let topology_site = self.topology.site_for_process(process).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                format!("{process} has a Host site instance but no topology assignment"),
+            )
+        })?;
+        if topology_site != &instance_site {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                format!("{process} topology/site instance identities diverged"),
+            ));
+        }
+
         let mut instance = self
             .sites
             .remove(&process)
@@ -1521,6 +1535,41 @@ mod tests {
                 .unwrap_err()
                 .kind,
             HostControlErrorKind::Capability(CapabilityErrorKind::UnknownCapability)
+        );
+    }
+
+    #[test]
+    fn process_loss_detects_topology_divergence_before_teardown() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 4)).unwrap();
+        let site_identity = site("https://example.com/");
+        let process = host.ensure_site(site_identity.clone()).unwrap().process();
+        let capability = host
+            .grant_capability(process, CapabilityClass::Network)
+            .unwrap();
+        let request = RequestId::try_new(23).unwrap();
+        host.enqueue_from_host(
+            process,
+            IpcEnvelope::request(EndpointRole::Host, request, b"live".to_vec(), host.ipc_limits)
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            host.topology.retire_site_process(process).unwrap(),
+            site_identity
+        );
+        assert_eq!(
+            host.process_lost(process).unwrap_err().kind,
+            HostControlErrorKind::InconsistentState
+        );
+
+        assert_eq!(host.active_site_processes(), 1);
+        assert_eq!(host.active_capabilities(), 1);
+        assert_eq!(host.queued_for_site(process).unwrap(), 1);
+        assert_eq!(
+            host.authorize_capability(process, capability.id(), CapabilityClass::Network)
+                .unwrap(),
+            ()
         );
     }
 
