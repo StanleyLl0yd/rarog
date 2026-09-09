@@ -12,7 +12,7 @@ use rarog_process::{
     SiteAssignmentKind, SiteProcessId,
 };
 use rarog_url::{SiteIdentity, UrlError, UrlErrorKind};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::num::NonZeroU64;
 
@@ -454,6 +454,7 @@ pub struct HostControlPlane {
     navigation_context_capabilities: HashMap<CapabilityId, NavigationContextId>,
     network_operation_allocator: NetworkOperationIdAllocator,
     network_operations: HashMap<NetworkOperationId, NetworkOperation>,
+    pending_network_cancellations: VecDeque<NetworkTicket>,
     sites: HashMap<SiteProcessId, SiteInstance>,
 }
 
@@ -477,6 +478,7 @@ impl HostControlPlane {
             navigation_context_capabilities: HashMap::new(),
             network_operation_allocator: NetworkOperationIdAllocator::new(),
             network_operations: HashMap::new(),
+            pending_network_cancellations: VecDeque::new(),
             sites: HashMap::new(),
         })
     }
@@ -499,6 +501,16 @@ impl HostControlPlane {
 
     pub fn active_network_operations(&self) -> usize {
         self.network_operations.len()
+    }
+
+    pub fn pending_network_cancellations(&self) -> usize {
+        self.pending_network_cancellations.len()
+    }
+
+    pub fn tracked_network_operations(&self) -> usize {
+        self.network_operations
+            .len()
+            .saturating_add(self.pending_network_cancellations.len())
     }
 
     pub fn active_navigation_contexts(&self) -> usize {
@@ -639,8 +651,7 @@ impl HostControlPlane {
     ) -> Result<CapabilityGrant, HostControlError> {
         let grant = self.broker.revoke(id)?;
         self.navigation_context_capabilities.remove(&id);
-        self.network_operations
-            .retain(|_, operation| operation.capability != id);
+        self.quarantine_network_operations_for_capability(id);
         Ok(grant)
     }
 
@@ -676,11 +687,7 @@ impl HostControlPlane {
         self.navigation_context_capabilities
             .retain(|_, context| !invalidated_contexts.contains(context));
 
-        let network_operations_before = self.network_operations.len();
-        self.network_operations
-            .retain(|_, operation| operation.owner != process);
-        let revoked_network_operations =
-            network_operations_before.saturating_sub(self.network_operations.len());
+        let revoked_network_operations = self.quarantine_network_operations_for_process(process);
         let revoked_capabilities = self.broker.revoke_all_for_process(process);
         let topology_site = self.topology.retire_site_process(process)?;
         if topology_site != instance.site {
@@ -711,7 +718,7 @@ impl HostControlPlane {
         network: &mut dyn NetworkCapability,
     ) -> Result<NetworkOperationId, HostControlError> {
         self.authorize_capability(process, capability, CapabilityClass::Network)?;
-        if self.network_operations.len() >= self.max_network_operations {
+        if self.tracked_network_operations() >= self.max_network_operations {
             return Err(HostControlError::new(
                 HostControlErrorKind::NetworkOperationLimitExceeded,
                 format!(
@@ -722,32 +729,47 @@ impl HostControlPlane {
         }
 
         let operation = self.network_operation_allocator.allocate()?;
+        if self.network_operations.contains_key(&operation) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "network operation allocator reused a live identity",
+            ));
+        }
+
         let ticket = network.start(request)?;
+
+        if self.pending_network_cancellations.contains(&ticket) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "network backend reused a ticket awaiting Host cancellation",
+            ));
+        }
 
         if let Some(existing) = self
             .network_operations
             .iter()
             .find_map(|(id, active)| (active.ticket == ticket).then_some(*id))
         {
-            self.network_operations.remove(&existing);
+            if let Some(existing) = self.network_operations.remove(&existing) {
+                self.quarantine_network_ticket(existing.ticket);
+            }
             return Err(HostControlError::new(
                 HostControlErrorKind::InconsistentState,
                 "network backend reused a live ticket; affected Host operation authority was revoked",
             ));
         }
 
-        if self
-            .network_operations
-            .insert(
-                operation,
-                NetworkOperation {
-                    owner: process,
-                    capability,
-                    ticket,
-                },
-            )
-            .is_some()
-        {
+        if let Some(existing) = self.network_operations.insert(
+            operation,
+            NetworkOperation {
+                owner: process,
+                capability,
+                ticket,
+            },
+        ) {
+            self.network_operations.remove(&operation);
+            self.quarantine_network_ticket(existing.ticket);
+            self.quarantine_network_ticket(ticket);
             return Err(HostControlError::new(
                 HostControlErrorKind::InconsistentState,
                 "network operation allocator reused a live identity",
@@ -792,6 +814,19 @@ impl HostControlPlane {
         self.network_operations.remove(&operation);
         network.cancel(ticket)?;
         Ok(())
+    }
+
+    pub fn cancel_pending_network_operations(
+        &mut self,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<usize, HostControlError> {
+        let mut cancelled = 0;
+        while let Some(ticket) = self.pending_network_cancellations.front().copied() {
+            network.cancel(ticket)?;
+            self.pending_network_cancellations.pop_front();
+            cancelled += 1;
+        }
+        Ok(cancelled)
     }
 
     pub fn read_clipboard_text(
@@ -1232,6 +1267,40 @@ impl HostControlPlane {
         Ok(process)
     }
 
+    fn quarantine_network_ticket(&mut self, ticket: NetworkTicket) {
+        if !self.pending_network_cancellations.contains(&ticket) {
+            self.pending_network_cancellations.push_back(ticket);
+        }
+    }
+
+    fn quarantine_network_operations_for_capability(&mut self, capability: CapabilityId) -> usize {
+        let operations = self
+            .network_operations
+            .iter()
+            .filter_map(|(id, operation)| (operation.capability == capability).then_some(*id))
+            .collect::<Vec<_>>();
+        for operation in &operations {
+            if let Some(operation) = self.network_operations.remove(operation) {
+                self.quarantine_network_ticket(operation.ticket);
+            }
+        }
+        operations.len()
+    }
+
+    fn quarantine_network_operations_for_process(&mut self, process: SiteProcessId) -> usize {
+        let operations = self
+            .network_operations
+            .iter()
+            .filter_map(|(id, operation)| (operation.owner == process).then_some(*id))
+            .collect::<Vec<_>>();
+        for operation in &operations {
+            if let Some(operation) = self.network_operations.remove(operation) {
+                self.quarantine_network_ticket(operation.ticket);
+            }
+        }
+        operations.len()
+    }
+
     fn network_ticket(
         &self,
         process: SiteProcessId,
@@ -1660,7 +1729,7 @@ mod tests {
     }
 
     #[test]
-    fn network_operation_capacity_revocation_and_process_loss_fail_closed() {
+    fn network_operation_capacity_includes_revoked_work_until_backend_cleanup() {
         let mut limits = test_limits(1, 8);
         limits.max_network_operations = 1;
         let mut host = HostControlPlane::try_new(limits).unwrap();
@@ -1697,6 +1766,8 @@ mod tests {
 
         host.revoke_capability(first_capability.id()).unwrap();
         assert_eq!(host.active_network_operations(), 0);
+        assert_eq!(host.pending_network_cancellations(), 1);
+        assert_eq!(host.tracked_network_operations(), 1);
         assert_eq!(
             host.poll_network_operation(
                 process,
@@ -1713,6 +1784,26 @@ mod tests {
         let replacement_capability = host
             .grant_capability(process, CapabilityClass::Network)
             .unwrap();
+        assert_eq!(
+            host.start_network_operation(
+                process,
+                replacement_capability.id(),
+                network_request("https://api.example.com/blocked"),
+                &mut network,
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::NetworkOperationLimitExceeded
+        );
+        assert_eq!(network.starts, 1);
+
+        assert_eq!(
+            host.cancel_pending_network_operations(&mut network).unwrap(),
+            1
+        );
+        assert_eq!(network.cancels, 1);
+        assert_eq!(host.pending_network_cancellations(), 0);
+
         let replacement_operation = host
             .start_network_operation(
                 process,
@@ -1721,10 +1812,13 @@ mod tests {
                 &mut network,
             )
             .unwrap();
+        assert_eq!(network.starts, 2);
 
         let loss = host.process_lost(process).unwrap();
         assert_eq!(loss.revoked_network_operations(), 1);
         assert_eq!(host.active_network_operations(), 0);
+        assert_eq!(host.pending_network_cancellations(), 1);
+        assert_eq!(host.tracked_network_operations(), 1);
         assert_eq!(
             host.poll_network_operation(
                 process,
@@ -1737,6 +1831,13 @@ mod tests {
             HostControlErrorKind::UnknownSiteProcess
         );
         assert_eq!(network.polls, 0);
+
+        assert_eq!(
+            host.cancel_pending_network_operations(&mut network).unwrap(),
+            1
+        );
+        assert_eq!(network.cancels, 2);
+        assert_eq!(host.tracked_network_operations(), 0);
     }
 
     #[test]

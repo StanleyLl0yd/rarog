@@ -478,6 +478,8 @@ fn r4_exit_process_loss_revokes_authority_before_fresh_recovery() {
     assert_eq!(host.active_site_processes(), 0);
     assert_eq!(host.active_capabilities(), 0);
     assert_eq!(host.active_network_operations(), 0);
+    assert_eq!(host.pending_network_cancellations(), 1);
+    assert_eq!(host.tracked_network_operations(), 1);
     assert_eq!(host.active_navigation_contexts(), 0);
     assert_eq!(
         host.navigation_context(context.context()).unwrap_err().kind,
@@ -504,6 +506,12 @@ fn r4_exit_process_loss_revokes_authority_before_fresh_recovery() {
         HostControlErrorKind::InvalidNavigationContextCapabilityAuthority
     );
     assert_eq!(network.polls, 0);
+    assert_eq!(
+        host.cancel_pending_network_operations(&mut network).unwrap(),
+        1
+    );
+    assert_eq!(network.cancels, 1);
+    assert_eq!(host.tracked_network_operations(), 0);
 
     let replacement = host.recover_site(site_identity).unwrap().process();
     assert_ne!(replacement, process);
