@@ -1,6 +1,6 @@
 use crate::state::{
-    validate_persistent_origin_identity, StorageError, StorageErrorKind, StorageProcessState,
-    MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES,
+    MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES, StorageError, StorageErrorKind, StorageProcessState,
+    validate_persistent_origin_identity,
 };
 use rarog_url::{Origin, UrlHost};
 use std::cmp::Ordering;
@@ -75,7 +75,10 @@ impl std::error::Error for StorageCheckpointError {}
 
 impl From<StorageError> for StorageCheckpointError {
     fn from(error: StorageError) -> Self {
-        Self::new(StorageCheckpointErrorKind::Storage(error.kind), error.message)
+        Self::new(
+            StorageCheckpointErrorKind::Storage(error.kind),
+            error.message,
+        )
     }
 }
 
@@ -83,12 +86,7 @@ pub fn encode_storage_checkpoint(
     storage: &StorageProcessState,
     limits: StorageCheckpointLimits,
 ) -> Result<Vec<u8>, StorageCheckpointError> {
-    if !limits.is_valid() {
-        return Err(StorageCheckpointError::new(
-            StorageCheckpointErrorKind::InvalidLimits,
-            "storage checkpoint byte limit is too small for the checkpoint header",
-        ));
-    }
+    validate_limits(limits)?;
 
     let mut origins = Vec::new();
     origins
@@ -103,26 +101,31 @@ pub fn encode_storage_checkpoint(
     let origin_count = u32::try_from(origins.len()).map_err(|_| length_overflow())?;
     let mut output = Vec::new();
     append(&mut output, STORAGE_CHECKPOINT_MAGIC, limits)?;
-    append(&mut output, &STORAGE_CHECKPOINT_VERSION.to_be_bytes(), limits)?;
+    append(
+        &mut output,
+        &STORAGE_CHECKPOINT_VERSION.to_be_bytes(),
+        limits,
+    )?;
     append(&mut output, &origin_count.to_be_bytes(), limits)?;
 
     for origin in origins {
         encode_origin(&mut output, origin, limits)?;
-        let storage = storage.origins.get(origin).ok_or_else(|| {
+        let origin_storage = storage.origins.get(origin).ok_or_else(|| {
             StorageCheckpointError::new(
                 StorageCheckpointErrorKind::NonCanonicalOrder,
                 "storage origin disappeared during checkpoint encoding",
             )
         })?;
         let mut keys = Vec::new();
-        keys.try_reserve_exact(storage.entries.len())
+        keys.try_reserve_exact(origin_storage.entries.len())
             .map_err(|_| allocation_error())?;
-        keys.extend(storage.entries.keys());
+        keys.extend(origin_storage.entries.keys());
         keys.sort();
+
         let entry_count = u32::try_from(keys.len()).map_err(|_| length_overflow())?;
         append(&mut output, &entry_count.to_be_bytes(), limits)?;
         for key in keys {
-            let value = storage.entries.get(key).ok_or_else(|| {
+            let value = origin_storage.entries.get(key).ok_or_else(|| {
                 StorageCheckpointError::new(
                     StorageCheckpointErrorKind::NonCanonicalOrder,
                     "storage entry disappeared during checkpoint encoding",
@@ -141,12 +144,7 @@ pub fn restore_storage_checkpoint(
     checkpoint: &[u8],
     limits: StorageCheckpointLimits,
 ) -> Result<(), StorageCheckpointError> {
-    if !limits.is_valid() {
-        return Err(StorageCheckpointError::new(
-            StorageCheckpointErrorKind::InvalidLimits,
-            "storage checkpoint byte limit is too small for the checkpoint header",
-        ));
-    }
+    validate_limits(limits)?;
     if checkpoint.len() > limits.max_checkpoint_bytes {
         return Err(StorageCheckpointError::new(
             StorageCheckpointErrorKind::CheckpointTooLarge,
@@ -210,10 +208,15 @@ pub fn restore_storage_checkpoint(
                 ),
             ));
         }
+
         let mut previous_key: Option<String> = None;
         for _ in 0..entry_count {
-            let key = cursor.read_bounded_string(storage_limits.max_key_bytes, StorageErrorKind::KeyTooLarge)?;
-            if previous_key.as_ref().is_some_and(|previous| previous >= &key) {
+            let key = cursor
+                .read_bounded_string(storage_limits.max_key_bytes, StorageErrorKind::KeyTooLarge)?;
+            if previous_key
+                .as_ref()
+                .is_some_and(|previous| previous >= &key)
+            {
                 return Err(StorageCheckpointError::new(
                     StorageCheckpointErrorKind::NonCanonicalOrder,
                     "storage checkpoint keys are duplicated or not in canonical order",
@@ -241,6 +244,17 @@ pub fn restore_storage_checkpoint(
 
     *storage = candidate;
     Ok(())
+}
+
+fn validate_limits(limits: StorageCheckpointLimits) -> Result<(), StorageCheckpointError> {
+    if limits.is_valid() {
+        Ok(())
+    } else {
+        Err(StorageCheckpointError::new(
+            StorageCheckpointErrorKind::InvalidLimits,
+            "storage checkpoint byte limit is too small for the checkpoint header",
+        ))
+    }
 }
 
 fn encode_origin(
@@ -332,12 +346,14 @@ fn compare_hosts(left: &UrlHost, right: &UrlHost) -> Ordering {
         UrlHost::Ipv4(_) => 1_u8,
         UrlHost::Ipv6(_) => 2_u8,
     };
-    rank(left).cmp(&rank(right)).then_with(|| match (left, right) {
-        (UrlHost::Domain(left), UrlHost::Domain(right)) => left.cmp(right),
-        (UrlHost::Ipv4(left), UrlHost::Ipv4(right)) => left.octets().cmp(&right.octets()),
-        (UrlHost::Ipv6(left), UrlHost::Ipv6(right)) => left.octets().cmp(&right.octets()),
-        _ => Ordering::Equal,
-    })
+    rank(left)
+        .cmp(&rank(right))
+        .then_with(|| match (left, right) {
+            (UrlHost::Domain(left), UrlHost::Domain(right)) => left.cmp(right),
+            (UrlHost::Ipv4(left), UrlHost::Ipv4(right)) => left.octets().cmp(&right.octets()),
+            (UrlHost::Ipv6(left), UrlHost::Ipv6(right)) => left.octets().cmp(&right.octets()),
+            _ => Ordering::Equal,
+        })
 }
 
 fn encode_length_prefixed(
@@ -549,7 +565,12 @@ mod tests {
         let first_process = process();
         let mut topology = ProcessTopology::try_new(1).unwrap();
         topology
-            .assign_site(WebUrl::parse("https://site.example/").unwrap().site_identity().unwrap())
+            .assign_site(
+                WebUrl::parse("https://site.example/")
+                    .unwrap()
+                    .site_identity()
+                    .unwrap(),
+            )
             .unwrap();
         let second_process = topology.ensure_storage_process().unwrap().process();
         assert_ne!(first_process, second_process);
@@ -594,7 +615,9 @@ mod tests {
         for bytes in cases {
             let mut target = StorageProcessState::try_new(process, limits()).unwrap();
             target.put(&exact, "key", b"old").unwrap();
-            assert!(restore_storage_checkpoint(&mut target, &bytes, checkpoint_limits()).is_err());
+            assert!(
+                restore_storage_checkpoint(&mut target, &bytes, checkpoint_limits()).is_err()
+            );
             assert_eq!(target.get(&exact, "key"), Some(b"old".as_slice()));
             assert_eq!(target.origin_count(), 1);
         }
@@ -632,6 +655,7 @@ mod tests {
         source.put(&exact, "b", b"12345678").unwrap();
         let checkpoint = encode_storage_checkpoint(&source, checkpoint_limits()).unwrap();
         let tight = StorageLimits {
+            max_value_bytes: 12,
             max_origin_bytes: 12,
             max_total_bytes: 12,
             ..limits()
@@ -640,7 +664,9 @@ mod tests {
         target.put(&exact, "old", b"value").unwrap();
         let before = target.total_bytes();
 
-        assert!(restore_storage_checkpoint(&mut target, &checkpoint, checkpoint_limits()).is_err());
+        assert!(
+            restore_storage_checkpoint(&mut target, &checkpoint, checkpoint_limits()).is_err()
+        );
         assert_eq!(target.get(&exact, "old"), Some(b"value".as_slice()));
         assert_eq!(target.get(&exact, "a"), None);
         assert_eq!(target.total_bytes(), before);
