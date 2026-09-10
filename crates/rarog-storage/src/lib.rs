@@ -99,10 +99,7 @@ pub struct StorageProcessState {
 }
 
 impl StorageProcessState {
-    pub fn try_new(
-        process: StorageProcessId,
-        limits: StorageLimits,
-    ) -> Result<Self, StorageError> {
+    pub fn try_new(process: StorageProcessId, limits: StorageLimits) -> Result<Self, StorageError> {
         if !limits.is_valid() {
             return Err(StorageError::new(
                 StorageErrorKind::InvalidLimits,
@@ -150,12 +147,7 @@ impl StorageProcessState {
             .map(Vec::as_slice)
     }
 
-    pub fn put(
-        &mut self,
-        origin: &Origin,
-        key: &str,
-        value: &[u8],
-    ) -> Result<(), StorageError> {
+    pub fn put(&mut self, origin: &Origin, key: &str, value: &[u8]) -> Result<(), StorageError> {
         self.validate_persistent_origin(origin)?;
         if key.len() > self.limits.max_key_bytes {
             return Err(StorageError::new(
