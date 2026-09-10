@@ -3,6 +3,7 @@ mod gpu;
 mod input;
 mod ipc;
 mod process;
+mod storage_process;
 
 pub use clipboard::WindowsClipboardService;
 #[cfg(target_os = "windows")]
@@ -16,6 +17,10 @@ pub use ipc::{
 pub use process::{
     DEFAULT_MAX_SITE_PROCESS_ARGS, WindowsSiteProcess, WindowsSiteProcessCommand,
     WindowsSiteProcessError, WindowsSiteProcessErrorKind,
+};
+pub use storage_process::{
+    DEFAULT_MAX_STORAGE_PROCESS_ARGS, WindowsStorageProcess, WindowsStorageProcessCommand,
+    WindowsStorageProcessError, WindowsStorageProcessErrorKind,
 };
 
 use rarog_platform::{

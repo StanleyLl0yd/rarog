@@ -1,3 +1,6 @@
+mod storage_lifecycle;
+pub use storage_lifecycle::StorageLoss;
+
 use rarog_broker::{
     CapabilityBroker, CapabilityClass, CapabilityError, CapabilityErrorKind, CapabilityGrant,
     CapabilityId, DEFAULT_MAX_CAPABILITIES,

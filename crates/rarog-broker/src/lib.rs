@@ -209,6 +209,12 @@ impl CapabilityBroker {
         self.grants.retain(|_, grant| grant.owner != owner);
         before.saturating_sub(self.grants.len())
     }
+
+    pub fn revoke_all_for_class(&mut self, class: CapabilityClass) -> usize {
+        let before = self.grants.len();
+        self.grants.retain(|_, grant| grant.class != class);
+        before.saturating_sub(self.grants.len())
+    }
 }
 
 #[cfg(test)]
@@ -316,6 +322,41 @@ mod tests {
         );
         assert_eq!(
             broker.authorize(second_network.id(), second, CapabilityClass::Network),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn class_loss_revokes_only_matching_authority() {
+        let (first, second) = processes();
+        let mut broker = CapabilityBroker::try_new(6).unwrap();
+        let first_storage = broker.grant(first, CapabilityClass::Storage).unwrap();
+        let second_storage = broker.grant(second, CapabilityClass::Storage).unwrap();
+        let network = broker.grant(first, CapabilityClass::Network).unwrap();
+        let clipboard = broker.grant(second, CapabilityClass::Clipboard).unwrap();
+
+        assert_eq!(broker.revoke_all_for_class(CapabilityClass::Storage), 2);
+        assert_eq!(broker.active_capabilities(), 2);
+        assert_eq!(
+            broker
+                .authorize(first_storage.id(), first, CapabilityClass::Storage)
+                .unwrap_err()
+                .kind,
+            CapabilityErrorKind::UnknownCapability
+        );
+        assert_eq!(
+            broker
+                .authorize(second_storage.id(), second, CapabilityClass::Storage)
+                .unwrap_err()
+                .kind,
+            CapabilityErrorKind::UnknownCapability
+        );
+        assert_eq!(
+            broker.authorize(network.id(), first, CapabilityClass::Network),
+            Ok(())
+        );
+        assert_eq!(
+            broker.authorize(clipboard.id(), second, CapabilityClass::Clipboard),
             Ok(())
         );
     }
