@@ -18,7 +18,7 @@ Tracking issue: #260.
 - [x] Add bounded worker identities, ownership and lifecycle.
 - [x] Add dedicated worker task/microtask execution ownership behind the Rarog Script API.
 - [x] Add Worker message delivery with bounded structured payload ownership.
-- [ ] Add Service Worker registration/scope/lifecycle foundation.
+- [x] Add Service Worker registration/scope/lifecycle foundation.
 - [ ] Keep Service Worker fetch interception behind Rarog Fetch/Host security policy.
 
 ## C — WebSocket
