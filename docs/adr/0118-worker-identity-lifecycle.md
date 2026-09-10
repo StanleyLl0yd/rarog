@@ -31,7 +31,7 @@ Only `Created -> Running` is an ordinary start transition. `begin_close` moves t
 
 Root-owner destruction is a stronger ownership teardown boundary. `retire_root_owner` removes every worker rooted directly in that owner and all descendants regardless of the workers' current live state. This models destruction of the external owner itself rather than an ordinary worker lifecycle transition; unrelated root owners remain intact.
 
-Ownership traversal is iterative and bounded by the configured live-worker limit. `BTreeMap`/`BTreeSet` storage gives deterministic traversal order without making order itself Web-visible semantics.
+Ownership traversal is iterative and bounded by the configured live-worker limit. `BTreeMap`/`BTreeSet` storage gives deterministic traversal order without making order itself Web-visible semantics. The corresponding R5 architecture overview records this boundary separately from process topology and the later execution/message integrations.
 
 ## Validation
 
