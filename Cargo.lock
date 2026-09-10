@@ -2306,6 +2306,7 @@ dependencies = [
  "rarog-process",
  "rarog-storage",
  "rarog-url",
+ "rarog-workers",
 ]
 
 [[package]]

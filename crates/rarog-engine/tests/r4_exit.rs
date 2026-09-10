@@ -34,6 +34,8 @@ fn limits(max_site_processes: usize, max_navigation_contexts: usize) -> HostLimi
         max_capabilities: 32,
         max_network_operations: 16,
         max_navigation_contexts,
+        max_navigation_context_url_bytes: 512,
+        max_service_worker_fetch_dispatches: 4,
     }
 }
 

@@ -453,6 +453,16 @@ impl FetchRequest {
             max_response_body_bytes: self.limits.max_response_body_bytes,
         }
     }
+
+    pub fn into_network_request(self) -> NetworkRequest {
+        NetworkRequest {
+            url: self.url,
+            method: self.method,
+            headers: self.headers,
+            body: self.body,
+            max_response_body_bytes: self.limits.max_response_body_bytes,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

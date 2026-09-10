@@ -14,6 +14,7 @@ rarog-platform = { path = "../rarog-platform" }
 rarog-process = { path = "../rarog-process" }
 rarog-storage = { path = "../rarog-storage" }
 rarog-url = { path = "../rarog-url" }
+rarog-workers = { path = "../rarog-workers" }
 
 [lints]
 workspace = true
