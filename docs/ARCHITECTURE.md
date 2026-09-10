@@ -140,6 +140,14 @@ Storage checkpoints use a deterministic versioned bounded wire contract with can
 
 These foundations do not claim Web Storage or IndexedDB API completeness, a filesystem-backed persistence backend, cross-process database locking semantics, or an authenticated Windows Storage request transport. Site code receives no filesystem authority from this layer.
 
+### R5 Worker identity and lifecycle foundation
+
+`rarog-workers` owns a dependency-free portable worker identity, ownership and live-lifecycle boundary. Worker identities are distinct from Host/Site/Storage process IDs, OS PIDs/threads, scheduler work IDs and script-engine objects. Each `WorkerRegistry` receives a process-local non-zero scope and allocates monotonic non-zero worker serials within it, so ordinary identities do not alias across independent registries and retired identities are not reused. `WorkerId` remains only a reference; it grants no Host or platform authority. See ADR-0118.
+
+A registry is bounded independently by total live workers, direct children per owner and ownership depth. A root owner is an external identity supplied by the integrating layer; nested workers are owned by an exact parent worker. Only a `Running` parent may create children. Live workers move through explicit `Created`, `Running` and `Closing` states; closing a worker cascades to its descendants, while retirement removes the bounded subtree and releases parent child capacity. Destruction of an external root owner force-retires only the trees rooted in that owner. Ownership traversal is iterative rather than recursively consuming the native stack.
+
+This foundation deliberately does not yet attach workers to navigation contexts, scheduler instances, script realms, message queues, Service Worker registrations or Fetch interception, and it makes no claim about Worker API completeness or OS thread/process isolation. Those are later R5 integration slices built on this identity/lifetime boundary.
+
 ## Rendering model
 
 ```text
