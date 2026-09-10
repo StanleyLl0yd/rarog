@@ -9,6 +9,11 @@ use rarog_script::{
 };
 
 use crate::identity::{WorkerError, WorkerId, WorkerLifecycleState, WorkerRegistry};
+use crate::message::{
+    WorkerMessage, WorkerMessageDiscard, WorkerMessageError, WorkerMessageId, WorkerMessageMailbox,
+};
+
+const WORKER_MESSAGE_TASK_SOURCE: TaskSource = TaskSource::Other(0x574d_5347);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkerExecutionError {
@@ -19,6 +24,8 @@ pub enum WorkerExecutionError {
     },
     Scheduler(SchedulerError),
     Script(ScriptError),
+    Message(WorkerMessageError),
+    InvalidMessageDelivery,
 }
 
 impl fmt::Display for WorkerExecutionError {
@@ -30,6 +37,9 @@ impl fmt::Display for WorkerExecutionError {
             }
             Self::Scheduler(error) => error.fmt(formatter),
             Self::Script(error) => error.fmt(formatter),
+            Self::Message(error) => error.fmt(formatter),
+            Self::InvalidMessageDelivery => formatter
+                .write_str("worker message delivery token is not active for this execution"),
         }
     }
 }
@@ -41,6 +51,8 @@ impl std::error::Error for WorkerExecutionError {
             Self::WorkerNotRunning { .. } => None,
             Self::Scheduler(error) => Some(error),
             Self::Script(error) => Some(error),
+            Self::Message(error) => Some(error),
+            Self::InvalidMessageDelivery => None,
         }
     }
 }
@@ -63,6 +75,12 @@ impl From<ScriptError> for WorkerExecutionError {
     }
 }
 
+impl From<WorkerMessageError> for WorkerExecutionError {
+    fn from(error: WorkerMessageError) -> Self {
+        Self::Message(error)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OwnedScriptSource {
     text: String,
@@ -81,7 +99,34 @@ impl OwnedScriptSource {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
+enum WorkerTask {
+    Script(OwnedScriptSource),
+    Message(WorkerMessageId),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct WorkerMessageDelivery {
+    worker: WorkerId,
+    task: TaskId,
+    message: WorkerMessageId,
+}
+
+impl WorkerMessageDelivery {
+    pub fn worker(&self) -> WorkerId {
+        self.worker
+    }
+
+    pub fn task(&self) -> TaskId {
+        self.task
+    }
+
+    pub fn message(&self) -> WorkerMessageId {
+        self.message
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum WorkerExecutionStep {
     Task {
         id: TaskId,
@@ -92,6 +137,9 @@ pub enum WorkerExecutionStep {
         id: MicrotaskId,
         outcome: EvaluationOutcome,
     },
+    Message {
+        delivery: WorkerMessageDelivery,
+    },
     MicrotaskCheckpointComplete,
 }
 
@@ -101,7 +149,7 @@ pub struct WorkerExecution<'runtime, R: ScriptRuntime + ?Sized> {
     realm: RealmId,
     realm_live: bool,
     max_source_bytes: usize,
-    scheduler: EventLoopScheduler<OwnedScriptSource, OwnedScriptSource>,
+    scheduler: EventLoopScheduler<WorkerTask, OwnedScriptSource>,
 }
 
 impl<'runtime, R: ScriptRuntime + ?Sized> WorkerExecution<'runtime, R> {
@@ -149,7 +197,9 @@ impl<'runtime, R: ScriptRuntime + ?Sized> WorkerExecution<'runtime, R> {
     ) -> Result<TaskId, WorkerExecutionError> {
         ensure_running(registry, self.worker)?;
         let payload = OwnedScriptSource::try_new(script, self.max_source_bytes)?;
-        Ok(self.scheduler.queue_task(source, payload)?)
+        Ok(self
+            .scheduler
+            .queue_task(source, WorkerTask::Script(payload))?)
     }
 
     pub fn queue_microtask<O: Eq>(
@@ -180,17 +230,26 @@ impl<'runtime, R: ScriptRuntime + ?Sized> WorkerExecution<'runtime, R> {
             return Ok(None);
         };
         match step {
-            SchedulerStep::Task(task) => {
-                let work = WorkId::Task(task.id);
-                let evaluation = self.runtime.evaluate(self.realm, task.payload.source());
-                self.scheduler.complete(work)?;
-                let outcome = evaluation?;
-                Ok(Some(WorkerExecutionStep::Task {
-                    id: task.id,
-                    source: task.source,
-                    outcome,
-                }))
-            }
+            SchedulerStep::Task(task) => match task.payload {
+                WorkerTask::Script(source) => {
+                    let work = WorkId::Task(task.id);
+                    let evaluation = self.runtime.evaluate(self.realm, source.source());
+                    self.scheduler.complete(work)?;
+                    let outcome = evaluation?;
+                    Ok(Some(WorkerExecutionStep::Task {
+                        id: task.id,
+                        source: task.source,
+                        outcome,
+                    }))
+                }
+                WorkerTask::Message(message) => Ok(Some(WorkerExecutionStep::Message {
+                    delivery: WorkerMessageDelivery {
+                        worker: self.worker,
+                        task: task.id,
+                        message,
+                    },
+                })),
+            },
             SchedulerStep::Microtask(microtask) => {
                 let work = WorkId::Microtask(microtask.id);
                 let evaluation = self
@@ -207,6 +266,70 @@ impl<'runtime, R: ScriptRuntime + ?Sized> WorkerExecution<'runtime, R> {
                 Ok(Some(WorkerExecutionStep::MicrotaskCheckpointComplete))
             }
         }
+    }
+
+    pub fn schedule_next_message<O: Eq>(
+        &mut self,
+        registry: &WorkerRegistry<O>,
+        mailbox: &mut WorkerMessageMailbox,
+    ) -> Result<Option<TaskId>, WorkerExecutionError> {
+        ensure_running(registry, self.worker)?;
+        let Some(message) = mailbox.next_for_worker_delivery(registry, self.worker)? else {
+            return Ok(None);
+        };
+        let task = self
+            .scheduler
+            .queue_task(WORKER_MESSAGE_TASK_SOURCE, WorkerTask::Message(message))?;
+        if let Err(error) = mailbox.mark_scheduled(self.worker, message, task) {
+            if !self.scheduler.cancel_task(task) {
+                return Err(WorkerExecutionError::InvalidMessageDelivery);
+            }
+            return Err(error.into());
+        }
+        Ok(Some(task))
+    }
+
+    pub fn message_for_delivery<'mailbox, O: Eq>(
+        &self,
+        registry: &WorkerRegistry<O>,
+        mailbox: &'mailbox WorkerMessageMailbox,
+        delivery: &WorkerMessageDelivery,
+    ) -> Result<&'mailbox WorkerMessage, WorkerExecutionError> {
+        ensure_running(registry, self.worker)?;
+        self.validate_message_delivery(delivery)?;
+        Ok(mailbox.message_for_delivery(registry, self.worker, delivery.message, delivery.task)?)
+    }
+
+    pub fn complete_message(
+        &mut self,
+        mailbox: &mut WorkerMessageMailbox,
+        delivery: WorkerMessageDelivery,
+    ) -> Result<(), WorkerExecutionError> {
+        self.validate_message_delivery(&delivery)?;
+        mailbox.complete_delivery(self.worker, delivery.message, delivery.task)?;
+        self.scheduler.complete(WorkId::Task(delivery.task))?;
+        Ok(())
+    }
+
+    pub fn shutdown_with_mailbox(
+        mut self,
+        mailbox: &mut WorkerMessageMailbox,
+    ) -> Result<WorkerMessageDiscard, WorkerExecutionError> {
+        let discarded = mailbox.discard_for_worker(self.worker);
+        self.destroy_realm()?;
+        Ok(discarded)
+    }
+
+    fn validate_message_delivery(
+        &self,
+        delivery: &WorkerMessageDelivery,
+    ) -> Result<(), WorkerExecutionError> {
+        if delivery.worker != self.worker
+            || self.scheduler.active_work() != Some(WorkId::Task(delivery.task))
+        {
+            return Err(WorkerExecutionError::InvalidMessageDelivery);
+        }
+        Ok(())
     }
 
     pub fn shutdown(mut self) -> Result<(), WorkerExecutionError> {
@@ -251,6 +374,7 @@ mod tests {
 
     use super::*;
     use crate::identity::{WorkerErrorKind, WorkerLimits};
+    use crate::message::{WorkerMessageLimits, WorkerMessageValue};
 
     struct FixtureRealm {
         limits: ScriptRealmLimits,
@@ -739,5 +863,268 @@ mod tests {
         assert_eq!(error.kind, WorkerErrorKind::UnknownWorker);
         drop(execution);
         assert!(runtime.evaluations.is_empty());
+    }
+
+    #[test]
+    fn worker_message_delivery_runs_as_scheduler_task_and_retains_payload_until_completion() {
+        let (registry, worker) = running_worker();
+        let mut runtime = FixtureRuntime::new();
+        let mut mailbox = WorkerMessageMailbox::try_new(WorkerMessageLimits::default()).unwrap();
+        mailbox
+            .send_from_root(
+                &registry,
+                &1,
+                worker,
+                &WorkerMessageValue::String(String::from("payload")),
+            )
+            .unwrap();
+        let charged = mailbox.queued_bytes();
+        let mut execution = WorkerExecution::new(
+            worker,
+            &registry,
+            &mut runtime,
+            realm_limits(64),
+            scheduler_limits(4, 4),
+        )
+        .unwrap();
+
+        execution
+            .schedule_next_message(&registry, &mut mailbox)
+            .unwrap()
+            .unwrap();
+        assert_eq!(mailbox.queued_bytes(), charged);
+        let Some(WorkerExecutionStep::Message { delivery }) =
+            execution.next_step(&registry).unwrap()
+        else {
+            panic!("expected worker message task");
+        };
+        {
+            let message = execution
+                .message_for_delivery(&registry, &mailbox, &delivery)
+                .unwrap();
+            assert_eq!(
+                message.payload().value(),
+                &WorkerMessageValue::String(String::from("payload"))
+            );
+        }
+        execution
+            .queue_microtask(&registry, "after message")
+            .unwrap();
+        assert_eq!(mailbox.queued_bytes(), charged);
+        execution.complete_message(&mut mailbox, delivery).unwrap();
+        assert_eq!(mailbox.queued_messages(), 0);
+        assert_eq!(mailbox.queued_bytes(), 0);
+        assert!(matches!(
+            execution.next_step(&registry).unwrap(),
+            Some(WorkerExecutionStep::Microtask { .. })
+        ));
+        assert!(matches!(
+            execution.next_step(&registry).unwrap(),
+            Some(WorkerExecutionStep::MicrotaskCheckpointComplete)
+        ));
+    }
+
+    #[test]
+    fn message_scheduler_backpressure_leaves_mailbox_payload_pending() {
+        let (registry, worker) = running_worker();
+        let mut runtime = FixtureRuntime::new();
+        let mut mailbox = WorkerMessageMailbox::with_default_limits().unwrap();
+        mailbox
+            .send_from_root(&registry, &1, worker, &WorkerMessageValue::Null)
+            .unwrap();
+        let mut execution = WorkerExecution::new(
+            worker,
+            &registry,
+            &mut runtime,
+            realm_limits(64),
+            scheduler_limits(1, 4),
+        )
+        .unwrap();
+        execution
+            .queue_task(&registry, TaskSource::Other(7), "script")
+            .unwrap();
+
+        assert_eq!(
+            execution
+                .schedule_next_message(&registry, &mut mailbox)
+                .unwrap_err(),
+            WorkerExecutionError::Scheduler(SchedulerError::TaskQueueFull)
+        );
+        assert_eq!(mailbox.queued_messages(), 1);
+        assert!(matches!(
+            execution.next_step(&registry).unwrap(),
+            Some(WorkerExecutionStep::Task { .. })
+        ));
+        assert!(matches!(
+            execution.next_step(&registry).unwrap(),
+            Some(WorkerExecutionStep::MicrotaskCheckpointComplete)
+        ));
+        assert!(
+            execution
+                .schedule_next_message(&registry, &mut mailbox)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn only_the_oldest_worker_message_can_be_scheduled_until_it_completes() {
+        let (registry, worker) = running_worker();
+        let mut runtime = FixtureRuntime::new();
+        let mut mailbox = WorkerMessageMailbox::with_default_limits().unwrap();
+        let first = mailbox
+            .send_from_root(
+                &registry,
+                &1,
+                worker,
+                &WorkerMessageValue::String(String::from("first")),
+            )
+            .unwrap();
+        let second = mailbox
+            .send_from_root(
+                &registry,
+                &1,
+                worker,
+                &WorkerMessageValue::String(String::from("second")),
+            )
+            .unwrap();
+        let mut execution = WorkerExecution::new(
+            worker,
+            &registry,
+            &mut runtime,
+            realm_limits(64),
+            scheduler_limits(4, 4),
+        )
+        .unwrap();
+
+        execution
+            .schedule_next_message(&registry, &mut mailbox)
+            .unwrap()
+            .unwrap();
+        assert!(
+            execution
+                .schedule_next_message(&registry, &mut mailbox)
+                .unwrap()
+                .is_none()
+        );
+        let Some(WorkerExecutionStep::Message { delivery }) =
+            execution.next_step(&registry).unwrap()
+        else {
+            panic!("expected first message");
+        };
+        assert_eq!(delivery.message(), first);
+        execution.complete_message(&mut mailbox, delivery).unwrap();
+        assert!(
+            execution
+                .schedule_next_message(&registry, &mut mailbox)
+                .unwrap()
+                .is_some()
+        );
+        let Some(WorkerExecutionStep::MicrotaskCheckpointComplete) =
+            execution.next_step(&registry).unwrap()
+        else {
+            panic!("expected first message checkpoint");
+        };
+        let Some(WorkerExecutionStep::Message { delivery }) =
+            execution.next_step(&registry).unwrap()
+        else {
+            panic!("expected second message");
+        };
+        assert_eq!(delivery.message(), second);
+    }
+
+    #[test]
+    fn lifecycle_revocation_blocks_selected_message_payload_and_cleanup_recovers_capacity() {
+        let mut registry = WorkerRegistry::try_new(WorkerLimits::default()).unwrap();
+        let parent = registry.create_root(1).unwrap();
+        registry.mark_running(parent).unwrap();
+        let child = registry.create_child(parent).unwrap();
+        registry.mark_running(child).unwrap();
+        let mut runtime = FixtureRuntime::new();
+        let mut mailbox = WorkerMessageMailbox::with_default_limits().unwrap();
+        mailbox
+            .send_between_workers(&registry, child, parent, &WorkerMessageValue::Null)
+            .unwrap();
+        let mut execution = WorkerExecution::new(
+            parent,
+            &registry,
+            &mut runtime,
+            realm_limits(64),
+            scheduler_limits(4, 4),
+        )
+        .unwrap();
+        execution
+            .schedule_next_message(&registry, &mut mailbox)
+            .unwrap()
+            .unwrap();
+        let Some(WorkerExecutionStep::Message { delivery }) =
+            execution.next_step(&registry).unwrap()
+        else {
+            panic!("expected selected message");
+        };
+        registry.begin_close(child).unwrap();
+        let error = execution
+            .message_for_delivery(&registry, &mailbox, &delivery)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            WorkerExecutionError::Message(WorkerMessageError::WorkerNotRunning {
+                worker: child,
+                state: WorkerLifecycleState::Closing,
+            })
+        );
+        execution.complete_message(&mut mailbox, delivery).unwrap();
+        assert_eq!(mailbox.queued_messages(), 0);
+        assert_eq!(mailbox.queued_bytes(), 0);
+    }
+
+    #[test]
+    fn dropped_execution_leaves_scheduled_payload_fail_closed_until_worker_cleanup() {
+        let (registry, worker) = running_worker();
+        let mut mailbox = WorkerMessageMailbox::with_default_limits().unwrap();
+        mailbox
+            .send_from_root(&registry, &1, worker, &WorkerMessageValue::Null)
+            .unwrap();
+        let mut runtime = FixtureRuntime::new();
+        {
+            let mut execution = WorkerExecution::new(
+                worker,
+                &registry,
+                &mut runtime,
+                realm_limits(64),
+                scheduler_limits(4, 4),
+            )
+            .unwrap();
+            execution
+                .schedule_next_message(&registry, &mut mailbox)
+                .unwrap()
+                .unwrap();
+        }
+        let mut replacement = WorkerExecution::new(
+            worker,
+            &registry,
+            &mut runtime,
+            realm_limits(64),
+            scheduler_limits(4, 4),
+        )
+        .unwrap();
+        assert!(
+            replacement
+                .schedule_next_message(&registry, &mut mailbox)
+                .unwrap()
+                .is_none()
+        );
+        let discarded = mailbox.discard_for_worker(worker);
+        assert_eq!(discarded.messages(), 1);
+        assert_eq!(mailbox.queued_bytes(), 0);
+        mailbox
+            .send_from_root(&registry, &1, worker, &WorkerMessageValue::Null)
+            .unwrap();
+        assert!(
+            replacement
+                .schedule_next_message(&registry, &mut mailbox)
+                .unwrap()
+                .is_some()
+        );
     }
 }
