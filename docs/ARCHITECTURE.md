@@ -124,6 +124,14 @@ Privileges used by a navigation context are represented by `NavigationContextCap
 
 This remains a portable authority model. The Windows launch/loss adapter owns concrete child-process lifecycle and feeds observed loss back into Host revocation/retirement, while the Windows IPC adapter binds accepted local endpoints to live Host-produced `SiteLease` values separately from decoded wire fields. Neither child PID nor envelope contents select Rarog process authority. See ADR-0105, ADR-0108 and ADR-0110.
 
+### R5 Storage-process and origin-storage foundation
+
+R5 extends the process identity space with one Host-owned `StorageProcessId`. It is distinct from Site-process identity, is not an OS PID/handle, does not consume the Site-process budget and is never reused after retirement. The initial portable topology models ownership/lifetime only; concrete Windows Storage-process launch/containment is a later R5 slice.
+
+`rarog-storage` owns the initial storage-process state model. Persistent Web storage is keyed by the exact Rarog `Origin`, not by schemeful site, and opaque origins are rejected from persistent storage by default. Key/value sizes, origin count, entries per origin, per-origin bytes and global bytes are all explicitly bounded. Failed quota checks leave existing state unchanged.
+
+This is a storage ownership/quota foundation, not a claim of Web Storage or IndexedDB API completeness, durability, transactions or filesystem integration. Site code does not receive filesystem authority from this layer. Exact navigation-context origin authority and brokered Host routing are added separately before storage is exposed to Web content. See ADR-0113.
+
 ## Rendering model
 
 ```text

@@ -97,6 +97,8 @@ See `R4-BACKLOG.md` and `R4-EXIT.md` for the completed bounded Sky scope and exp
 
 ## R5 — Web
 
+Status: **in progress**. Tracking issue: #260.
+
 - storage process;
 - workers/service workers;
 - WebSocket;
@@ -104,6 +106,8 @@ See `R4-BACKLOG.md` and `R4-EXIT.md` for the completed bounded Sky scope and exp
 - canvas/WebGL;
 - accessibility foundation;
 - Windows accessibility bridge first.
+
+See `R5-BACKLOG.md` and `R5-EXIT.md` for the active bounded Web scope and explicit R6 stop boundary.
 
 ## R6 — Compat
 

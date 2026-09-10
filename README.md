@@ -125,7 +125,8 @@ The first reference browser, **Zorya Browser**, is also planned for Windows firs
 - `rarog-text-opentype` — production OpenType shaping adapter behind Rarog-owned contracts
 - `rarog-webidl` — Rarog-owned normalized WebIDL IR, validation and parser frontend boundary
 - `rarog-url` — Rarog-owned URL, origin and site identity primitives
-- `rarog-process` — Rarog-owned Host/Site process identities and bounded site-assignment topology
+- `rarog-process` — Rarog-owned Host/Site/Storage process identities and bounded site-assignment topology
+- `rarog-storage` — bounded exact-origin storage-process state and quota ownership foundation
 - `rarog-ipc` — versioned Host/Site IPC envelopes, fixed bounded wire codec, correlation, backpressure and disconnect semantics
 - `rarog-broker` — Host-owned bounded capability grants, authorization and process-scoped revocation
 - `rarog-host` — portable Host control plane for document/Site assignment, bounded navigation contexts, channel binding, context-scoped privileged routing, authority revocation and recovery
@@ -171,6 +172,6 @@ Rarog is dual-licensed under **Apache-2.0 OR MIT**, at your option. See `LICENSE
 
 ## Project status
 
-**R0 — Ember, R1 — Flame, R2 — Flight, R3 — Wings and R4 — Sky are complete.** The bounded R4 authority/lifecycle, IPC and Windows sandbox/process-containment foundations are protected by the dedicated exit gate. Rarog remains experimental and does not claim browser readiness, wholesale engine-workload migration into Site children, AppContainer isolation or Chromium-equivalent sandbox maturity. R5 work has not started.
+**R0 — Ember, R1 — Flame, R2 — Flight, R3 — Wings and R4 — Sky are complete. R5 — Web has started.** The first R5 slice adds a distinct Storage-process identity plus bounded exact-origin storage state; it does not yet claim Web Storage/IndexedDB completeness or a concrete Windows Storage-process launch. The completed R4 authority/lifecycle, IPC and Windows sandbox/process-containment foundations remain protected by their dedicated exit gate. Rarog remains experimental and does not claim browser readiness, AppContainer isolation or Chromium-equivalent sandbox maturity.
 
 Created by **Stanley Lloyd**. Contributions are welcome; see `CONTRIBUTING.md`.

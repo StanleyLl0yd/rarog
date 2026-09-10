@@ -12,6 +12,7 @@ members = [
   "crates/rarog-webidl",
   "crates/rarog-url",
   "crates/rarog-process",
+  "crates/rarog-storage",
   "crates/rarog-ipc",
   "crates/rarog-broker",
   "crates/rarog-host",
