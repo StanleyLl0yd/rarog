@@ -172,6 +172,6 @@ Rarog is dual-licensed under **Apache-2.0 OR MIT**, at your option. See `LICENSE
 
 ## Project status
 
-**R0 — Ember, R1 — Flame, R2 — Flight, R3 — Wings and R4 — Sky are complete. R5 — Web is in progress.** The first R5 slice adds a distinct Storage-process identity plus bounded exact-origin storage state; it does not yet claim Web Storage/IndexedDB completeness or a concrete Windows Storage-process launch. The completed R4 authority/lifecycle, IPC and Windows sandbox/process-containment foundations remain protected by their dedicated exit gate. Rarog remains experimental and does not claim browser readiness, AppContainer isolation or Chromium-equivalent sandbox maturity.
+**R0 — Ember, R1 — Flame, R2 — Flight, R3 — Wings and R4 — Sky are complete. R5 — Web has started.** The first R5 slice adds a distinct Storage-process identity plus bounded exact-origin storage state; it does not yet claim Web Storage/IndexedDB completeness or a concrete Windows Storage-process launch. The completed R4 authority/lifecycle, IPC and Windows sandbox/process-containment foundations remain protected by their dedicated exit gate. Rarog remains experimental and does not claim browser readiness, AppContainer isolation or Chromium-equivalent sandbox maturity.
 
 Created by **Stanley Lloyd**. Contributions are welcome; see `CONTRIBUTING.md`.
