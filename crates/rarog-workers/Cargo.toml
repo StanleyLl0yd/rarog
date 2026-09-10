@@ -6,5 +6,9 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+rarog-scheduler = { path = "../rarog-scheduler" }
+rarog-script = { path = "../rarog-script" }
+
 [lints]
 workspace = true

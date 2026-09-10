@@ -146,7 +146,17 @@ These foundations do not claim Web Storage or IndexedDB API completeness, a file
 
 A registry is bounded independently by total live workers, direct children per owner and ownership depth. A root owner is an external identity supplied by the integrating layer; nested workers are owned by an exact parent worker. Only a `Running` parent may create children. Live workers move through explicit `Created`, `Running` and `Closing` states; closing a worker cascades to its descendants, while retirement removes the bounded subtree and releases parent child capacity. Destruction of an external root owner force-retires only the trees rooted in that owner. Ownership traversal is iterative rather than recursively consuming the native stack.
 
-This foundation deliberately does not yet attach workers to navigation contexts, scheduler instances, script realms, message queues, Service Worker registrations or Fetch interception, and it makes no claim about Worker API completeness or OS thread/process isolation. Those are later R5 integration slices built on this identity/lifetime boundary.
+The identity/lifecycle sub-layer deliberately remains scheduler- and script-independent and does not attach workers to navigation contexts, message queues, Service Worker registrations, Fetch interception or OS thread/process objects. Execution is composed above it through the boundary below; the identity itself still grants no execution or Host authority, and this remains a scoped R5 foundation rather than a claim of Worker API completeness.
+
+### R5 Dedicated worker execution ownership
+
+`WorkerExecution` composes the existing `rarog-scheduler::EventLoopScheduler` and `rarog-script::ScriptRuntime` above the dependency-free identity/lifecycle layer. One execution owner is correlated with one exact `WorkerId`, exclusively borrows one Script runtime for its lifetime and owns one exact Rarog `RealmId` until explicit shutdown or drop. Construction and every queue, checkpoint and execution-driving operation receives the exact `WorkerRegistry` and requires that the worker is still present and `Running`; foreign, retired, `Created` or `Closing` identities are rejected before executable work is touched. The per-operation registry borrow lets lifecycle transitions revoke execution immediately without turning `WorkerId` into a capability.
+
+Worker task and microtask ordering is delegated to the existing scheduler rather than duplicated. Queue count/backpressure remains governed by `SchedulerLimits`. Script source is checked against the worker realm's byte limit before ownership is copied into scheduler storage, so attacker-influenced source cannot bypass the configured per-item bound merely by enqueueing it.
+
+Evaluation occurs only through the Rarog `ScriptRuntime` API. JavaScript throws remain normal `EvaluationOutcome` completions; Script/backend errors complete the exact scheduler work item before propagation so stale active work cannot wedge the worker loop. Explicit shutdown destroys the exact realm and reports teardown errors, while drop performs best-effort realm destruction and discards pending owned work without evaluating it.
+
+This execution boundary does not implement Worker message delivery/structured clone, Service Worker registration/scope/lifecycle, Fetch interception, Host/navigation-context wiring, SharedWorker semantics or OS thread/process isolation. Those remain separate R5 slices. See ADR-0119.
 
 ## Rendering model
 

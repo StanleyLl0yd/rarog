@@ -2462,6 +2462,10 @@ dependencies = [
 [[package]]
 name = "rarog-workers"
 version = "0.1.0"
+dependencies = [
+ "rarog-scheduler",
+ "rarog-script",
+]
 
 [[package]]
 name = "raw-window-handle"
