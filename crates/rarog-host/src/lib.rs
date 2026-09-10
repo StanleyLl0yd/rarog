@@ -9,9 +9,10 @@ use rarog_ipc::{EndpointRole, IpcChannel, IpcEnvelope, IpcError, IpcErrorKind, I
 use rarog_platform::{ClipboardError, ClipboardText, PlatformClipboardService};
 use rarog_process::{
     DEFAULT_MAX_SITE_PROCESSES, ProcessTopology, ProcessTopologyError, ProcessTopologyErrorKind,
-    SiteAssignmentKind, SiteProcessId,
+    SiteAssignmentKind, SiteProcessId, StorageProcessId,
 };
-use rarog_url::{SiteIdentity, UrlError, UrlErrorKind};
+use rarog_storage::{StorageError, StorageErrorKind, StorageProcessState};
+use rarog_url::{Origin, SiteIdentity, UrlError, UrlErrorKind};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::num::NonZeroU64;
@@ -62,6 +63,10 @@ pub enum HostControlErrorKind {
     Url(UrlErrorKind),
     Fetch(FetchErrorKind),
     Clipboard(ClipboardError),
+    Storage(StorageErrorKind),
+    StorageProcessMismatch,
+    PersistentStorageOriginUnavailable,
+    InvalidNavigationContextStorageAuthority,
     InvalidDocumentBinding,
     InvalidNavigationContextId,
     NavigationContextLimitExceeded,
@@ -138,6 +143,12 @@ impl From<FetchError> for HostControlError {
 impl From<ClipboardError> for HostControlError {
     fn from(error: ClipboardError) -> Self {
         Self::new(HostControlErrorKind::Clipboard(error), error.to_string())
+    }
+}
+
+impl From<StorageError> for HostControlError {
+    fn from(error: StorageError) -> Self {
+        Self::new(HostControlErrorKind::Storage(error.kind), error.message)
     }
 }
 
@@ -268,6 +279,7 @@ impl fmt::Display for NavigationContextId {
 pub struct NavigationContextSnapshot {
     context: NavigationContextId,
     site: SiteIdentity,
+    origin: Option<Origin>,
 }
 
 impl NavigationContextSnapshot {
@@ -278,6 +290,10 @@ impl NavigationContextSnapshot {
     pub fn site(&self) -> &SiteIdentity {
         &self.site
     }
+
+    pub fn origin(&self) -> Option<&Origin> {
+        self.origin.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -285,6 +301,8 @@ pub struct NavigationContextTransition {
     context: NavigationContextId,
     previous_site: SiteIdentity,
     current_site: SiteIdentity,
+    previous_origin: Option<Origin>,
+    current_origin: Option<Origin>,
     kind: NavigationTransitionKind,
     source_retired: bool,
 }
@@ -300,6 +318,14 @@ impl NavigationContextTransition {
 
     pub fn current_site(&self) -> &SiteIdentity {
         &self.current_site
+    }
+
+    pub fn previous_origin(&self) -> Option<&Origin> {
+        self.previous_origin.as_ref()
+    }
+
+    pub fn current_origin(&self) -> Option<&Origin> {
+        self.current_origin.as_ref()
     }
 
     pub fn kind(&self) -> NavigationTransitionKind {
@@ -385,6 +411,7 @@ impl NavigationContextIdAllocator {
 #[derive(Clone, Debug)]
 struct NavigationContext {
     binding: DocumentSiteBinding,
+    origin: Option<Origin>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -452,6 +479,7 @@ pub struct HostControlPlane {
     navigation_context_allocator: NavigationContextIdAllocator,
     navigation_contexts: HashMap<NavigationContextId, NavigationContext>,
     navigation_context_capabilities: HashMap<CapabilityId, NavigationContextId>,
+    navigation_context_storage_origins: HashMap<CapabilityId, Origin>,
     network_operation_allocator: NetworkOperationIdAllocator,
     network_operations: HashMap<NetworkOperationId, NetworkOperation>,
     pending_network_cancellations: VecDeque<NetworkTicket>,
@@ -476,6 +504,7 @@ impl HostControlPlane {
             navigation_context_allocator: NavigationContextIdAllocator::new(),
             navigation_contexts: HashMap::new(),
             navigation_context_capabilities: HashMap::new(),
+            navigation_context_storage_origins: HashMap::new(),
             network_operation_allocator: NetworkOperationIdAllocator::new(),
             network_operations: HashMap::new(),
             pending_network_cancellations: VecDeque::new(),
@@ -515,6 +544,14 @@ impl HostControlPlane {
 
     pub fn active_navigation_contexts(&self) -> usize {
         self.navigation_contexts.len()
+    }
+
+    pub fn storage_process(&self) -> Option<StorageProcessId> {
+        self.topology.storage_process()
+    }
+
+    pub fn ensure_storage_process(&mut self) -> Result<StorageProcessId, HostControlError> {
+        Ok(self.topology.ensure_storage_process()?.process())
     }
 
     pub fn ensure_site(&mut self, site: SiteIdentity) -> Result<SiteLease, HostControlError> {
@@ -651,6 +688,7 @@ impl HostControlPlane {
     ) -> Result<CapabilityGrant, HostControlError> {
         let grant = self.broker.revoke(id)?;
         self.navigation_context_capabilities.remove(&id);
+        self.navigation_context_storage_origins.remove(&id);
         self.quarantine_network_operations_for_capability(id);
         Ok(grant)
     }
@@ -684,8 +722,15 @@ impl HostControlPlane {
         for context in &invalidated_contexts {
             self.navigation_contexts.remove(context);
         }
-        self.navigation_context_capabilities
-            .retain(|_, context| !invalidated_contexts.contains(context));
+        let invalidated_capabilities = self
+            .navigation_context_capabilities
+            .iter()
+            .filter_map(|(id, context)| invalidated_contexts.contains(context).then_some(*id))
+            .collect::<Vec<_>>();
+        for id in &invalidated_capabilities {
+            self.navigation_context_capabilities.remove(id);
+            self.navigation_context_storage_origins.remove(id);
+        }
 
         let revoked_network_operations = self.quarantine_network_operations_for_process(process);
         let revoked_capabilities = self.broker.revoke_all_for_process(process);
@@ -865,13 +910,22 @@ impl HostControlPlane {
         &mut self,
         target: &rarog_url::WebUrl,
     ) -> Result<NavigationContextSnapshot, HostControlError> {
-        let site = target.site_identity()?;
-        self.open_navigation_context_to_site(site)
+        let origin = target.origin()?;
+        let site = origin.site();
+        self.open_navigation_context_with_origin(site, Some(origin))
     }
 
     pub fn open_navigation_context_to_site(
         &mut self,
         site: SiteIdentity,
+    ) -> Result<NavigationContextSnapshot, HostControlError> {
+        self.open_navigation_context_with_origin(site, None)
+    }
+
+    fn open_navigation_context_with_origin(
+        &mut self,
+        site: SiteIdentity,
+        origin: Option<Origin>,
     ) -> Result<NavigationContextSnapshot, HostControlError> {
         if self.navigation_contexts.len() >= self.max_navigation_contexts {
             return Err(HostControlError::new(
@@ -887,9 +941,18 @@ impl HostControlPlane {
         let binding = self
             .begin_document_navigation_to_site(None, site.clone())?
             .into_current();
-        self.navigation_contexts
-            .insert(context, NavigationContext { binding });
-        Ok(NavigationContextSnapshot { context, site })
+        self.navigation_contexts.insert(
+            context,
+            NavigationContext {
+                binding,
+                origin: origin.clone(),
+            },
+        );
+        Ok(NavigationContextSnapshot {
+            context,
+            site,
+            origin,
+        })
     }
 
     pub fn navigation_context(
@@ -900,6 +963,7 @@ impl HostControlPlane {
         Ok(NavigationContextSnapshot {
             context,
             site: state.binding.site.clone(),
+            origin: state.origin.clone(),
         })
     }
 
@@ -908,8 +972,9 @@ impl HostControlPlane {
         context: NavigationContextId,
         target: &rarog_url::WebUrl,
     ) -> Result<NavigationContextTransition, HostControlError> {
-        let target_site = target.site_identity()?;
-        self.navigate_navigation_context_to_site(context, target_site)
+        let target_origin = target.origin()?;
+        let target_site = target_origin.site();
+        self.navigate_navigation_context_with_origin(context, target_site, Some(target_origin))
     }
 
     pub fn navigate_navigation_context_to_site(
@@ -917,16 +982,36 @@ impl HostControlPlane {
         context: NavigationContextId,
         target_site: SiteIdentity,
     ) -> Result<NavigationContextTransition, HostControlError> {
-        let current = self.require_navigation_context(context)?.binding.clone();
+        self.navigate_navigation_context_with_origin(context, target_site, None)
+    }
+
+    fn navigate_navigation_context_with_origin(
+        &mut self,
+        context: NavigationContextId,
+        target_site: SiteIdentity,
+        target_origin: Option<Origin>,
+    ) -> Result<NavigationContextTransition, HostControlError> {
+        let current_state = self.require_navigation_context(context)?.clone();
+        let current = current_state.binding;
         let previous_site = current.site.clone();
+        let previous_origin = current_state.origin;
         if previous_site == target_site {
             let transition =
                 self.begin_document_navigation_to_site(Some(&current), target_site.clone())?;
-            self.require_navigation_context_mut(context)?.binding = transition.current().clone();
+            {
+                let state = self.require_navigation_context_mut(context)?;
+                state.binding = transition.current().clone();
+                state.origin = target_origin.clone();
+            }
+            if previous_origin != target_origin {
+                self.revoke_navigation_context_storage_capabilities(context)?;
+            }
             return Ok(NavigationContextTransition {
                 context,
                 previous_site,
                 current_site: target_site,
+                previous_origin,
+                current_origin: target_origin,
                 kind: transition.kind(),
                 source_retired: false,
             });
@@ -936,8 +1021,11 @@ impl HostControlPlane {
             Ok(transition) => {
                 let previous_process = current.process;
                 self.revoke_navigation_context_capabilities(context)?;
-                self.require_navigation_context_mut(context)?.binding =
-                    transition.current().clone();
+                {
+                    let state = self.require_navigation_context_mut(context)?;
+                    state.binding = transition.current().clone();
+                    state.origin = target_origin.clone();
+                }
                 let source_retired = if self.navigation_context_ref_count(previous_process) == 0 {
                     self.process_lost(previous_process)?;
                     true
@@ -948,6 +1036,8 @@ impl HostControlPlane {
                     context,
                     previous_site,
                     current_site: target_site,
+                    previous_origin,
+                    current_origin: target_origin,
                     kind: transition.kind(),
                     source_retired,
                 })
@@ -968,12 +1058,15 @@ impl HostControlPlane {
                             context,
                             NavigationContext {
                                 binding: transition.current().clone(),
+                                origin: target_origin.clone(),
                             },
                         );
                         Ok(NavigationContextTransition {
                             context,
                             previous_site,
                             current_site: target_site,
+                            previous_origin,
+                            current_origin: target_origin,
                             kind: NavigationTransitionKind::CrossSiteReplacement,
                             source_retired: true,
                         })
@@ -1020,7 +1113,50 @@ impl HostControlPlane {
         self.grant_navigation_context_capability(context, CapabilityClass::Network)
     }
 
+    pub fn grant_navigation_context_storage_capability(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<NavigationContextCapability, HostControlError> {
+        let origin = self
+            .require_navigation_context(context)?
+            .origin
+            .clone()
+            .filter(|origin| !origin.is_opaque())
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::PersistentStorageOriginUnavailable,
+                    "navigation context has no non-opaque exact origin for persistent storage",
+                )
+            })?;
+        self.ensure_storage_process()?;
+        let capability =
+            self.grant_navigation_context_capability_unbound(context, CapabilityClass::Storage)?;
+        if self
+            .navigation_context_storage_origins
+            .insert(capability.id, origin)
+            .is_some()
+        {
+            let _ = self.revoke_capability(capability.id);
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "new Storage capability identity already had exact-origin ownership",
+            ));
+        }
+        Ok(capability)
+    }
+
     pub fn grant_navigation_context_capability(
+        &mut self,
+        context: NavigationContextId,
+        class: CapabilityClass,
+    ) -> Result<NavigationContextCapability, HostControlError> {
+        if class == CapabilityClass::Storage {
+            return self.grant_navigation_context_storage_capability(context);
+        }
+        self.grant_navigation_context_capability_unbound(context, class)
+    }
+
+    fn grant_navigation_context_capability_unbound(
         &mut self,
         context: NavigationContextId,
         class: CapabilityClass,
@@ -1107,6 +1243,51 @@ impl HostControlPlane {
             CapabilityClass::Clipboard,
         )?;
         self.write_clipboard_text(process, capability.id, text, clipboard)
+    }
+
+    pub fn read_navigation_context_storage<'a>(
+        &self,
+        capability: NavigationContextCapability,
+        key: &str,
+        storage: &'a StorageProcessState,
+    ) -> Result<Option<&'a [u8]>, HostControlError> {
+        let origin = self.authorize_navigation_context_storage_capability(capability)?;
+        self.authorize_storage_process_state(storage)?;
+        Ok(storage.get(&origin, key))
+    }
+
+    pub fn write_navigation_context_storage(
+        &self,
+        capability: NavigationContextCapability,
+        key: &str,
+        value: &[u8],
+        storage: &mut StorageProcessState,
+    ) -> Result<(), HostControlError> {
+        let origin = self.authorize_navigation_context_storage_capability(capability)?;
+        self.authorize_storage_process_state(storage)?;
+        storage.put(&origin, key, value)?;
+        Ok(())
+    }
+
+    pub fn remove_navigation_context_storage(
+        &self,
+        capability: NavigationContextCapability,
+        key: &str,
+        storage: &mut StorageProcessState,
+    ) -> Result<bool, HostControlError> {
+        let origin = self.authorize_navigation_context_storage_capability(capability)?;
+        self.authorize_storage_process_state(storage)?;
+        Ok(storage.remove(&origin, key)?)
+    }
+
+    pub fn clear_navigation_context_storage(
+        &self,
+        capability: NavigationContextCapability,
+        storage: &mut StorageProcessState,
+    ) -> Result<bool, HostControlError> {
+        let origin = self.authorize_navigation_context_storage_capability(capability)?;
+        self.authorize_storage_process_state(storage)?;
+        Ok(storage.clear_origin(&origin)?)
     }
 
     pub fn begin_document_navigation(
@@ -1235,11 +1416,93 @@ impl HostControlPlane {
         Ok(ids.len())
     }
 
+    fn revoke_navigation_context_storage_capabilities(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<usize, HostControlError> {
+        let ids = self
+            .navigation_context_storage_origins
+            .keys()
+            .filter(|id| self.navigation_context_capabilities.get(id).copied() == Some(context))
+            .copied()
+            .collect::<Vec<_>>();
+        for id in &ids {
+            self.revoke_capability(*id)?;
+        }
+        Ok(ids.len())
+    }
+
     fn authorize_navigation_context_capability(
         &self,
         capability: NavigationContextCapability,
     ) -> Result<SiteProcessId, HostControlError> {
+        if capability.class == CapabilityClass::Storage {
+            self.authorize_navigation_context_storage_capability(capability)?;
+            return Ok(self
+                .require_navigation_context(capability.context)?
+                .binding
+                .process);
+        }
         self.authorize_navigation_context_capability_class(capability, capability.class)
+    }
+
+    fn authorize_navigation_context_storage_capability(
+        &self,
+        capability: NavigationContextCapability,
+    ) -> Result<Origin, HostControlError> {
+        if capability.class != CapabilityClass::Storage {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidNavigationContextStorageAuthority,
+                "capability does not carry Storage authority",
+            ));
+        }
+        let bound_origin = self
+            .navigation_context_storage_origins
+            .get(&capability.id)
+            .filter(|_| {
+                self.navigation_context_capabilities
+                    .get(&capability.id)
+                    .copied()
+                    == Some(capability.context)
+            })
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidNavigationContextStorageAuthority,
+                    "Storage capability has no matching navigation-context exact-origin authority",
+                )
+            })?;
+        self.authorize_navigation_context_capability_class(capability, CapabilityClass::Storage)?;
+        let current_origin = self
+            .require_navigation_context(capability.context)?
+            .origin
+            .as_ref()
+            .filter(|origin| !origin.is_opaque())
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::PersistentStorageOriginUnavailable,
+                    "navigation context has no non-opaque exact origin for persistent storage",
+                )
+            })?;
+        if current_origin != bound_origin {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidNavigationContextStorageAuthority,
+                "Storage capability exact origin no longer matches the navigation context",
+            ));
+        }
+        Ok(bound_origin.clone())
+    }
+
+    fn authorize_storage_process_state(
+        &self,
+        storage: &StorageProcessState,
+    ) -> Result<(), HostControlError> {
+        if self.topology.storage_process() != Some(storage.process()) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::StorageProcessMismatch,
+                "storage state does not belong to the live Host-owned Storage-process identity",
+            ));
+        }
+        Ok(())
     }
 
     fn authorize_navigation_context_capability_class(
@@ -2601,5 +2864,197 @@ mod tests {
             HostControlPlane::try_new(limits).unwrap_err().kind,
             HostControlErrorKind::InvalidLimits
         );
+    }
+    #[test]
+    fn url_backed_navigation_context_preserves_exact_origin_snapshot() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let url = WebUrl::parse("https://a.example.com:8443/path?q=1").unwrap();
+        let expected_origin = url.origin().unwrap();
+
+        let context = host.open_navigation_context(&url).unwrap();
+        assert_eq!(context.origin(), Some(&expected_origin));
+        assert_eq!(context.site(), &expected_origin.site());
+
+        let snapshot = host.navigation_context(context.context()).unwrap();
+        assert_eq!(snapshot.origin(), Some(&expected_origin));
+        assert_eq!(snapshot.site(), context.site());
+    }
+
+    #[test]
+    fn site_only_and_opaque_contexts_cannot_mint_persistent_storage_authority() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let site_only = host
+            .open_navigation_context_to_site(site("https://example.com/"))
+            .unwrap();
+        assert_eq!(site_only.origin(), None);
+        assert_eq!(
+            host.grant_navigation_context_storage_capability(site_only.context())
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::PersistentStorageOriginUnavailable
+        );
+
+        let opaque = host
+            .open_navigation_context(&WebUrl::parse("data:text/plain,hello").unwrap())
+            .unwrap();
+        assert!(opaque.origin().unwrap().is_opaque());
+        assert_eq!(
+            host.grant_navigation_context_storage_capability(opaque.context())
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::PersistentStorageOriginUnavailable
+        );
+        assert_eq!(host.storage_process(), None);
+    }
+
+    #[test]
+    fn storage_route_is_exact_origin_scoped_and_stale_after_same_site_cross_origin_navigation() {
+        let mut host = HostControlPlane::try_new(test_limits(2, 8)).unwrap();
+        let first_url = WebUrl::parse("https://a.example.com/start").unwrap();
+        let first_origin = first_url.origin().unwrap();
+        let context = host.open_navigation_context(&first_url).unwrap();
+        let capability = host
+            .grant_navigation_context_storage_capability(context.context())
+            .unwrap();
+        let storage_process = host.storage_process().unwrap();
+        let mut storage =
+            StorageProcessState::try_new(storage_process, rarog_storage::StorageLimits::default())
+                .unwrap();
+
+        host.write_navigation_context_storage(capability, "key", b"one", &mut storage)
+            .unwrap();
+        assert_eq!(
+            host.read_navigation_context_storage(capability, "key", &storage)
+                .unwrap(),
+            Some(b"one".as_slice())
+        );
+
+        let second_url = WebUrl::parse("https://b.example.com/next").unwrap();
+        let second_origin = second_url.origin().unwrap();
+        assert!(first_origin.site().same_site(&second_origin.site()));
+        assert!(!first_origin.same_origin(&second_origin));
+        let transition = host
+            .navigate_navigation_context(context.context(), &second_url)
+            .unwrap();
+        assert_eq!(transition.kind(), NavigationTransitionKind::SameSiteReuse);
+        assert_eq!(transition.previous_origin(), Some(&first_origin));
+        assert_eq!(transition.current_origin(), Some(&second_origin));
+
+        assert_eq!(
+            host.read_navigation_context_storage(capability, "key", &storage)
+                .unwrap_err()
+                .kind,
+            HostControlErrorKind::InvalidNavigationContextStorageAuthority
+        );
+
+        let second_capability = host
+            .grant_navigation_context_storage_capability(context.context())
+            .unwrap();
+        assert_eq!(
+            host.read_navigation_context_storage(second_capability, "key", &storage)
+                .unwrap(),
+            None
+        );
+        host.write_navigation_context_storage(second_capability, "key", b"two", &mut storage)
+            .unwrap();
+
+        let back = host
+            .navigate_navigation_context(context.context(), &first_url)
+            .unwrap();
+        assert_eq!(back.current_origin(), Some(&first_origin));
+        let first_again = host
+            .grant_navigation_context_storage_capability(context.context())
+            .unwrap();
+        assert_eq!(
+            host.read_navigation_context_storage(first_again, "key", &storage)
+                .unwrap(),
+            Some(b"one".as_slice())
+        );
+    }
+
+    #[test]
+    fn authorized_storage_route_round_trips_remove_and_clear() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let context = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+        let capability = host
+            .grant_navigation_context_capability(context.context(), CapabilityClass::Storage)
+            .unwrap();
+        let mut storage = StorageProcessState::try_new(
+            host.storage_process().unwrap(),
+            rarog_storage::StorageLimits::default(),
+        )
+        .unwrap();
+
+        host.write_navigation_context_storage(capability, "a", b"one", &mut storage)
+            .unwrap();
+        host.write_navigation_context_storage(capability, "b", b"two", &mut storage)
+            .unwrap();
+        assert!(
+            host.remove_navigation_context_storage(capability, "a", &mut storage)
+                .unwrap()
+        );
+        assert_eq!(
+            host.read_navigation_context_storage(capability, "a", &storage)
+                .unwrap(),
+            None
+        );
+        assert!(
+            host.clear_navigation_context_storage(capability, &mut storage)
+                .unwrap()
+        );
+        assert_eq!(
+            host.read_navigation_context_storage(capability, "b", &storage)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn storage_route_rejects_wrong_class_and_wrong_storage_process_before_access() {
+        let mut host = HostControlPlane::try_new(test_limits(1, 8)).unwrap();
+        let context = host
+            .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
+            .unwrap();
+        let storage_capability = host
+            .grant_navigation_context_storage_capability(context.context())
+            .unwrap();
+        let network_capability = host
+            .grant_navigation_context_network_capability(context.context())
+            .unwrap();
+
+        let mut other_topology = ProcessTopology::try_new(1).unwrap();
+        let wrong_process = other_topology.ensure_storage_process().unwrap().process();
+        assert_ne!(Some(wrong_process), host.storage_process());
+        let mut wrong_storage =
+            StorageProcessState::try_new(wrong_process, rarog_storage::StorageLimits::default())
+                .unwrap();
+
+        assert_eq!(
+            host.write_navigation_context_storage(
+                network_capability,
+                "key",
+                b"value",
+                &mut wrong_storage
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::InvalidNavigationContextStorageAuthority
+        );
+        assert_eq!(wrong_storage.total_bytes(), 0);
+
+        assert_eq!(
+            host.write_navigation_context_storage(
+                storage_capability,
+                "key",
+                b"value",
+                &mut wrong_storage
+            )
+            .unwrap_err()
+            .kind,
+            HostControlErrorKind::StorageProcessMismatch
+        );
+        assert_eq!(wrong_storage.total_bytes(), 0);
     }
 }

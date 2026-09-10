@@ -12,6 +12,7 @@ rarog-fetch = { path = "../rarog-fetch" }
 rarog-ipc = { path = "../rarog-ipc" }
 rarog-platform = { path = "../rarog-platform" }
 rarog-process = { path = "../rarog-process" }
+rarog-storage = { path = "../rarog-storage" }
 rarog-url = { path = "../rarog-url" }
 
 [lints]
