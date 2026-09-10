@@ -146,21 +146,27 @@ impl WindowsStorageProcess {
         if self.loss_reported {
             return Ok(None);
         }
-        let Some(child) = self.child.as_mut() else {
-            return Ok(None);
+        let exited = {
+            let Some(child) = self.child.as_mut() else {
+                return Ok(None);
+            };
+            child
+                .try_wait()
+                .map_err(|error| {
+                    WindowsStorageProcessError::new(
+                        WindowsStorageProcessErrorKind::WaitFailed,
+                        format!("Windows Storage-process status check failed: {error}"),
+                    )
+                })?
+                .is_some()
         };
-        let status = child.try_wait().map_err(|error| {
-            WindowsStorageProcessError::new(
-                WindowsStorageProcessErrorKind::WaitFailed,
-                format!("Windows Storage-process status check failed: {error}"),
-            )
-        })?;
-        if status.is_none() {
+        if !exited {
             return Ok(None);
         }
 
+        let loss = self.report_loss(host)?;
         self.child.take();
-        self.report_loss(host).map(Some)
+        Ok(Some(loss))
     }
 
     pub fn wait_for_loss(
@@ -170,17 +176,20 @@ impl WindowsStorageProcess {
         if self.loss_reported {
             return Ok(None);
         }
-        let Some(child) = self.child.as_mut() else {
-            return Ok(None);
-        };
-        child.wait().map_err(|error| {
-            WindowsStorageProcessError::new(
-                WindowsStorageProcessErrorKind::WaitFailed,
-                format!("Windows Storage-process wait failed: {error}"),
-            )
-        })?;
+        {
+            let Some(child) = self.child.as_mut() else {
+                return Ok(None);
+            };
+            child.wait().map_err(|error| {
+                WindowsStorageProcessError::new(
+                    WindowsStorageProcessErrorKind::WaitFailed,
+                    format!("Windows Storage-process wait failed: {error}"),
+                )
+            })?;
+        }
+        let loss = self.report_loss(host)?;
         self.child.take();
-        self.report_loss(host).map(Some)
+        Ok(Some(loss))
     }
 
     pub fn terminate_and_report(
@@ -190,18 +199,20 @@ impl WindowsStorageProcess {
         if self.loss_reported {
             return Ok(None);
         }
-        let Some(child) = self.child.as_mut() else {
-            return Ok(None);
-        };
-
-        child.terminate().map_err(|error| {
-            WindowsStorageProcessError::new(
-                WindowsStorageProcessErrorKind::WaitFailed,
-                format!("Windows Storage-process termination failed: {error}"),
-            )
-        })?;
+        {
+            let Some(child) = self.child.as_mut() else {
+                return Ok(None);
+            };
+            child.terminate().map_err(|error| {
+                WindowsStorageProcessError::new(
+                    WindowsStorageProcessErrorKind::WaitFailed,
+                    format!("Windows Storage-process termination failed: {error}"),
+                )
+            })?;
+        }
+        let loss = self.report_loss(host)?;
         self.child.take();
-        self.report_loss(host).map(Some)
+        Ok(Some(loss))
     }
 
     pub fn sandbox_evidence(&self) -> Result<SandboxEvidence, WindowsStorageProcessError> {
