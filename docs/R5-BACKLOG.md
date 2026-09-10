@@ -9,7 +9,7 @@ Tracking issue: #260.
 - [x] Add a Rarog-owned Storage-process identity independent of OS PID/handles (#261).
 - [x] Add bounded exact-origin storage-process state with explicit key/value, entry, origin and byte quotas (#261).
 - [x] Bind production navigation contexts to exact origin authority and route Storage access through Host authorization (#263).
-- [ ] Define storage IPC/request contracts without exposing filesystem paths or backend handles to Site code.
+- [x] Define storage IPC/request contracts without exposing filesystem paths or backend handles to Site code (#265).
 - [ ] Add Windows-first Storage-process launch/loss/containment evidence.
 - [ ] Add durability/transaction foundations required by the selected Web Storage/IndexedDB slices without claiming broader API completeness.
 
