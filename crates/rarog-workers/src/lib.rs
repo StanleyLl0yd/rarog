@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_WORKER_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 pub const DEFAULT_MAX_WORKERS: usize = 256;
 pub const DEFAULT_MAX_CHILDREN_PER_OWNER: usize = 32;
@@ -30,26 +33,40 @@ impl Default for WorkerLimits {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WorkerId(NonZeroU64);
+pub struct WorkerId {
+    scope: NonZeroU64,
+    serial: NonZeroU64,
+}
 
 impl WorkerId {
-    pub fn try_new(raw: u64) -> Result<Self, WorkerError> {
-        NonZeroU64::new(raw).map(Self).ok_or_else(|| {
+    pub fn try_from_parts(scope: u64, serial: u64) -> Result<Self, WorkerError> {
+        let scope = NonZeroU64::new(scope).ok_or_else(|| {
             WorkerError::new(
                 WorkerErrorKind::InvalidWorkerId,
-                "worker identity must be non-zero",
+                "worker registry scope must be non-zero",
             )
-        })
+        })?;
+        let serial = NonZeroU64::new(serial).ok_or_else(|| {
+            WorkerError::new(
+                WorkerErrorKind::InvalidWorkerId,
+                "worker serial must be non-zero",
+            )
+        })?;
+        Ok(Self { scope, serial })
     }
 
-    pub fn get(self) -> u64 {
-        self.0.get()
+    pub fn scope(self) -> u64 {
+        self.scope.get()
+    }
+
+    pub fn serial(self) -> u64 {
+        self.serial.get()
     }
 }
 
 impl fmt::Display for WorkerId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "worker:{}", self.get())
+        write!(formatter, "worker:{}:{}", self.scope(), self.serial())
     }
 }
 
@@ -141,25 +158,46 @@ impl WorkerRetirement {
 
 #[derive(Debug)]
 struct WorkerIdAllocator {
-    next: Option<NonZeroU64>,
+    scope: NonZeroU64,
+    next_serial: u64,
 }
 
 impl WorkerIdAllocator {
-    fn new() -> Self {
-        Self {
-            next: NonZeroU64::new(1),
-        }
+    fn new() -> Result<Self, WorkerError> {
+        let scope = NEXT_WORKER_SCOPE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| {
+                WorkerError::new(
+                    WorkerErrorKind::IdentitySpaceExhausted,
+                    "worker registry identity space is exhausted",
+                )
+            })?;
+        let scope = NonZeroU64::new(scope).ok_or_else(|| {
+            WorkerError::new(
+                WorkerErrorKind::IdentitySpaceExhausted,
+                "worker registry identity space is exhausted",
+            )
+        })?;
+        Ok(Self {
+            scope,
+            next_serial: 1,
+        })
     }
 
     fn allocate(&mut self) -> Result<WorkerId, WorkerError> {
-        let next = self.next.ok_or_else(|| {
+        let serial = NonZeroU64::new(self.next_serial).ok_or_else(|| {
             WorkerError::new(
                 WorkerErrorKind::IdentitySpaceExhausted,
                 "worker identity space is exhausted",
             )
         })?;
-        self.next = NonZeroU64::new(next.get().wrapping_add(1));
-        Ok(WorkerId(next))
+        self.next_serial = self.next_serial.checked_add(1).unwrap_or(0);
+        Ok(WorkerId {
+            scope: self.scope,
+            serial,
+        })
     }
 }
 
@@ -188,7 +226,7 @@ impl<O: Eq> WorkerRegistry<O> {
         }
         Ok(Self {
             limits,
-            allocator: WorkerIdAllocator::new(),
+            allocator: WorkerIdAllocator::new()?,
             workers: BTreeMap::new(),
         })
     }
@@ -515,16 +553,19 @@ mod tests {
     }
 
     #[test]
-    fn worker_id_rejects_zero() {
-        let error = WorkerId::try_new(0).unwrap_err();
-        assert_eq!(error.kind, WorkerErrorKind::InvalidWorkerId);
+    fn worker_id_rejects_zero_parts() {
+        let scope_error = WorkerId::try_from_parts(0, 1).unwrap_err();
+        assert_eq!(scope_error.kind, WorkerErrorKind::InvalidWorkerId);
+        let serial_error = WorkerId::try_from_parts(1, 0).unwrap_err();
+        assert_eq!(serial_error.kind, WorkerErrorKind::InvalidWorkerId);
     }
 
     #[test]
     fn root_workers_are_created_with_explicit_owner_and_depth() {
         let mut registry = registry();
         let worker = registry.create_root(7).unwrap();
-        assert_eq!(worker.get(), 1);
+        assert!(worker.scope() > 0);
+        assert_eq!(worker.serial(), 1);
         assert_eq!(registry.owner(worker).unwrap(), &WorkerOwner::Root(7));
         assert_eq!(
             registry.state(worker).unwrap(),
@@ -554,7 +595,8 @@ mod tests {
         registry.begin_close(first).unwrap();
         registry.retire(first).unwrap();
         let replacement = registry.create_root(2).unwrap();
-        assert_eq!(replacement.get(), 2);
+        assert_eq!(replacement.scope(), first.scope());
+        assert_eq!(replacement.serial(), 2);
     }
 
     #[test]
@@ -687,16 +729,32 @@ mod tests {
         registry.retire(first).unwrap();
         let second = registry.create_root(1).unwrap();
         assert_ne!(first, second);
-        assert_eq!(first.get(), 1);
-        assert_eq!(second.get(), 2);
+        assert_eq!(first.scope(), second.scope());
+        assert_eq!(first.serial(), 1);
+        assert_eq!(second.serial(), 2);
     }
 
     #[test]
-    fn identity_allocator_fails_closed_after_last_identity() {
+    fn independent_registries_do_not_alias_worker_ids() {
+        let mut first = registry();
+        let mut second = registry();
+        let first_worker = first.create_root(1).unwrap();
+        let second_worker = second.create_root(1).unwrap();
+        assert_ne!(first_worker, second_worker);
+        assert_ne!(first_worker.scope(), second_worker.scope());
+        assert_eq!(first_worker.serial(), 1);
+        assert_eq!(second_worker.serial(), 1);
+    }
+
+    #[test]
+    fn identity_allocator_fails_closed_after_last_serial() {
         let mut allocator = WorkerIdAllocator {
-            next: Some(NonZeroU64::new(u64::MAX).unwrap()),
+            scope: NonZeroU64::new(7).unwrap(),
+            next_serial: u64::MAX,
         };
-        assert_eq!(allocator.allocate().unwrap().get(), u64::MAX);
+        let last = allocator.allocate().unwrap();
+        assert_eq!(last.scope(), 7);
+        assert_eq!(last.serial(), u64::MAX);
         let error = allocator.allocate().unwrap_err();
         assert_eq!(error.kind, WorkerErrorKind::IdentitySpaceExhausted);
     }
