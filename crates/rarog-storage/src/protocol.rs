@@ -7,9 +7,11 @@ pub use queue::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{StorageLimits, StorageProcessState};
+    use crate::state::{
+        MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES, StorageErrorKind, StorageLimits, StorageProcessState,
+    };
     use rarog_process::{ProcessTopology, StorageProcessId};
-    use rarog_url::{Origin, WebUrl};
+    use rarog_url::{Origin, UrlHost, WebUrl};
 
     fn origin(url: &str) -> Origin {
         WebUrl::parse(url).unwrap().origin().unwrap()
@@ -220,6 +222,18 @@ mod tests {
                 .unwrap_err()
                 .kind,
             StorageProtocolErrorKind::ValueTooLarge
+        );
+        let oversized_origin = Origin::Tuple {
+            scheme: "x".repeat(MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES),
+            host: UrlHost::Domain(String::from("example.com")),
+            port: 443,
+        };
+        assert_eq!(
+            queue
+                .enqueue(oversized_origin, StorageCommand::Clear)
+                .unwrap_err()
+                .kind,
+            StorageProtocolErrorKind::Storage(StorageErrorKind::OriginIdentityTooLarge)
         );
         assert_eq!(queue.pending_requests(), 0);
         assert_eq!(queue.tracked_bytes(), 0);

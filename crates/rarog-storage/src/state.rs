@@ -1,5 +1,5 @@
 use rarog_process::StorageProcessId;
-use rarog_url::Origin;
+use rarog_url::{Origin, UrlHost};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -9,6 +9,7 @@ pub const DEFAULT_MAX_KEY_BYTES: usize = 16 * 1024;
 pub const DEFAULT_MAX_VALUE_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_MAX_ORIGIN_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageLimits {
@@ -51,6 +52,7 @@ impl Default for StorageLimits {
 pub enum StorageErrorKind {
     InvalidLimits,
     OpaqueOrigin,
+    OriginIdentityTooLarge,
     KeyTooLarge,
     ValueTooLarge,
     OriginLimitExceeded,
@@ -85,16 +87,16 @@ impl fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 #[derive(Debug, Default)]
-struct OriginStorage {
-    entries: HashMap<String, Vec<u8>>,
-    bytes: usize,
+pub(crate) struct OriginStorage {
+    pub(crate) entries: HashMap<String, Vec<u8>>,
+    pub(crate) bytes: usize,
 }
 
 #[derive(Debug)]
 pub struct StorageProcessState {
     process: StorageProcessId,
     limits: StorageLimits,
-    origins: HashMap<Origin, OriginStorage>,
+    pub(crate) origins: HashMap<Origin, OriginStorage>,
     total_bytes: usize,
 }
 
@@ -148,7 +150,7 @@ impl StorageProcessState {
     }
 
     pub fn put(&mut self, origin: &Origin, key: &str, value: &[u8]) -> Result<(), StorageError> {
-        self.validate_persistent_origin(origin)?;
+        validate_persistent_origin_identity(origin)?;
         if key.len() > self.limits.max_key_bytes {
             return Err(StorageError::new(
                 StorageErrorKind::KeyTooLarge,
@@ -223,6 +225,11 @@ impl StorageProcessState {
 
         let owned_key = try_owned_string(key)?;
         let owned_value = try_owned_bytes(value)?;
+        let owned_origin = if new_origin {
+            Some(try_owned_origin(origin)?)
+        } else {
+            None
+        };
 
         if new_origin {
             self.origins
@@ -235,7 +242,15 @@ impl StorageProcessState {
                 .map_err(|_| allocation_error())?;
             storage.entries.insert(owned_key, owned_value);
             storage.bytes = next_origin_bytes;
-            self.origins.insert(origin.clone(), storage);
+            self.origins.insert(
+                owned_origin.ok_or_else(|| {
+                    StorageError::new(
+                        StorageErrorKind::AccountingOverflow,
+                        "new storage origin was not prepared before mutation",
+                    )
+                })?,
+                storage,
+            );
         } else if let Some(storage) = self.origins.get_mut(origin) {
             if new_entry {
                 storage
@@ -312,16 +327,58 @@ impl StorageProcessState {
         Ok(true)
     }
 
-    fn validate_persistent_origin(&self, origin: &Origin) -> Result<(), StorageError> {
-        if origin.is_opaque() {
-            Err(StorageError::new(
-                StorageErrorKind::OpaqueOrigin,
-                "opaque origins do not receive persistent storage authority",
-            ))
-        } else {
-            Ok(())
+    pub(crate) fn try_clone_for_transaction(&self) -> Result<Self, StorageError> {
+        let mut cloned = Self::try_new(self.process, self.limits)?;
+        for (origin, storage) in &self.origins {
+            for (key, value) in &storage.entries {
+                cloned.put(origin, key, value)?;
+            }
         }
+        Ok(cloned)
     }
+}
+
+pub(crate) fn validate_persistent_origin_identity(origin: &Origin) -> Result<(), StorageError> {
+    if origin.is_opaque() {
+        return Err(StorageError::new(
+            StorageErrorKind::OpaqueOrigin,
+            "opaque origins do not receive persistent storage authority",
+        ));
+    }
+    let identity_bytes = persistent_origin_identity_bytes(origin)?;
+    if identity_bytes > MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES {
+        return Err(StorageError::new(
+            StorageErrorKind::OriginIdentityTooLarge,
+            format!(
+                "persistent storage origin identity requires {identity_bytes} bytes; limit is {MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn persistent_origin_identity_bytes(origin: &Origin) -> Result<usize, StorageError> {
+    let Origin::Tuple { scheme, host, .. } = origin else {
+        return Err(StorageError::new(
+            StorageErrorKind::OpaqueOrigin,
+            "opaque origins do not receive persistent storage authority",
+        ));
+    };
+    let host_bytes = match host {
+        UrlHost::Domain(domain) => domain.len(),
+        UrlHost::Ipv4(_) => 4,
+        UrlHost::Ipv6(_) => 16,
+    };
+    scheme
+        .len()
+        .checked_add(host_bytes)
+        .and_then(|bytes| bytes.checked_add(std::mem::size_of::<u16>()))
+        .ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::AccountingOverflow,
+                "persistent storage origin identity byte accounting overflow",
+            )
+        })
 }
 
 fn checked_entry_bytes(key_bytes: usize, value_bytes: usize) -> Result<usize, StorageError> {
@@ -361,6 +418,28 @@ fn try_owned_bytes(value: &[u8]) -> Result<Vec<u8>, StorageError> {
         .map_err(|_| allocation_error())?;
     owned.extend_from_slice(value);
     Ok(owned)
+}
+
+fn try_owned_origin(origin: &Origin) -> Result<Origin, StorageError> {
+    match origin {
+        Origin::Tuple { scheme, host, port } => {
+            let scheme = try_owned_string(scheme)?;
+            let host = match host {
+                UrlHost::Domain(domain) => UrlHost::Domain(try_owned_string(domain)?),
+                UrlHost::Ipv4(address) => UrlHost::Ipv4(*address),
+                UrlHost::Ipv6(address) => UrlHost::Ipv6(*address),
+            };
+            Ok(Origin::Tuple {
+                scheme,
+                host,
+                port: *port,
+            })
+        }
+        Origin::Opaque(_) => Err(StorageError::new(
+            StorageErrorKind::OpaqueOrigin,
+            "opaque origins do not receive persistent storage authority",
+        )),
+    }
 }
 
 fn allocation_error() -> StorageError {
@@ -423,6 +502,22 @@ mod tests {
         let error = storage.put(&opaque, "key", b"value").unwrap_err();
 
         assert_eq!(error.kind, StorageErrorKind::OpaqueOrigin);
+        assert_eq!(storage.origin_count(), 0);
+        assert_eq!(storage.total_bytes(), 0);
+    }
+
+    #[test]
+    fn oversized_origin_identity_is_rejected_without_mutation() {
+        let oversized = Origin::Tuple {
+            scheme: "x".repeat(MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES),
+            host: UrlHost::Domain(String::from("example.com")),
+            port: 443,
+        };
+        let mut storage = StorageProcessState::try_new(process(), limits()).unwrap();
+
+        let error = storage.put(&oversized, "key", b"value").unwrap_err();
+
+        assert_eq!(error.kind, StorageErrorKind::OriginIdentityTooLarge);
         assert_eq!(storage.origin_count(), 0);
         assert_eq!(storage.total_bytes(), 0);
     }
