@@ -156,7 +156,13 @@ Worker task and microtask ordering is delegated to the existing scheduler rather
 
 Evaluation occurs only through the Rarog `ScriptRuntime` API. JavaScript throws remain normal `EvaluationOutcome` completions; Script/backend errors complete the exact scheduler work item before propagation so stale active work cannot wedge the worker loop. Explicit shutdown destroys the exact realm and reports teardown errors, while drop performs best-effort realm destruction and discards pending owned work without evaluating it.
 
-This execution boundary does not implement Worker message delivery/structured clone, Service Worker registration/scope/lifecycle, Fetch interception, Host/navigation-context wiring, SharedWorker semantics or OS thread/process isolation. Those remain separate R5 slices. See ADR-0119.
+Worker message delivery is layered above the same execution/scheduler owner rather than introducing a second event loop. `WorkerMessageMailbox` owns bounded Rarog-native structured payloads and FIFO transport state; scheduler tasks carry only an exact `WorkerMessageId` marker. A payload remains charged against mailbox message/byte budgets while queued, scheduled and selected, and capacity is released only by exact completion or lifecycle discard. `WorkerMessageId` and `WorkerId` remain references rather than authority.
+
+Message routes are validated against the current exact `WorkerRegistry`: supported portable routes are an external root owner to its direct root worker, the reverse route, and direct parent/child worker pairs. Both worker endpoints must still be `Running`; foreign, retired, `Created` or `Closing` endpoints are rejected before payload access. Nested structured values are bounded by explicit depth, item, string/byte, per-message, queued-message and aggregate queued-byte limits. Accounting uses checked arithmetic and fails closed; payload ownership is established only after the applicable limits and route checks succeed.
+
+`WorkerExecution::schedule_next_message` admits at most the oldest deliverable message for that worker into the existing `EventLoopScheduler`, preserving FIFO and scheduler backpressure. The mailbox retains the payload and its byte charge until `complete_message`; `message_for_delivery` revalidates worker liveness and the exact scheduled `(WorkerId, WorkerMessageId, TaskId)` tuple before exposing the Rarog-owned payload. Lifecycle revocation therefore blocks selected payload access, while explicit mailbox cleanup can discard stale work and recover capacity without restoring authority. See ADR-0119 and ADR-0120.
+
+This Workers foundation still does not implement Service Worker registration/scope/lifecycle, Fetch interception, Host/navigation-context wiring, SharedWorker semantics, generic Web structured-clone completeness, transferables or OS thread/process isolation. Those remain separate R5 slices.
 
 ## Rendering model
 
