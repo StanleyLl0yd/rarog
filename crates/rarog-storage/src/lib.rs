@@ -225,7 +225,9 @@ impl StorageProcessState {
         let owned_value = try_owned_bytes(value)?;
 
         if new_origin {
-            self.origins.try_reserve(1).map_err(|_| allocation_error())?;
+            self.origins
+                .try_reserve(1)
+                .map_err(|_| allocation_error())?;
             let mut storage = OriginStorage::default();
             storage
                 .entries
