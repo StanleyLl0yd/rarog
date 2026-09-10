@@ -1,6 +1,7 @@
 use super::model::{
     StorageCommand, StorageOperationKind, StorageProtocolError, StorageProtocolErrorKind,
-    StorageRequest, StorageRequestId, StorageRequestLimits, StorageResponse, StorageResponsePayload,
+    StorageRequest, StorageRequestId, StorageRequestLimits, StorageResponse,
+    StorageResponsePayload,
 };
 use crate::state::{StorageLimits, StorageProcessState};
 use rarog_process::StorageProcessId;
@@ -180,7 +181,8 @@ impl StorageRequestQueue {
                 "storage response process identity does not match Host request authority",
             ));
         }
-        if response.kind() != pending.kind || !payload_matches_kind(response.payload(), pending.kind)
+        if response.kind() != pending.kind
+            || !payload_matches_kind(response.payload(), pending.kind)
         {
             return Err(StorageProtocolError::new(
                 StorageProtocolErrorKind::ResponseMismatch,
