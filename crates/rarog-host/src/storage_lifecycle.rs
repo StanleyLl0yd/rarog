@@ -123,6 +123,8 @@ mod tests {
             max_capabilities: 8,
             max_network_operations: 4,
             max_navigation_contexts: 4,
+            max_navigation_context_url_bytes: 512,
+            max_service_worker_fetch_dispatches: 4,
         })
         .unwrap()
     }

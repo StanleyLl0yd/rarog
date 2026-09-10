@@ -6,7 +6,8 @@ use rarog_broker::{
     CapabilityId, DEFAULT_MAX_CAPABILITIES,
 };
 use rarog_fetch::{
-    FetchError, FetchErrorKind, NetworkCapability, NetworkPoll, NetworkRequest, NetworkTicket,
+    FetchError, FetchErrorKind, FetchRequest, FetchResponse, NetworkCapability, NetworkPoll,
+    NetworkRequest, NetworkTicket,
 };
 use rarog_ipc::{EndpointRole, IpcChannel, IpcEnvelope, IpcError, IpcErrorKind, IpcLimits};
 use rarog_platform::{ClipboardError, ClipboardText, PlatformClipboardService};
@@ -15,13 +16,22 @@ use rarog_process::{
     SiteAssignmentKind, SiteProcessId, StorageProcessId,
 };
 use rarog_storage::{StorageError, StorageErrorKind, StorageProcessState};
-use rarog_url::{Origin, SiteIdentity, UrlError, UrlErrorKind};
+use rarog_url::{Origin, SiteIdentity, UrlError, UrlErrorKind, WebUrl};
+use rarog_workers::{
+    ServiceWorkerError, ServiceWorkerRegistrationId, ServiceWorkerRegistry, ServiceWorkerVersionId,
+    ServiceWorkerVersionState,
+};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const DEFAULT_MAX_NETWORK_OPERATIONS: usize = 4096;
 pub const DEFAULT_MAX_NAVIGATION_CONTEXTS: usize = 256;
+pub const DEFAULT_MAX_NAVIGATION_CONTEXT_URL_BYTES: usize = 64 * 1024;
+pub const DEFAULT_MAX_SERVICE_WORKER_FETCH_DISPATCHES: usize = 1024;
+
+static NEXT_SERVICE_WORKER_FETCH_DISPATCH_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostLimits {
@@ -30,6 +40,8 @@ pub struct HostLimits {
     pub max_capabilities: usize,
     pub max_network_operations: usize,
     pub max_navigation_contexts: usize,
+    pub max_navigation_context_url_bytes: usize,
+    pub max_service_worker_fetch_dispatches: usize,
 }
 
 impl HostLimits {
@@ -39,6 +51,8 @@ impl HostLimits {
             && self.max_capabilities > 0
             && self.max_network_operations > 0
             && self.max_navigation_contexts > 0
+            && self.max_navigation_context_url_bytes > 0
+            && self.max_service_worker_fetch_dispatches > 0
     }
 }
 
@@ -50,6 +64,8 @@ impl Default for HostLimits {
             max_capabilities: DEFAULT_MAX_CAPABILITIES,
             max_network_operations: DEFAULT_MAX_NETWORK_OPERATIONS,
             max_navigation_contexts: DEFAULT_MAX_NAVIGATION_CONTEXTS,
+            max_navigation_context_url_bytes: DEFAULT_MAX_NAVIGATION_CONTEXT_URL_BYTES,
+            max_service_worker_fetch_dispatches: DEFAULT_MAX_SERVICE_WORKER_FETCH_DISPATCHES,
         }
     }
 }
@@ -74,9 +90,17 @@ pub enum HostControlErrorKind {
     InvalidNavigationContextId,
     NavigationContextLimitExceeded,
     NavigationContextIdentitySpaceExhausted,
+    NavigationContextUrlLimitExceeded,
+    NavigationContextUrlUnavailable,
     UnknownNavigationContext,
     NavigationContextInvalidated,
     InvalidNavigationContextCapabilityAuthority,
+    ServiceWorker,
+    ServiceWorkerRequestOriginMismatch,
+    ServiceWorkerControllerStale,
+    ServiceWorkerFetchDispatchLimitExceeded,
+    ServiceWorkerFetchDispatchIdentitySpaceExhausted,
+    InvalidServiceWorkerFetchDispatchAuthority,
     InvalidNetworkOperationId,
     NetworkOperationLimitExceeded,
     NetworkOperationIdentitySpaceExhausted,
@@ -140,6 +164,12 @@ impl From<UrlError> for HostControlError {
 impl From<FetchError> for HostControlError {
     fn from(error: FetchError) -> Self {
         Self::new(HostControlErrorKind::Fetch(error.kind), error.message)
+    }
+}
+
+impl From<ServiceWorkerError> for HostControlError {
+    fn from(error: ServiceWorkerError) -> Self {
+        Self::new(HostControlErrorKind::ServiceWorker, error.to_string())
     }
 }
 
@@ -283,6 +313,8 @@ pub struct NavigationContextSnapshot {
     context: NavigationContextId,
     site: SiteIdentity,
     origin: Option<Origin>,
+    url: Option<WebUrl>,
+    service_worker_controller: Option<ServiceWorkerController>,
 }
 
 impl NavigationContextSnapshot {
@@ -296,6 +328,14 @@ impl NavigationContextSnapshot {
 
     pub fn origin(&self) -> Option<&Origin> {
         self.origin.as_ref()
+    }
+
+    pub fn url(&self) -> Option<&WebUrl> {
+        self.url.as_ref()
+    }
+
+    pub fn service_worker_controller(&self) -> Option<ServiceWorkerController> {
+        self.service_worker_controller
     }
 }
 
@@ -411,10 +451,28 @@ impl NavigationContextIdAllocator {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServiceWorkerController {
+    registration: ServiceWorkerRegistrationId,
+    version: ServiceWorkerVersionId,
+}
+
+impl ServiceWorkerController {
+    pub fn registration(self) -> ServiceWorkerRegistrationId {
+        self.registration
+    }
+
+    pub fn version(self) -> ServiceWorkerVersionId {
+        self.version
+    }
+}
+
 #[derive(Clone, Debug)]
 struct NavigationContext {
     binding: DocumentSiteBinding,
     origin: Option<Origin>,
+    url: Option<WebUrl>,
+    service_worker_controller: Option<ServiceWorkerController>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -459,6 +517,117 @@ impl NetworkOperationIdAllocator {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServiceWorkerFetchDispatchId {
+    scope: NonZeroU64,
+    serial: NonZeroU64,
+}
+
+impl ServiceWorkerFetchDispatchId {
+    pub fn scope(self) -> u64 {
+        self.scope.get()
+    }
+
+    pub fn serial(self) -> u64 {
+        self.serial.get()
+    }
+}
+
+#[derive(Debug)]
+struct ServiceWorkerFetchDispatchIdAllocator {
+    scope: NonZeroU64,
+    next_serial: u64,
+}
+
+impl ServiceWorkerFetchDispatchIdAllocator {
+    fn new() -> Result<Self, HostControlError> {
+        let raw = NEXT_SERVICE_WORKER_FETCH_DISPATCH_SCOPE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| {
+                HostControlError::new(
+                    HostControlErrorKind::ServiceWorkerFetchDispatchIdentitySpaceExhausted,
+                    "Service Worker fetch dispatch scope identity space is exhausted",
+                )
+            })?;
+        let scope = NonZeroU64::new(raw).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::ServiceWorkerFetchDispatchIdentitySpaceExhausted,
+                "Service Worker fetch dispatch scope identity space is exhausted",
+            )
+        })?;
+        Ok(Self {
+            scope,
+            next_serial: 1,
+        })
+    }
+
+    fn allocate(&mut self) -> Result<ServiceWorkerFetchDispatchId, HostControlError> {
+        let serial = NonZeroU64::new(self.next_serial).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::ServiceWorkerFetchDispatchIdentitySpaceExhausted,
+                "Service Worker fetch dispatch serial identity space is exhausted",
+            )
+        })?;
+        self.next_serial = self.next_serial.checked_add(1).unwrap_or(0);
+        Ok(ServiceWorkerFetchDispatchId {
+            scope: self.scope,
+            serial,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ServiceWorkerFetchRoute {
+    NetworkFallback(FetchRequest),
+    AwaitingActivation {
+        controller: ServiceWorkerController,
+        request: FetchRequest,
+    },
+    Dispatch(ServiceWorkerFetchDispatchId),
+}
+
+#[derive(Debug)]
+pub struct ServiceWorkerFetchDispatch {
+    id: ServiceWorkerFetchDispatchId,
+    context: NavigationContextId,
+    owner: SiteProcessId,
+    capability: CapabilityId,
+    controller: ServiceWorkerController,
+    request: FetchRequest,
+}
+
+impl ServiceWorkerFetchDispatch {
+    pub fn id(&self) -> ServiceWorkerFetchDispatchId {
+        self.id
+    }
+
+    pub fn context(&self) -> NavigationContextId {
+        self.context
+    }
+
+    pub fn controller(&self) -> ServiceWorkerController {
+        self.controller
+    }
+
+    pub fn request(&self) -> &FetchRequest {
+        &self.request
+    }
+}
+
+#[derive(Debug)]
+pub enum ServiceWorkerFetchCompletion {
+    Response(FetchResponse),
+    Fallback,
+}
+
+#[derive(Debug)]
+pub enum ServiceWorkerFetchResult {
+    Response(FetchResponse),
+    Network(NetworkOperationId),
+}
+
 #[derive(Clone, Copy, Debug)]
 struct NetworkOperation {
     owner: SiteProcessId,
@@ -479,6 +648,8 @@ pub struct HostControlPlane {
     ipc_limits: IpcLimits,
     max_network_operations: usize,
     max_navigation_contexts: usize,
+    max_navigation_context_url_bytes: usize,
+    max_service_worker_fetch_dispatches: usize,
     navigation_context_allocator: NavigationContextIdAllocator,
     navigation_contexts: HashMap<NavigationContextId, NavigationContext>,
     navigation_context_capabilities: HashMap<CapabilityId, NavigationContextId>,
@@ -486,6 +657,9 @@ pub struct HostControlPlane {
     network_operation_allocator: NetworkOperationIdAllocator,
     network_operations: HashMap<NetworkOperationId, NetworkOperation>,
     pending_network_cancellations: VecDeque<NetworkTicket>,
+    service_worker_fetch_dispatch_allocator: ServiceWorkerFetchDispatchIdAllocator,
+    service_worker_fetch_dispatches:
+        HashMap<ServiceWorkerFetchDispatchId, ServiceWorkerFetchDispatch>,
     sites: HashMap<SiteProcessId, SiteInstance>,
 }
 
@@ -504,6 +678,8 @@ impl HostControlPlane {
             ipc_limits: limits.ipc,
             max_network_operations: limits.max_network_operations,
             max_navigation_contexts: limits.max_navigation_contexts,
+            max_navigation_context_url_bytes: limits.max_navigation_context_url_bytes,
+            max_service_worker_fetch_dispatches: limits.max_service_worker_fetch_dispatches,
             navigation_context_allocator: NavigationContextIdAllocator::new(),
             navigation_contexts: HashMap::new(),
             navigation_context_capabilities: HashMap::new(),
@@ -511,6 +687,8 @@ impl HostControlPlane {
             network_operation_allocator: NetworkOperationIdAllocator::new(),
             network_operations: HashMap::new(),
             pending_network_cancellations: VecDeque::new(),
+            service_worker_fetch_dispatch_allocator: ServiceWorkerFetchDispatchIdAllocator::new()?,
+            service_worker_fetch_dispatches: HashMap::new(),
             sites: HashMap::new(),
         })
     }
@@ -547,6 +725,10 @@ impl HostControlPlane {
 
     pub fn active_navigation_contexts(&self) -> usize {
         self.navigation_contexts.len()
+    }
+
+    pub fn active_service_worker_fetch_dispatches(&self) -> usize {
+        self.service_worker_fetch_dispatches.len()
     }
 
     pub fn storage_process(&self) -> Option<StorageProcessId> {
@@ -693,6 +875,7 @@ impl HostControlPlane {
         self.navigation_context_capabilities.remove(&id);
         self.navigation_context_storage_origins.remove(&id);
         self.quarantine_network_operations_for_capability(id);
+        self.discard_service_worker_fetch_dispatches_for_capability(id);
         Ok(grant)
     }
 
@@ -711,6 +894,7 @@ impl HostControlPlane {
             ));
         }
 
+        self.discard_service_worker_fetch_dispatches_for_process(process);
         let mut instance = self
             .sites
             .remove(&process)
@@ -911,24 +1095,26 @@ impl HostControlPlane {
 
     pub fn open_navigation_context(
         &mut self,
-        target: &rarog_url::WebUrl,
+        target: &WebUrl,
     ) -> Result<NavigationContextSnapshot, HostControlError> {
-        let origin = target.origin()?;
+        let url = self.canonical_navigation_context_url(target)?;
+        let origin = url.origin()?;
         let site = origin.site();
-        self.open_navigation_context_with_origin(site, Some(origin))
+        self.open_navigation_context_with_origin(site, Some(origin), Some(url))
     }
 
     pub fn open_navigation_context_to_site(
         &mut self,
         site: SiteIdentity,
     ) -> Result<NavigationContextSnapshot, HostControlError> {
-        self.open_navigation_context_with_origin(site, None)
+        self.open_navigation_context_with_origin(site, None, None)
     }
 
     fn open_navigation_context_with_origin(
         &mut self,
         site: SiteIdentity,
         origin: Option<Origin>,
+        url: Option<WebUrl>,
     ) -> Result<NavigationContextSnapshot, HostControlError> {
         if self.navigation_contexts.len() >= self.max_navigation_contexts {
             return Err(HostControlError::new(
@@ -949,12 +1135,16 @@ impl HostControlPlane {
             NavigationContext {
                 binding,
                 origin: origin.clone(),
+                url: url.clone(),
+                service_worker_controller: None,
             },
         );
         Ok(NavigationContextSnapshot {
             context,
             site,
             origin,
+            url,
+            service_worker_controller: None,
         })
     }
 
@@ -967,17 +1157,25 @@ impl HostControlPlane {
             context,
             site: state.binding.site.clone(),
             origin: state.origin.clone(),
+            url: state.url.clone(),
+            service_worker_controller: state.service_worker_controller,
         })
     }
 
     pub fn navigate_navigation_context(
         &mut self,
         context: NavigationContextId,
-        target: &rarog_url::WebUrl,
+        target: &WebUrl,
     ) -> Result<NavigationContextTransition, HostControlError> {
-        let target_origin = target.origin()?;
+        let target_url = self.canonical_navigation_context_url(target)?;
+        let target_origin = target_url.origin()?;
         let target_site = target_origin.site();
-        self.navigate_navigation_context_with_origin(context, target_site, Some(target_origin))
+        self.navigate_navigation_context_with_origin(
+            context,
+            target_site,
+            Some(target_origin),
+            Some(target_url),
+        )
     }
 
     pub fn navigate_navigation_context_to_site(
@@ -985,7 +1183,7 @@ impl HostControlPlane {
         context: NavigationContextId,
         target_site: SiteIdentity,
     ) -> Result<NavigationContextTransition, HostControlError> {
-        self.navigate_navigation_context_with_origin(context, target_site, None)
+        self.navigate_navigation_context_with_origin(context, target_site, None, None)
     }
 
     fn navigate_navigation_context_with_origin(
@@ -993,6 +1191,7 @@ impl HostControlPlane {
         context: NavigationContextId,
         target_site: SiteIdentity,
         target_origin: Option<Origin>,
+        target_url: Option<WebUrl>,
     ) -> Result<NavigationContextTransition, HostControlError> {
         let current_state = self.require_navigation_context(context)?.clone();
         let current = current_state.binding;
@@ -1001,10 +1200,13 @@ impl HostControlPlane {
         if previous_site == target_site {
             let transition =
                 self.begin_document_navigation_to_site(Some(&current), target_site.clone())?;
+            self.clear_service_worker_fetch_state_for_context(context)?;
             {
                 let state = self.require_navigation_context_mut(context)?;
                 state.binding = transition.current().clone();
                 state.origin = target_origin.clone();
+                state.url = target_url.clone();
+                state.service_worker_controller = None;
             }
             if previous_origin != target_origin {
                 self.revoke_navigation_context_storage_capabilities(context)?;
@@ -1028,6 +1230,8 @@ impl HostControlPlane {
                     let state = self.require_navigation_context_mut(context)?;
                     state.binding = transition.current().clone();
                     state.origin = target_origin.clone();
+                    state.url = target_url.clone();
+                    state.service_worker_controller = None;
                 }
                 let source_retired = if self.navigation_context_ref_count(previous_process) == 0 {
                     self.process_lost(previous_process)?;
@@ -1062,6 +1266,8 @@ impl HostControlPlane {
                             NavigationContext {
                                 binding: transition.current().clone(),
                                 origin: target_origin.clone(),
+                                url: target_url.clone(),
+                                service_worker_controller: None,
                             },
                         );
                         Ok(NavigationContextTransition {
@@ -1246,6 +1452,258 @@ impl HostControlPlane {
             CapabilityClass::Clipboard,
         )?;
         self.write_clipboard_text(process, capability.id, text, clipboard)
+    }
+
+    pub fn refresh_navigation_context_service_worker_controller(
+        &mut self,
+        context: NavigationContextId,
+        registry: &ServiceWorkerRegistry,
+    ) -> Result<Option<ServiceWorkerController>, HostControlError> {
+        let (url, origin, previous) = {
+            let state = self.require_navigation_context(context)?;
+            let url = state.url.clone().ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::NavigationContextUrlUnavailable,
+                    "navigation context has no Host-owned current URL for Service Worker matching",
+                )
+            })?;
+            let origin = state.origin.clone().filter(|origin| !origin.is_opaque()).ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::ServiceWorkerControllerStale,
+                    "navigation context has no non-opaque exact origin for Service Worker control",
+                )
+            })?;
+            (url, origin, state.service_worker_controller)
+        };
+
+        let candidate = match registry.match_registration(&url)? {
+            None => None,
+            Some(registration_id) => {
+                let registration = registry.registration(registration_id)?;
+                if registration.scope().origin() != &origin {
+                    return Err(HostControlError::new(
+                        HostControlErrorKind::ServiceWorkerControllerStale,
+                        "matched Service Worker registration origin does not equal the current client origin",
+                    ));
+                }
+                match registration.active() {
+                    None => None,
+                    Some(version_id) => {
+                        let version = registry.version(version_id)?;
+                        if version.registration() != registration_id
+                            || !matches!(
+                                version.state(),
+                                ServiceWorkerVersionState::Activating
+                                    | ServiceWorkerVersionState::Activated
+                            )
+                        {
+                            return Err(HostControlError::new(
+                                HostControlErrorKind::ServiceWorkerControllerStale,
+                                "matched Service Worker active slot is inconsistent",
+                            ));
+                        }
+                        Some(ServiceWorkerController {
+                            registration: registration_id,
+                            version: version_id,
+                        })
+                    }
+                }
+            }
+        };
+
+        if previous != candidate {
+            self.discard_service_worker_fetch_dispatches_for_context(context);
+            self.require_navigation_context_mut(context)?
+                .service_worker_controller = candidate;
+        }
+        Ok(candidate)
+    }
+
+    pub fn prepare_navigation_context_service_worker_fetch(
+        &mut self,
+        capability: NavigationContextCapability,
+        request: FetchRequest,
+        registry: &ServiceWorkerRegistry,
+    ) -> Result<ServiceWorkerFetchRoute, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let (origin, url, controller) = {
+            let state = self.require_navigation_context(capability.context)?;
+            (
+                state.origin.clone(),
+                state.url.clone(),
+                state.service_worker_controller,
+            )
+        };
+        if url.is_none() {
+            return Err(HostControlError::new(
+                HostControlErrorKind::NavigationContextUrlUnavailable,
+                "navigation context has no Host-owned current URL for Service Worker fetch policy",
+            ));
+        }
+        let current_origin = origin.filter(|origin| !origin.is_opaque()).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::ServiceWorkerControllerStale,
+                "navigation context has no non-opaque exact origin for Service Worker fetch policy",
+            )
+        })?;
+        if request.origin() != &current_origin {
+            return Err(HostControlError::new(
+                HostControlErrorKind::ServiceWorkerRequestOriginMismatch,
+                "FetchRequest origin does not equal the Host-owned current client origin",
+            ));
+        }
+        let Some(controller) = controller else {
+            return Ok(ServiceWorkerFetchRoute::NetworkFallback(request));
+        };
+        let state =
+            self.validate_service_worker_controller(capability.context, controller, registry)?;
+        if state == ServiceWorkerVersionState::Activating {
+            return Ok(ServiceWorkerFetchRoute::AwaitingActivation {
+                controller,
+                request,
+            });
+        }
+        if state != ServiceWorkerVersionState::Activated {
+            return Err(HostControlError::new(
+                HostControlErrorKind::ServiceWorkerControllerStale,
+                "Service Worker controller is not dispatchable",
+            ));
+        }
+        if self.service_worker_fetch_dispatches.len() >= self.max_service_worker_fetch_dispatches {
+            return Err(HostControlError::new(
+                HostControlErrorKind::ServiceWorkerFetchDispatchLimitExceeded,
+                format!(
+                    "Service Worker fetch dispatch limit {} reached",
+                    self.max_service_worker_fetch_dispatches
+                ),
+            ));
+        }
+        let id = self.service_worker_fetch_dispatch_allocator.allocate()?;
+        if self.service_worker_fetch_dispatches.contains_key(&id) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidServiceWorkerFetchDispatchAuthority,
+                "Service Worker fetch dispatch allocator reused a live identity",
+            ));
+        }
+        self.service_worker_fetch_dispatches.insert(
+            id,
+            ServiceWorkerFetchDispatch {
+                id,
+                context: capability.context,
+                owner: process,
+                capability: capability.id,
+                controller,
+                request,
+            },
+        );
+        Ok(ServiceWorkerFetchRoute::Dispatch(id))
+    }
+
+    pub fn service_worker_fetch_dispatch<'a>(
+        &'a self,
+        capability: NavigationContextCapability,
+        id: ServiceWorkerFetchDispatchId,
+        registry: &ServiceWorkerRegistry,
+    ) -> Result<&'a ServiceWorkerFetchDispatch, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let dispatch = self
+            .service_worker_fetch_dispatches
+            .get(&id)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidServiceWorkerFetchDispatchAuthority,
+                    "unknown Service Worker fetch dispatch",
+                )
+            })?;
+        if dispatch.owner != process
+            || dispatch.context != capability.context
+            || dispatch.capability != capability.id
+        {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidServiceWorkerFetchDispatchAuthority,
+                "Service Worker fetch dispatch authority does not match the navigation context capability",
+            ));
+        }
+        if self.validate_service_worker_controller(
+            dispatch.context,
+            dispatch.controller,
+            registry,
+        )? != ServiceWorkerVersionState::Activated
+        {
+            return Err(HostControlError::new(
+                HostControlErrorKind::ServiceWorkerControllerStale,
+                "Service Worker fetch dispatch controller is no longer activated",
+            ));
+        }
+        Ok(dispatch)
+    }
+
+    pub fn complete_navigation_context_service_worker_fetch(
+        &mut self,
+        capability: NavigationContextCapability,
+        id: ServiceWorkerFetchDispatchId,
+        completion: ServiceWorkerFetchCompletion,
+        registry: &ServiceWorkerRegistry,
+        network: &mut dyn NetworkCapability,
+    ) -> Result<ServiceWorkerFetchResult, HostControlError> {
+        {
+            let dispatch = self.service_worker_fetch_dispatch(capability, id, registry)?;
+            if let ServiceWorkerFetchCompletion::Response(response) = &completion {
+                validate_service_worker_fetch_response(dispatch.request(), response)?;
+            }
+        }
+        let dispatch = self
+            .service_worker_fetch_dispatches
+            .remove(&id)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidServiceWorkerFetchDispatchAuthority,
+                    "Service Worker fetch dispatch disappeared before completion",
+                )
+            })?;
+        match completion {
+            ServiceWorkerFetchCompletion::Response(response) => {
+                Ok(ServiceWorkerFetchResult::Response(response))
+            }
+            ServiceWorkerFetchCompletion::Fallback => {
+                let operation = self.start_navigation_context_network_operation(
+                    capability,
+                    dispatch.request.into_network_request(),
+                    network,
+                )?;
+                Ok(ServiceWorkerFetchResult::Network(operation))
+            }
+        }
+    }
+
+    pub fn discard_navigation_context_service_worker_fetch(
+        &mut self,
+        capability: NavigationContextCapability,
+        id: ServiceWorkerFetchDispatchId,
+        registry: &ServiceWorkerRegistry,
+    ) -> Result<(), HostControlError> {
+        self.service_worker_fetch_dispatch(capability, id, registry)?;
+        self.service_worker_fetch_dispatches.remove(&id);
+        Ok(())
+    }
+
+    pub fn reap_stale_service_worker_fetch_dispatches(
+        &mut self,
+        registry: &ServiceWorkerRegistry,
+    ) -> usize {
+        let stale = self
+            .service_worker_fetch_dispatches
+            .iter()
+            .filter_map(|(id, dispatch)| {
+                (!self.service_worker_dispatch_is_live(dispatch, registry)).then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for id in &stale {
+            self.service_worker_fetch_dispatches.remove(id);
+        }
+        stale.len()
     }
 
     pub fn read_navigation_context_storage<'a>(
@@ -1449,6 +1907,155 @@ impl HostControlPlane {
         self.authorize_navigation_context_capability_class(capability, capability.class)
     }
 
+    fn canonical_navigation_context_url(&self, url: &WebUrl) -> Result<WebUrl, HostControlError> {
+        let serialized = url.as_str();
+        let bytes = serialized.find('#').unwrap_or(serialized.len());
+        if bytes > self.max_navigation_context_url_bytes {
+            return Err(HostControlError::new(
+                HostControlErrorKind::NavigationContextUrlLimitExceeded,
+                format!(
+                    "navigation context URL requires {bytes} bytes; limit is {}",
+                    self.max_navigation_context_url_bytes
+                ),
+            ));
+        }
+        Ok(WebUrl::parse(&serialized[..bytes])?)
+    }
+
+    fn validate_service_worker_controller(
+        &self,
+        context: NavigationContextId,
+        controller: ServiceWorkerController,
+        registry: &ServiceWorkerRegistry,
+    ) -> Result<ServiceWorkerVersionState, HostControlError> {
+        let state = self.require_navigation_context(context)?;
+        if state.service_worker_controller != Some(controller) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::ServiceWorkerControllerStale,
+                "Service Worker controller is not bound to this navigation context",
+            ));
+        }
+        let origin = state
+            .origin
+            .as_ref()
+            .filter(|origin| !origin.is_opaque())
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::ServiceWorkerControllerStale,
+                    "Service Worker controller has no current non-opaque client origin",
+                )
+            })?;
+        let registration = registry
+            .registration(controller.registration)
+            .map_err(|_| {
+                HostControlError::new(
+                    HostControlErrorKind::ServiceWorkerControllerStale,
+                    "Service Worker controller registration is stale or foreign",
+                )
+            })?;
+        if registration.scope().origin() != origin
+            || registration.active() != Some(controller.version)
+        {
+            return Err(HostControlError::new(
+                HostControlErrorKind::ServiceWorkerControllerStale,
+                "Service Worker controller registration no longer matches the current client",
+            ));
+        }
+        let version = registry.version(controller.version).map_err(|_| {
+            HostControlError::new(
+                HostControlErrorKind::ServiceWorkerControllerStale,
+                "Service Worker controller version is stale or foreign",
+            )
+        })?;
+        if version.registration() != controller.registration {
+            return Err(HostControlError::new(
+                HostControlErrorKind::ServiceWorkerControllerStale,
+                "Service Worker controller version no longer belongs to its registration",
+            ));
+        }
+        match version.state() {
+            ServiceWorkerVersionState::Activating | ServiceWorkerVersionState::Activated => {
+                Ok(version.state())
+            }
+            ServiceWorkerVersionState::Installing | ServiceWorkerVersionState::Installed => {
+                Err(HostControlError::new(
+                    HostControlErrorKind::ServiceWorkerControllerStale,
+                    "Service Worker controller version is not active",
+                ))
+            }
+        }
+    }
+
+    fn service_worker_dispatch_is_live(
+        &self,
+        dispatch: &ServiceWorkerFetchDispatch,
+        registry: &ServiceWorkerRegistry,
+    ) -> bool {
+        let Some(state) = self.navigation_contexts.get(&dispatch.context) else {
+            return false;
+        };
+        if state.binding.process != dispatch.owner
+            || state.service_worker_controller != Some(dispatch.controller)
+            || self
+                .navigation_context_capabilities
+                .get(&dispatch.capability)
+                .copied()
+                != Some(dispatch.context)
+            || self
+                .broker
+                .authorize(
+                    dispatch.capability,
+                    dispatch.owner,
+                    CapabilityClass::Network,
+                )
+                .is_err()
+        {
+            return false;
+        }
+        self.validate_service_worker_controller(dispatch.context, dispatch.controller, registry)
+            == Ok(ServiceWorkerVersionState::Activated)
+    }
+
+    fn discard_service_worker_fetch_dispatches_for_capability(
+        &mut self,
+        capability: CapabilityId,
+    ) -> usize {
+        let before = self.service_worker_fetch_dispatches.len();
+        self.service_worker_fetch_dispatches
+            .retain(|_, dispatch| dispatch.capability != capability);
+        before.saturating_sub(self.service_worker_fetch_dispatches.len())
+    }
+
+    fn discard_service_worker_fetch_dispatches_for_context(
+        &mut self,
+        context: NavigationContextId,
+    ) -> usize {
+        let before = self.service_worker_fetch_dispatches.len();
+        self.service_worker_fetch_dispatches
+            .retain(|_, dispatch| dispatch.context != context);
+        before.saturating_sub(self.service_worker_fetch_dispatches.len())
+    }
+
+    fn discard_service_worker_fetch_dispatches_for_process(
+        &mut self,
+        process: SiteProcessId,
+    ) -> usize {
+        let before = self.service_worker_fetch_dispatches.len();
+        self.service_worker_fetch_dispatches
+            .retain(|_, dispatch| dispatch.owner != process);
+        before.saturating_sub(self.service_worker_fetch_dispatches.len())
+    }
+
+    fn clear_service_worker_fetch_state_for_context(
+        &mut self,
+        context: NavigationContextId,
+    ) -> Result<(), HostControlError> {
+        self.discard_service_worker_fetch_dispatches_for_context(context);
+        self.require_navigation_context_mut(context)?
+            .service_worker_controller = None;
+        Ok(())
+    }
+
     fn authorize_navigation_context_storage_capability(
         &self,
         capability: NavigationContextCapability,
@@ -1598,6 +2205,35 @@ impl HostControlPlane {
     }
 }
 
+fn validate_service_worker_fetch_response(
+    request: &FetchRequest,
+    response: &FetchResponse,
+) -> Result<(), HostControlError> {
+    let limits = request.limits();
+    if response.headers().len() > limits.max_headers {
+        return Err(FetchError::new(
+            FetchErrorKind::HeaderCountLimitExceeded,
+            "Service Worker response header count exceeds the originating Fetch limit",
+        )
+        .into());
+    }
+    if response.headers().byte_len() > limits.max_header_bytes {
+        return Err(FetchError::new(
+            FetchErrorKind::HeaderBytesLimitExceeded,
+            "Service Worker response header bytes exceed the originating Fetch limit",
+        )
+        .into());
+    }
+    if response.body().len() > limits.max_response_body_bytes {
+        return Err(FetchError::new(
+            FetchErrorKind::ResponseBodyLimitExceeded,
+            "Service Worker response body exceeds the originating Fetch limit",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn validate_direction(
     envelope: &IpcEnvelope,
     expected_source: EndpointRole,
@@ -1639,6 +2275,8 @@ mod tests {
             max_capabilities,
             max_network_operations: 4,
             max_navigation_contexts: 4,
+            max_navigation_context_url_bytes: 512,
+            max_service_worker_fetch_dispatches: 4,
         }
     }
 
