@@ -2382,14 +2382,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rarog-storage"
-version = "0.1.0"
-dependencies = [
- "rarog-process",
- "rarog-url",
-]
-
-[[package]]
 name = "rarog-resources"
 version = "0.1.0"
 dependencies = [
@@ -2432,6 +2424,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-storage"
+version = "0.1.0"
+dependencies = [
+ "rarog-process",
+ "rarog-url",
+]
+
+[[package]]
 name = "rarog-text-opentype"
 version = "0.1.0"
 dependencies = [
@@ -2458,6 +2458,10 @@ version = "0.1.0"
 dependencies = [
  "weedle2",
 ]
+
+[[package]]
+name = "rarog-workers"
+version = "0.1.0"
 
 [[package]]
 name = "raw-window-handle"

@@ -394,11 +394,7 @@ impl<O: Eq> WorkerRegistry<O> {
         Ok(())
     }
 
-    fn insert_worker(
-        &mut self,
-        id: WorkerId,
-        record: WorkerRecord<O>,
-    ) -> Result<(), WorkerError> {
+    fn insert_worker(&mut self, id: WorkerId, record: WorkerRecord<O>) -> Result<(), WorkerError> {
         if self.workers.contains_key(&id) {
             return Err(WorkerError::new(
                 WorkerErrorKind::InconsistentState,
@@ -489,9 +485,7 @@ impl<O: Eq> WorkerRegistry<O> {
     ) -> WorkerError {
         WorkerError::new(
             WorkerErrorKind::InvalidLifecycleTransition,
-            format!(
-                "worker {worker} cannot transition from {current:?} to {requested:?}"
-            ),
+            format!("worker {worker} cannot transition from {current:?} to {requested:?}"),
         )
     }
 }
@@ -532,7 +526,10 @@ mod tests {
         let worker = registry.create_root(7).unwrap();
         assert_eq!(worker.get(), 1);
         assert_eq!(registry.owner(worker).unwrap(), &WorkerOwner::Root(7));
-        assert_eq!(registry.state(worker).unwrap(), WorkerLifecycleState::Created);
+        assert_eq!(
+            registry.state(worker).unwrap(),
+            WorkerLifecycleState::Created
+        );
         assert_eq!(registry.depth(worker).unwrap(), 1);
     }
 
@@ -631,7 +628,10 @@ mod tests {
 
         assert_eq!(registry.begin_close(root).unwrap(), 3);
         for worker in [root, child, grandchild] {
-            assert_eq!(registry.state(worker).unwrap(), WorkerLifecycleState::Closing);
+            assert_eq!(
+                registry.state(worker).unwrap(),
+                WorkerLifecycleState::Closing
+            );
         }
         let error = registry.mark_running(grandchild).unwrap_err();
         assert_eq!(error.kind, WorkerErrorKind::InvalidLifecycleTransition);
@@ -665,9 +665,18 @@ mod tests {
 
         assert_eq!(registry.retire_root_owner(&1).unwrap(), 2);
         assert_eq!(registry.live_workers(), 1);
-        assert_eq!(registry.state(first).unwrap_err().kind, WorkerErrorKind::UnknownWorker);
-        assert_eq!(registry.state(child).unwrap_err().kind, WorkerErrorKind::UnknownWorker);
-        assert_eq!(registry.state(other).unwrap(), WorkerLifecycleState::Created);
+        assert_eq!(
+            registry.state(first).unwrap_err().kind,
+            WorkerErrorKind::UnknownWorker
+        );
+        assert_eq!(
+            registry.state(child).unwrap_err().kind,
+            WorkerErrorKind::UnknownWorker
+        );
+        assert_eq!(
+            registry.state(other).unwrap(),
+            WorkerLifecycleState::Created
+        );
     }
 
     #[test]
