@@ -3,7 +3,7 @@ use super::model::{
     StorageRequest, StorageRequestId, StorageRequestLimits, StorageResponse,
     StorageResponsePayload,
 };
-use crate::state::{StorageLimits, StorageProcessState};
+use crate::state::{StorageLimits, StorageProcessState, validate_persistent_origin_identity};
 use rarog_process::StorageProcessId;
 use rarog_url::Origin;
 use std::collections::{HashMap, VecDeque};
@@ -106,7 +106,6 @@ impl StorageRequestQueue {
                 "storage request identity space is exhausted",
             )
         })?;
-        self.next_request = NonZeroU64::new(raw.get().wrapping_add(1));
         let id = StorageRequestId::try_new(raw.get())?;
         if self.pending.contains_key(&id) {
             return Err(StorageProtocolError::new(
@@ -136,6 +135,7 @@ impl StorageRequestQueue {
             command,
             accounted_bytes,
         });
+        self.next_request = raw.get().checked_add(1).and_then(NonZeroU64::new);
         self.tracked_bytes = next_bytes;
         Ok(id)
     }
@@ -149,8 +149,12 @@ impl StorageRequestQueue {
             return Ok(false);
         };
         let next_bytes = self.checked_release(pending.accounted_bytes)?;
-        let removed = self.pending.remove(&id);
-        debug_assert!(removed.is_some());
+        if self.pending.remove(&id).is_none() {
+            return Err(StorageProtocolError::new(
+                StorageProtocolErrorKind::AccountingOverflow,
+                "storage pending request disappeared before cancellation",
+            ));
+        }
         if let Some(position) = self.queued.iter().position(|request| request.id == id) {
             let _ = self.queued.remove(position);
         }
@@ -191,8 +195,12 @@ impl StorageRequestQueue {
         }
 
         let next_bytes = self.checked_release(pending.accounted_bytes)?;
-        let removed = self.pending.remove(&response.request());
-        debug_assert!(removed.is_some());
+        if self.pending.remove(&response.request()).is_none() {
+            return Err(StorageProtocolError::new(
+                StorageProtocolErrorKind::AccountingOverflow,
+                "storage pending request disappeared before completion",
+            ));
+        }
         self.tracked_bytes = next_bytes;
         Ok(response.into_payload())
     }
@@ -217,6 +225,8 @@ impl StorageRequestQueue {
                 "opaque origins do not receive persistent Storage-process requests",
             ));
         }
+        validate_persistent_origin_identity(origin)?;
+
         let key_len = command.key_len();
         let value_len = command.value_len();
         if key_len > self.storage_limits.max_key_bytes {
@@ -277,6 +287,7 @@ pub fn execute_storage_request(
             "opaque origins cannot execute persistent storage requests",
         ));
     }
+    validate_persistent_origin_identity(request.origin())?;
 
     let payload = match request.command() {
         StorageCommand::Get { key } => {
