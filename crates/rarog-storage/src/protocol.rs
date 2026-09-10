@@ -8,8 +8,7 @@ pub use queue::*;
 mod tests {
     use super::*;
     use crate::state::{
-        MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES, StorageErrorKind, StorageLimits,
-        StorageProcessState,
+        MAX_PERSISTENT_ORIGIN_IDENTITY_BYTES, StorageErrorKind, StorageLimits, StorageProcessState,
     };
     use rarog_process::{ProcessTopology, StorageProcessId};
     use rarog_url::{Origin, UrlHost, WebUrl};

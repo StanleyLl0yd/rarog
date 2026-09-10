@@ -615,9 +615,7 @@ mod tests {
         for bytes in cases {
             let mut target = StorageProcessState::try_new(process, limits()).unwrap();
             target.put(&exact, "key", b"old").unwrap();
-            assert!(
-                restore_storage_checkpoint(&mut target, &bytes, checkpoint_limits()).is_err()
-            );
+            assert!(restore_storage_checkpoint(&mut target, &bytes, checkpoint_limits()).is_err());
             assert_eq!(target.get(&exact, "key"), Some(b"old".as_slice()));
             assert_eq!(target.origin_count(), 1);
         }
@@ -655,6 +653,7 @@ mod tests {
         source.put(&exact, "b", b"12345678").unwrap();
         let checkpoint = encode_storage_checkpoint(&source, checkpoint_limits()).unwrap();
         let tight = StorageLimits {
+            max_key_bytes: 12,
             max_value_bytes: 12,
             max_origin_bytes: 12,
             max_total_bytes: 12,
@@ -664,9 +663,7 @@ mod tests {
         target.put(&exact, "old", b"value").unwrap();
         let before = target.total_bytes();
 
-        assert!(
-            restore_storage_checkpoint(&mut target, &checkpoint, checkpoint_limits()).is_err()
-        );
+        assert!(restore_storage_checkpoint(&mut target, &checkpoint, checkpoint_limits()).is_err());
         assert_eq!(target.get(&exact, "old"), Some(b"value".as_slice()));
         assert_eq!(target.get(&exact, "a"), None);
         assert_eq!(target.total_bytes(), before);

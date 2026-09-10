@@ -406,10 +406,12 @@ impl StorageTransactionManager {
 
         let candidate = {
             let transaction = self.active_transaction(id)?;
-            storage.try_clone_for_transaction().and_then(|mut candidate| {
-                apply_mutations(&mut candidate, &transaction.origin, &transaction.mutations)?;
-                Ok(candidate)
-            })
+            storage
+                .try_clone_for_transaction()
+                .and_then(|mut candidate| {
+                    apply_mutations(&mut candidate, &transaction.origin, &transaction.mutations)?;
+                    Ok(candidate)
+                })
         };
 
         match candidate {
@@ -770,11 +772,20 @@ mod tests {
         assert_eq!(manager.tracked_transactions(), 3);
         assert_eq!(manager.active_transactions(), 2);
         assert_eq!(manager.waiting_transactions(), 1);
-        assert_eq!(manager.state(writer).unwrap(), StorageTransactionState::Waiting);
+        assert_eq!(
+            manager.state(writer).unwrap(),
+            StorageTransactionState::Waiting
+        );
         manager.abort(first).unwrap();
-        assert_eq!(manager.state(writer).unwrap(), StorageTransactionState::Waiting);
+        assert_eq!(
+            manager.state(writer).unwrap(),
+            StorageTransactionState::Waiting
+        );
         manager.abort(second).unwrap();
-        assert_eq!(manager.state(writer).unwrap(), StorageTransactionState::Active);
+        assert_eq!(
+            manager.state(writer).unwrap(),
+            StorageTransactionState::Active
+        );
     }
 
     #[test]
@@ -812,15 +823,36 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(manager.state(writer).unwrap(), StorageTransactionState::Active);
-        assert_eq!(manager.state(reader).unwrap(), StorageTransactionState::Waiting);
-        assert_eq!(manager.state(later_writer).unwrap(), StorageTransactionState::Waiting);
-        assert_eq!(manager.state(independent).unwrap(), StorageTransactionState::Active);
+        assert_eq!(
+            manager.state(writer).unwrap(),
+            StorageTransactionState::Active
+        );
+        assert_eq!(
+            manager.state(reader).unwrap(),
+            StorageTransactionState::Waiting
+        );
+        assert_eq!(
+            manager.state(later_writer).unwrap(),
+            StorageTransactionState::Waiting
+        );
+        assert_eq!(
+            manager.state(independent).unwrap(),
+            StorageTransactionState::Active
+        );
         manager.abort(writer).unwrap();
-        assert_eq!(manager.state(reader).unwrap(), StorageTransactionState::Active);
-        assert_eq!(manager.state(later_writer).unwrap(), StorageTransactionState::Waiting);
+        assert_eq!(
+            manager.state(reader).unwrap(),
+            StorageTransactionState::Active
+        );
+        assert_eq!(
+            manager.state(later_writer).unwrap(),
+            StorageTransactionState::Waiting
+        );
         manager.abort(reader).unwrap();
-        assert_eq!(manager.state(later_writer).unwrap(), StorageTransactionState::Active);
+        assert_eq!(
+            manager.state(later_writer).unwrap(),
+            StorageTransactionState::Active
+        );
     }
 
     #[test]
@@ -917,6 +949,7 @@ mod tests {
         let process = process();
         let exact = origin("https://example.com/");
         let limited = StorageLimits {
+            max_key_bytes: 12,
             max_value_bytes: 12,
             max_origin_bytes: 12,
             max_total_bytes: 12,
