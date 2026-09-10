@@ -1471,10 +1471,7 @@ impl HostControlPlane {
                     "Storage capability has no matching navigation-context exact-origin authority",
                 )
             })?;
-        self.authorize_navigation_context_capability_class(
-            capability,
-            CapabilityClass::Storage,
-        )?;
+        self.authorize_navigation_context_capability_class(capability, CapabilityClass::Storage)?;
         let current_origin = self
             .require_navigation_context(capability.context)?
             .origin
@@ -3030,11 +3027,9 @@ mod tests {
         let mut other_topology = ProcessTopology::try_new(1).unwrap();
         let wrong_process = other_topology.ensure_storage_process().unwrap().process();
         assert_ne!(Some(wrong_process), host.storage_process());
-        let mut wrong_storage = StorageProcessState::try_new(
-            wrong_process,
-            rarog_storage::StorageLimits::default(),
-        )
-        .unwrap();
+        let mut wrong_storage =
+            StorageProcessState::try_new(wrong_process, rarog_storage::StorageLimits::default())
+                .unwrap();
 
         assert_eq!(
             host.write_navigation_context_storage(
@@ -3062,5 +3057,4 @@ mod tests {
         );
         assert_eq!(wrong_storage.total_bytes(), 0);
     }
-
 }
