@@ -13,12 +13,39 @@ impl StorageLoss {
         self.process
     }
 
+    pub fn process_generation(self) -> u64 {
+        self.process.get()
+    }
+
     pub fn revoked_capabilities(self) -> usize {
         self.revoked_capabilities
     }
 }
 
 impl HostControlPlane {
+    pub fn storage_process_generation(&self) -> Option<u64> {
+        self.topology.storage_process().map(StorageProcessId::get)
+    }
+
+    pub fn storage_process_lost_generation(
+        &mut self,
+        generation: u64,
+    ) -> Result<StorageLoss, HostControlError> {
+        let process = self.topology.storage_process().ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::StorageProcessMismatch,
+                format!("unknown, retired or replaced Storage process generation {generation}"),
+            )
+        })?;
+        if process.get() != generation {
+            return Err(HostControlError::new(
+                HostControlErrorKind::StorageProcessMismatch,
+                format!("unknown, retired or replaced Storage process generation {generation}"),
+            ));
+        }
+        self.storage_process_lost(process)
+    }
+
     pub fn storage_process_lost(
         &mut self,
         process: StorageProcessId,
@@ -122,8 +149,10 @@ mod tests {
             .grant_capability(site_process, CapabilityClass::Storage)
             .unwrap();
 
-        let loss = host.storage_process_lost(first).unwrap();
+        assert_eq!(host.storage_process_generation(), Some(first.get()));
+        let loss = host.storage_process_lost_generation(first.get()).unwrap();
         assert_eq!(loss.process(), first);
+        assert_eq!(loss.process_generation(), first.get());
         assert_eq!(loss.revoked_capabilities(), 2);
         assert_eq!(host.storage_process(), None);
         assert_eq!(host.active_navigation_contexts(), 1);
@@ -149,6 +178,7 @@ mod tests {
 
         let replacement = host.recover_storage_process().unwrap();
         assert_ne!(replacement, first);
+        assert_eq!(host.storage_process_generation(), Some(replacement.get()));
         let replacement_capability = host
             .grant_navigation_context_storage_capability(context.context())
             .unwrap();
@@ -167,7 +197,9 @@ mod tests {
         );
 
         assert_eq!(
-            host.storage_process_lost(first).unwrap_err().kind,
+            host.storage_process_lost_generation(first.get())
+                .unwrap_err()
+                .kind,
             HostControlErrorKind::StorageProcessMismatch
         );
         assert_eq!(host.storage_process(), Some(replacement));
@@ -188,7 +220,9 @@ mod tests {
         host.broker.revoke(storage.id()).unwrap();
 
         assert_eq!(
-            host.storage_process_lost(process).unwrap_err().kind,
+            host.storage_process_lost_generation(process.get())
+                .unwrap_err()
+                .kind,
             HostControlErrorKind::InconsistentState
         );
         assert_eq!(host.storage_process(), Some(process));

@@ -10,7 +10,6 @@ rarog-host = { path = "../rarog-host" }
 rarog-ipc = { path = "../rarog-ipc" }
 rarog-platform = { path = "../rarog-platform" }
 rarog-platform-windows-native = { path = "../rarog-platform-windows-native" }
-rarog-process = { path = "../rarog-process" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = { version = "5.4.1", default-features = false, features = ["std"] }

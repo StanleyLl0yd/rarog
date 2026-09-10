@@ -1,6 +1,5 @@
 use rarog_host::{HostControlPlane, StorageLoss};
 use rarog_platform_windows_native::{SandboxEvidence, SandboxedChild};
-use rarog_process::StorageProcessId;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 
@@ -97,7 +96,7 @@ impl WindowsStorageProcessCommand {
 
 #[derive(Debug)]
 pub struct WindowsStorageProcess {
-    process: StorageProcessId,
+    process_generation: u64,
     child: Option<SandboxedChild>,
     loss_reported: bool,
 }
@@ -109,16 +108,16 @@ impl WindowsStorageProcess {
 
     pub fn launch(
         host: &HostControlPlane,
-        process: StorageProcessId,
+        process_generation: u64,
         command: &WindowsStorageProcessCommand,
     ) -> Result<Self, WindowsStorageProcessError> {
         if !Self::target_available() {
             return Err(WindowsStorageProcessError::unsupported_target());
         }
-        if host.storage_process() != Some(process) {
+        if host.storage_process_generation() != Some(process_generation) {
             return Err(WindowsStorageProcessError::new(
                 WindowsStorageProcessErrorKind::UnknownStorageProcess,
-                "Storage-process identity is no longer live in the Host control plane",
+                "Storage-process generation is no longer live in the Host control plane",
             ));
         }
 
@@ -129,14 +128,14 @@ impl WindowsStorageProcess {
             )
         })?;
         Ok(Self {
-            process,
+            process_generation,
             child: Some(child),
             loss_reported: false,
         })
     }
 
-    pub fn process(&self) -> StorageProcessId {
-        self.process
+    pub fn process_generation(&self) -> u64 {
+        self.process_generation
     }
 
     pub fn try_observe_loss(
@@ -234,12 +233,14 @@ impl WindowsStorageProcess {
         &mut self,
         host: &mut HostControlPlane,
     ) -> Result<StorageLoss, WindowsStorageProcessError> {
-        let loss = host.storage_process_lost(self.process).map_err(|error| {
-            WindowsStorageProcessError::new(
-                WindowsStorageProcessErrorKind::HostControl,
-                format!("Host Storage-process loss handling failed: {error}"),
-            )
-        })?;
+        let loss = host
+            .storage_process_lost_generation(self.process_generation)
+            .map_err(|error| {
+                WindowsStorageProcessError::new(
+                    WindowsStorageProcessErrorKind::HostControl,
+                    format!("Host Storage-process loss handling failed: {error}"),
+                )
+            })?;
         self.loss_reported = true;
         Ok(loss)
     }
@@ -283,11 +284,12 @@ mod tests {
     #[test]
     fn windows_storage_process_is_explicitly_unsupported_off_windows() {
         let mut host = HostControlPlane::with_default_limits().unwrap();
-        let process = host.ensure_storage_process().unwrap();
+        host.ensure_storage_process().unwrap();
+        let process_generation = host.storage_process_generation().unwrap();
         let command = WindowsStorageProcessCommand::try_new("rarog-storage.exe").unwrap();
 
         assert_eq!(
-            WindowsStorageProcess::launch(&host, process, &command)
+            WindowsStorageProcess::launch(&host, process_generation, &command)
                 .unwrap_err()
                 .kind,
             WindowsStorageProcessErrorKind::UnsupportedTarget
@@ -305,7 +307,7 @@ mod tests {
             .unwrap();
         host.grant_navigation_context_capability(context.context(), CapabilityClass::Network)
             .unwrap();
-        let storage = host.storage_process().unwrap();
+        let storage_generation = host.storage_process_generation().unwrap();
 
         let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| OsString::from("cmd.exe"));
         let command = WindowsStorageProcessCommand::try_new(shell)
@@ -316,22 +318,24 @@ mod tests {
             .unwrap()
             .try_arg("exit 0")
             .unwrap();
-        let mut process = WindowsStorageProcess::launch(&host, storage, &command).unwrap();
-        assert_eq!(process.process(), storage);
+        let mut process =
+            WindowsStorageProcess::launch(&host, storage_generation, &command).unwrap();
+        assert_eq!(process.process_generation(), storage_generation);
         assert!(process.sandbox_evidence().unwrap().satisfies_r4_policy());
 
         let loss = process.wait_for_loss(&mut host).unwrap().unwrap();
-        assert_eq!(loss.process(), storage);
+        assert_eq!(loss.process_generation(), storage_generation);
         assert_eq!(loss.revoked_capabilities(), 1);
-        assert_eq!(host.storage_process(), None);
+        assert_eq!(host.storage_process_generation(), None);
         assert_eq!(host.active_navigation_contexts(), 1);
         assert_eq!(host.active_capabilities(), 1);
         assert!(process.try_observe_loss(&mut host).unwrap().is_none());
 
-        let replacement = host.recover_storage_process().unwrap();
-        assert_ne!(replacement, storage);
+        host.recover_storage_process().unwrap();
+        let replacement_generation = host.storage_process_generation().unwrap();
+        assert_ne!(replacement_generation, storage_generation);
         assert_eq!(
-            WindowsStorageProcess::launch(&host, storage, &command)
+            WindowsStorageProcess::launch(&host, storage_generation, &command)
                 .unwrap_err()
                 .kind,
             WindowsStorageProcessErrorKind::UnknownStorageProcess
