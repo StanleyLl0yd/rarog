@@ -30,13 +30,13 @@ impl HostControlPlane {
             ));
         }
 
-        let storage_capabilities = self
+        let context_storage_capabilities = self
             .navigation_context_storage_origins
             .keys()
             .copied()
             .collect::<Vec<_>>();
 
-        for id in &storage_capabilities {
+        for id in &context_storage_capabilities {
             let context = self
                 .navigation_context_capabilities
                 .get(id)
@@ -58,14 +58,16 @@ impl HostControlPlane {
                 })?;
         }
 
-        for id in &storage_capabilities {
-            self.revoke_capability(*id)?;
+        let revoked_capabilities = self.broker.revoke_all_for_class(CapabilityClass::Storage);
+        for id in &context_storage_capabilities {
+            self.navigation_context_capabilities.remove(id);
+            self.navigation_context_storage_origins.remove(id);
         }
         self.topology.retire_storage_process(process)?;
 
         Ok(StorageLoss {
             process,
-            revoked_capabilities: storage_capabilities.len(),
+            revoked_capabilities,
         })
     }
 
@@ -99,7 +101,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_loss_revokes_only_storage_authority_and_recovery_is_fresh() {
+    fn storage_loss_revokes_all_storage_authority_and_recovery_is_fresh() {
         let mut host = host();
         let context = host
             .open_navigation_context(&WebUrl::parse("https://example.com/").unwrap())
@@ -116,10 +118,13 @@ mod tests {
             .unwrap()
             .binding
             .process;
+        let generic_storage = host
+            .grant_capability(site_process, CapabilityClass::Storage)
+            .unwrap();
 
         let loss = host.storage_process_lost(first).unwrap();
         assert_eq!(loss.process(), first);
-        assert_eq!(loss.revoked_capabilities(), 1);
+        assert_eq!(loss.revoked_capabilities(), 2);
         assert_eq!(host.storage_process(), None);
         assert_eq!(host.active_navigation_contexts(), 1);
         assert_eq!(host.active_capabilities(), 1);
@@ -128,6 +133,13 @@ mod tests {
                 .unwrap_err()
                 .kind,
             HostControlErrorKind::InvalidNavigationContextStorageAuthority
+        );
+        assert_eq!(
+            host.broker
+                .authorize(generic_storage.id(), site_process, CapabilityClass::Storage)
+                .unwrap_err()
+                .kind,
+            CapabilityErrorKind::UnknownCapability
         );
         assert_eq!(
             host.broker
