@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 rarog-scheduler = { path = "../rarog-scheduler" }
 rarog-script = { path = "../rarog-script" }
+rarog-url = { path = "../rarog-url" }
 
 [lints]
 workspace = true

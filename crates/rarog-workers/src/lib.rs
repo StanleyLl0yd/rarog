@@ -1,6 +1,7 @@
 mod execution;
 mod identity;
 mod message;
+mod service_worker;
 
 pub use execution::{
     WorkerExecution, WorkerExecutionError, WorkerExecutionStep, WorkerMessageDelivery,
@@ -17,4 +18,11 @@ pub use message::{
     WorkerMessageDiscard, WorkerMessageEndpoint, WorkerMessageError, WorkerMessageId,
     WorkerMessageLimits, WorkerMessageMailbox, WorkerMessageNumber, WorkerMessagePayload,
     WorkerMessageValue,
+};
+pub use service_worker::{
+    DEFAULT_MAX_SERVICE_WORKER_REGISTRATIONS, DEFAULT_MAX_SERVICE_WORKER_REGISTRATIONS_PER_ORIGIN,
+    DEFAULT_MAX_SERVICE_WORKER_URL_BYTES, DEFAULT_MAX_SERVICE_WORKER_VERSIONS,
+    ServiceWorkerDiscard, ServiceWorkerError, ServiceWorkerLimits, ServiceWorkerRegistration,
+    ServiceWorkerRegistrationId, ServiceWorkerRegistrationUpdate, ServiceWorkerRegistry,
+    ServiceWorkerScope, ServiceWorkerVersion, ServiceWorkerVersionId, ServiceWorkerVersionState,
 };
