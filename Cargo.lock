@@ -2381,6 +2381,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-storage"
+version = "0.1.0"
+dependencies = [
+ "rarog-process",
+ "rarog-url",
+]
+
+[[package]]
 name = "rarog-resources"
 version = "0.1.0"
 dependencies = [

@@ -44,6 +44,47 @@ impl fmt::Display for SiteProcessId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StorageProcessId(ProcessId);
+
+impl StorageProcessId {
+    pub fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for StorageProcessId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "storage:{}", self.get())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageAssignmentKind {
+    Existing,
+    Created,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageAssignment {
+    process: StorageProcessId,
+    kind: StorageAssignmentKind,
+}
+
+impl StorageAssignment {
+    pub fn process(self) -> StorageProcessId {
+        self.process
+    }
+
+    pub fn kind(self) -> StorageAssignmentKind {
+        self.kind
+    }
+
+    pub fn is_new(self) -> bool {
+        self.kind == StorageAssignmentKind::Created
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SiteAssignmentKind {
     Existing,
@@ -76,6 +117,7 @@ pub enum ProcessTopologyErrorKind {
     ProcessLimitExceeded,
     IdentitySpaceExhausted,
     UnknownSiteProcess,
+    UnknownStorageProcess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,6 +172,7 @@ pub struct ProcessTopology {
     host: HostProcessId,
     max_site_processes: usize,
     allocator: ProcessIdAllocator,
+    storage_process: Option<StorageProcessId>,
     process_by_site: HashMap<SiteIdentity, SiteProcessId>,
     site_by_process: HashMap<SiteProcessId, SiteIdentity>,
 }
@@ -149,6 +192,7 @@ impl ProcessTopology {
             host,
             max_site_processes,
             allocator,
+            storage_process: None,
             process_by_site: HashMap::new(),
             site_by_process: HashMap::new(),
         })
@@ -168,6 +212,40 @@ impl ProcessTopology {
 
     pub fn active_site_processes(&self) -> usize {
         self.process_by_site.len()
+    }
+
+    pub fn storage_process(&self) -> Option<StorageProcessId> {
+        self.storage_process
+    }
+
+    pub fn ensure_storage_process(&mut self) -> Result<StorageAssignment, ProcessTopologyError> {
+        if let Some(process) = self.storage_process {
+            return Ok(StorageAssignment {
+                process,
+                kind: StorageAssignmentKind::Existing,
+            });
+        }
+
+        let process = StorageProcessId(self.allocator.allocate()?);
+        self.storage_process = Some(process);
+        Ok(StorageAssignment {
+            process,
+            kind: StorageAssignmentKind::Created,
+        })
+    }
+
+    pub fn retire_storage_process(
+        &mut self,
+        process: StorageProcessId,
+    ) -> Result<(), ProcessTopologyError> {
+        if self.storage_process != Some(process) {
+            return Err(ProcessTopologyError::new(
+                ProcessTopologyErrorKind::UnknownStorageProcess,
+                format!("unknown storage process {process}"),
+            ));
+        }
+        self.storage_process = None;
+        Ok(())
     }
 
     pub fn assign_site(
@@ -239,6 +317,40 @@ mod tests {
         let assignment = topology.assign_site(site("https://example.com/")).unwrap();
         assert_eq!(assignment.process().get(), 2);
         assert!(assignment.is_new());
+    }
+
+    #[test]
+    fn storage_process_identity_is_singleton_and_independent_from_site_budget() {
+        let mut topology = ProcessTopology::try_new(1).unwrap();
+        let site = topology.assign_site(site("https://example.com/")).unwrap();
+        let storage = topology.ensure_storage_process().unwrap();
+        let same_storage = topology.ensure_storage_process().unwrap();
+
+        assert_eq!(site.process().get(), 2);
+        assert_eq!(storage.process().get(), 3);
+        assert_eq!(storage.kind(), StorageAssignmentKind::Created);
+        assert_eq!(same_storage.kind(), StorageAssignmentKind::Existing);
+        assert_eq!(storage.process(), same_storage.process());
+        assert_eq!(topology.storage_process(), Some(storage.process()));
+        assert_eq!(topology.active_site_processes(), 1);
+    }
+
+    #[test]
+    fn retired_storage_process_identity_is_not_reused() {
+        let mut topology = ProcessTopology::try_new(1).unwrap();
+        let first = topology.ensure_storage_process().unwrap();
+        topology.retire_storage_process(first.process()).unwrap();
+        assert_eq!(topology.storage_process(), None);
+
+        let replacement = topology.ensure_storage_process().unwrap();
+        assert_ne!(first.process(), replacement.process());
+        assert_eq!(replacement.kind(), StorageAssignmentKind::Created);
+
+        let stale = topology
+            .retire_storage_process(first.process())
+            .unwrap_err();
+        assert_eq!(stale.kind, ProcessTopologyErrorKind::UnknownStorageProcess);
+        assert_eq!(topology.storage_process(), Some(replacement.process()));
     }
 
     #[test]
