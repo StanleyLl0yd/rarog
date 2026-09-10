@@ -180,6 +180,16 @@ Dispatch access and completion revalidate context/process/capability ownership p
 
 This R5 interception boundary does not claim script-visible `FetchEvent`/`respondWith`, navigation interception completeness, Cache Storage, navigation preload, Service Worker router rules, soft-update timing, full storage-key partitioning, trustworthy-origin/secure-context completeness, complete Service Worker client/controller handoff, push/sync, SharedWorker semantics, generic Web structured-clone completeness, transferables or OS thread/process isolation. Those remain separate work; R6 compatibility qualification is explicitly out of scope.
 
+### R5 WebSocket semantic contracts
+
+`rarog-websocket` owns the first portable WebSocket boundary independently from Host/network transport. `WebSocketUrl` wraps Rarog `WebUrl`, bounds raw and canonical serialized input, maps HTTP(S) constructor schemes to WS(S), rejects fragments and unsupported schemes, exposes `wss` security state and derives the protocol resource name from path plus query. The crate depends only on `rarog-url`; backend socket, TLS, HTTP, platform and Host types are absent.
+
+Opening-handshake intent is semantic data only. `WebSocketProtocols` preserves requested subprotocol order while enforcing a bounded count, bounded bytes per value, non-empty HTTP-token grammar and case-sensitive duplicate rejection before values are retained. `WebSocketHandshakeIntent` owns only the validated canonical URL plus requested protocols; random keys, raw Upgrade headers, extension negotiation and backend connection identity remain later integration work.
+
+`WebSocketReadyState` records the four Web-facing connecting/open/closing/closed states without pretending to run transport transitions. `WebSocketMessage` privately owns bounded text or binary application data; UTF-8 text is charged by encoded bytes and oversize input is rejected before copying. These are message-level contracts, not WebSocket frames: opcodes, fragmentation, masks, native sockets and queue ownership are intentionally absent. See ADR-0123.
+
+The remaining R5 WebSocket work attaches these semantic contracts to Host-private backend authority, adds bounded inbound/outbound queue accounting, and defines close/error/backpressure lifecycle. DOM/WebIDL exposure and R6 compatibility qualification are not claimed by this foundation.
+
 ## Rendering model
 
 ```text

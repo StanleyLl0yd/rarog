@@ -2461,6 +2461,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-websocket"
+version = "0.1.0"
+dependencies = [
+ "rarog-url",
+]
+
+[[package]]
 name = "rarog-workers"
 version = "0.1.0"
 dependencies = [

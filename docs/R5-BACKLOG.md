@@ -23,7 +23,7 @@ Tracking issue: #260.
 
 ## C — WebSocket
 
-- [ ] Define Rarog-owned WebSocket URL/handshake/state/message contracts.
+- [x] Define Rarog-owned WebSocket URL/handshake/state/message contracts.
 - [ ] Keep socket/backend identities private behind Host/network capability routing.
 - [ ] Bound inbound/outbound message size and queued bytes/messages.
 - [ ] Add close/error/backpressure lifecycle coverage.
