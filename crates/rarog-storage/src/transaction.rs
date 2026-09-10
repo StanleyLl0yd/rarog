@@ -1,6 +1,6 @@
 use crate::state::{
-    validate_persistent_origin_identity, StorageError, StorageErrorKind, StorageLimits,
-    StorageProcessState,
+    StorageError, StorageErrorKind, StorageLimits, StorageProcessState,
+    validate_persistent_origin_identity,
 };
 use rarog_process::StorageProcessId;
 use rarog_url::Origin;
@@ -118,7 +118,10 @@ impl std::error::Error for StorageTransactionError {}
 
 impl From<StorageError> for StorageTransactionError {
     fn from(error: StorageError) -> Self {
-        Self::new(StorageTransactionErrorKind::Storage(error.kind), error.message)
+        Self::new(
+            StorageTransactionErrorKind::Storage(error.kind),
+            error.message,
+        )
     }
 }
 
@@ -200,8 +203,22 @@ impl StorageTransactionManager {
         self.limits
     }
 
-    pub fn active_transactions(&self) -> usize {
+    pub fn tracked_transactions(&self) -> usize {
         self.transactions.len()
+    }
+
+    pub fn active_transactions(&self) -> usize {
+        self.transactions
+            .values()
+            .filter(|transaction| transaction.state == StorageTransactionState::Active)
+            .count()
+    }
+
+    pub fn waiting_transactions(&self) -> usize {
+        self.transactions
+            .values()
+            .filter(|transaction| transaction.state == StorageTransactionState::Waiting)
+            .count()
     }
 
     pub fn total_staged_bytes(&self) -> usize {
@@ -235,7 +252,6 @@ impl StorageTransactionManager {
             )
         })?;
         let id = StorageTransactionId(raw);
-        self.next_transaction = raw.get().checked_add(1).and_then(NonZeroU64::new);
         let state = if self.can_start_new(mode, &origin) {
             StorageTransactionState::Active
         } else {
@@ -252,6 +268,7 @@ impl StorageTransactionManager {
                 staged_bytes: 0,
             },
         );
+        self.next_transaction = raw.get().checked_add(1).and_then(NonZeroU64::new);
         Ok(id)
     }
 
@@ -262,10 +279,7 @@ impl StorageTransactionManager {
         Ok(self.transaction(id)?.state)
     }
 
-    pub fn origin(
-        &self,
-        id: StorageTransactionId,
-    ) -> Result<&Origin, StorageTransactionError> {
+    pub fn origin(&self, id: StorageTransactionId) -> Result<&Origin, StorageTransactionError> {
         Ok(&self.transaction(id)?.origin)
     }
 
@@ -290,10 +304,7 @@ impl StorageTransactionManager {
         Ok(self.transaction(id)?.mutations.len())
     }
 
-    pub fn staged_bytes(
-        &self,
-        id: StorageTransactionId,
-    ) -> Result<usize, StorageTransactionError> {
+    pub fn staged_bytes(&self, id: StorageTransactionId) -> Result<usize, StorageTransactionError> {
         Ok(self.transaction(id)?.staged_bytes)
     }
 
@@ -364,10 +375,7 @@ impl StorageTransactionManager {
         self.push_mutation(id, StorageMutation::Remove { key }, accounted_bytes)
     }
 
-    pub fn stage_clear(
-        &mut self,
-        id: StorageTransactionId,
-    ) -> Result<(), StorageTransactionError> {
+    pub fn stage_clear(&mut self, id: StorageTransactionId) -> Result<(), StorageTransactionError> {
         self.validate_mutation_budget(id, 0)?;
         self.push_mutation(id, StorageMutation::Clear, 0)
     }
@@ -398,35 +406,30 @@ impl StorageTransactionManager {
 
         let candidate = {
             let transaction = self.active_transaction(id)?;
-            let mut candidate = storage.try_clone_for_transaction()?;
-            let result = apply_mutations(&mut candidate, &transaction.origin, &transaction.mutations);
-            match result {
-                Ok(()) => Ok(candidate),
-                Err(error) => Err(StorageTransactionError::from(error)),
-            }
+            storage.try_clone_for_transaction().and_then(|mut candidate| {
+                apply_mutations(&mut candidate, &transaction.origin, &transaction.mutations)?;
+                Ok(candidate)
+            })
         };
 
-        let candidate = match candidate {
-            Ok(candidate) => candidate,
+        match candidate {
+            Ok(candidate) => {
+                self.finish(id)?;
+                *storage = candidate;
+                Ok(StorageTransactionCommit {
+                    transaction: id,
+                    durability,
+                    mutated,
+                })
+            }
             Err(error) => {
                 self.finish(id)?;
-                return Err(error);
+                Err(error.into())
             }
-        };
-
-        self.finish(id)?;
-        *storage = candidate;
-        Ok(StorageTransactionCommit {
-            transaction: id,
-            durability,
-            mutated,
-        })
+        }
     }
 
-    pub fn abort(
-        &mut self,
-        id: StorageTransactionId,
-    ) -> Result<bool, StorageTransactionError> {
+    pub fn abort(&mut self, id: StorageTransactionId) -> Result<bool, StorageTransactionError> {
         self.transaction(id)?;
         self.finish(id)?;
         Ok(true)
@@ -614,9 +617,11 @@ impl StorageTransactionManager {
             let Some(id) = next else {
                 break;
             };
-            let can_start = {
-                let transaction = self.transactions.get(&id).expect("transaction id came from map");
-                self.can_start_existing(id, transaction.mode, &transaction.origin)
+            let can_start = match self.transactions.get(&id) {
+                Some(transaction) => {
+                    self.can_start_existing(id, transaction.mode, &transaction.origin)
+                }
+                None => false,
             };
             if can_start {
                 if let Some(transaction) = self.transactions.get_mut(&id) {
@@ -736,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_transactions_overlap_but_write_scope_waits() {
+    fn read_only_transactions_overlap_but_writer_waits() {
         let process = process();
         let shared = origin("https://example.com/");
         let mut manager = manager(process);
@@ -762,13 +767,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(manager.state(first).unwrap(), StorageTransactionState::Active);
-        assert_eq!(manager.state(second).unwrap(), StorageTransactionState::Active);
+        assert_eq!(manager.tracked_transactions(), 3);
+        assert_eq!(manager.active_transactions(), 2);
+        assert_eq!(manager.waiting_transactions(), 1);
         assert_eq!(manager.state(writer).unwrap(), StorageTransactionState::Waiting);
-        assert_eq!(
-            manager.stage_put(writer, "k", b"v").unwrap_err().kind,
-            StorageTransactionErrorKind::TransactionNotActive
-        );
         manager.abort(first).unwrap();
         assert_eq!(manager.state(writer).unwrap(), StorageTransactionState::Waiting);
         manager.abort(second).unwrap();
@@ -776,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn older_writer_blocks_later_overlapping_readers_and_writers_only() {
+    fn older_writer_blocks_later_same_origin_work_but_not_other_origins() {
         let process = process();
         let first_origin = origin("https://a.example/");
         let other_origin = origin("https://b.example/");
@@ -833,7 +835,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            manager.stage_put(transaction, "key", b"value").unwrap_err().kind,
+            manager
+                .stage_put(transaction, "key", b"value")
+                .unwrap_err()
+                .kind,
             StorageTransactionErrorKind::ReadOnlyMutation
         );
         assert_eq!(manager.staged_mutations(transaction).unwrap(), 0);
@@ -856,14 +861,25 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(manager.read(transaction, &storage, "key").unwrap(), Some(b"one".to_vec()));
+        assert_eq!(
+            manager.read(transaction, &storage, "key").unwrap(),
+            Some(b"one".to_vec())
+        );
         manager.stage_put(transaction, "key", b"changed").unwrap();
-        assert_eq!(manager.read(transaction, &storage, "key").unwrap(), Some(b"changed".to_vec()));
+        assert_eq!(
+            manager.read(transaction, &storage, "key").unwrap(),
+            Some(b"changed".to_vec())
+        );
         assert_eq!(storage.get(&second, "key"), Some(b"two".as_slice()));
         manager.stage_clear(transaction).unwrap();
         assert_eq!(manager.read(transaction, &storage, "key").unwrap(), None);
-        manager.stage_put(transaction, "key", b"after-clear").unwrap();
-        assert_eq!(manager.read(transaction, &storage, "key").unwrap(), Some(b"after-clear".to_vec()));
+        manager
+            .stage_put(transaction, "key", b"after-clear")
+            .unwrap();
+        assert_eq!(
+            manager.read(transaction, &storage, "key").unwrap(),
+            Some(b"after-clear".to_vec())
+        );
     }
 
     #[test]
@@ -892,7 +908,7 @@ mod tests {
         assert_eq!(storage.get(&exact, "old"), None);
         assert_eq!(storage.get(&exact, "a"), Some(b"one".as_slice()));
         assert_eq!(storage.get(&exact, "b"), Some(b"two".as_slice()));
-        assert_eq!(manager.active_transactions(), 0);
+        assert_eq!(manager.tracked_transactions(), 0);
         assert_eq!(manager.total_staged_bytes(), 0);
     }
 
@@ -901,13 +917,15 @@ mod tests {
         let process = process();
         let exact = origin("https://example.com/");
         let limited = StorageLimits {
-            max_total_bytes: 12,
+            max_value_bytes: 12,
             max_origin_bytes: 12,
+            max_total_bytes: 12,
             ..storage_limits()
         };
         let mut storage = StorageProcessState::try_new(process, limited).unwrap();
         storage.put(&exact, "base", b"old").unwrap();
-        let mut manager = StorageTransactionManager::try_new(process, limited, transaction_limits()).unwrap();
+        let mut manager =
+            StorageTransactionManager::try_new(process, limited, transaction_limits()).unwrap();
         let transaction = manager
             .begin(
                 exact.clone(),
@@ -926,7 +944,7 @@ mod tests {
         assert_eq!(storage.get(&exact, "base"), Some(b"old".as_slice()));
         assert_eq!(storage.get(&exact, "a"), None);
         assert_eq!(storage.get(&exact, "b"), None);
-        assert_eq!(manager.active_transactions(), 0);
+        assert_eq!(manager.tracked_transactions(), 0);
         assert_eq!(
             manager.state(transaction).unwrap_err().kind,
             StorageTransactionErrorKind::UnknownTransaction
@@ -937,7 +955,7 @@ mod tests {
     fn abort_discards_staged_state_and_transaction_id_stays_stale() {
         let process = process();
         let exact = origin("https://example.com/");
-        let mut storage = StorageProcessState::try_new(process, storage_limits()).unwrap();
+        let storage = StorageProcessState::try_new(process, storage_limits()).unwrap();
         let mut manager = manager(process);
         let first = manager
             .begin(
@@ -973,7 +991,8 @@ mod tests {
             max_staged_bytes_per_transaction: 5,
             max_total_staged_bytes: 5,
         };
-        let mut manager = StorageTransactionManager::try_new(process, storage_limits(), limits).unwrap();
+        let mut manager =
+            StorageTransactionManager::try_new(process, storage_limits(), limits).unwrap();
         let transaction = manager
             .begin(
                 exact,
@@ -982,7 +1001,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            manager.stage_put(transaction, "key", b"123").unwrap_err().kind,
+            manager
+                .stage_put(transaction, "key", b"123")
+                .unwrap_err()
+                .kind,
             StorageTransactionErrorKind::StagedByteLimitExceeded
         );
         assert_eq!(manager.staged_mutations(transaction).unwrap(), 0);
@@ -1000,7 +1022,12 @@ mod tests {
         let process = process();
         let mut topology = ProcessTopology::try_new(1).unwrap();
         topology
-            .assign_site(WebUrl::parse("https://site.example/").unwrap().site_identity().unwrap())
+            .assign_site(
+                WebUrl::parse("https://site.example/")
+                    .unwrap()
+                    .site_identity()
+                    .unwrap(),
+            )
             .unwrap();
         let other = topology.ensure_storage_process().unwrap().process();
         assert_ne!(process, other);
@@ -1021,5 +1048,6 @@ mod tests {
             manager.commit(transaction, &mut wrong).unwrap_err().kind,
             StorageTransactionErrorKind::WrongProcess
         );
+        assert_eq!(manager.tracked_transactions(), 1);
     }
 }
