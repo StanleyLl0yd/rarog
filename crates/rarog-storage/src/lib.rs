@@ -483,7 +483,7 @@ mod tests {
         storage.put(&second, "b", &[2; 10]).unwrap();
         let before = storage.total_bytes();
 
-        let error = storage.put(&second, "b", &[3; 11]).unwrap_err();
+        let error = storage.put(&second, "b", &[3; 13]).unwrap_err();
 
         assert_eq!(error.kind, StorageErrorKind::TotalByteLimitExceeded);
         assert_eq!(storage.get(&second, "b"), Some([2; 10].as_slice()));
