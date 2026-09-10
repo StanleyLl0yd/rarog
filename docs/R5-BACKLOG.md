@@ -11,7 +11,7 @@ Tracking issue: #260.
 - [x] Bind production navigation contexts to exact origin authority and route Storage access through Host authorization (#263).
 - [x] Define storage IPC/request contracts without exposing filesystem paths or backend handles to Site code (#265).
 - [x] Add Windows-first Storage-process launch/loss/containment evidence (#267).
-- [ ] Add durability/transaction foundations required by the selected Web Storage/IndexedDB slices without claiming broader API completeness.
+- [x] Add durability/transaction foundations required by the selected Web Storage/IndexedDB slices without claiming broader API completeness.
 
 ## B — Workers / Service Workers
 
