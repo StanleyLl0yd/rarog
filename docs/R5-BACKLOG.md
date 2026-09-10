@@ -15,7 +15,7 @@ Tracking issue: #260.
 
 ## B — Workers / Service Workers
 
-- [ ] Add bounded worker identities, ownership and lifecycle.
+- [x] Add bounded worker identities, ownership and lifecycle.
 - [ ] Add dedicated worker task/microtask execution ownership behind the Rarog Script API.
 - [ ] Add Worker message delivery with bounded structured payload ownership.
 - [ ] Add Service Worker registration/scope/lifecycle foundation.
