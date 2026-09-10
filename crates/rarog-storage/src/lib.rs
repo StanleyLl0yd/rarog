@@ -256,28 +256,60 @@ impl StorageProcessState {
         Ok(())
     }
 
-    pub fn remove(&mut self, origin: &Origin, key: &str) -> bool {
-        let Some(storage) = self.origins.get_mut(origin) else {
-            return false;
+    pub fn remove(&mut self, origin: &Origin, key: &str) -> Result<bool, StorageError> {
+        let Some(storage) = self.origins.get(origin) else {
+            return Ok(false);
         };
-        let Some(value) = storage.entries.remove(key) else {
-            return false;
+        let Some(value) = storage.entries.get(key) else {
+            return Ok(false);
         };
-        let removed = key.len().saturating_add(value.len());
-        storage.bytes = storage.bytes.saturating_sub(removed);
-        self.total_bytes = self.total_bytes.saturating_sub(removed);
+        let removed = checked_entry_bytes(key.len(), value.len())?;
+        let next_origin_bytes = storage.bytes.checked_sub(removed).ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::AccountingOverflow,
+                "storage origin byte accounting underflow",
+            )
+        })?;
+        let next_total_bytes = self.total_bytes.checked_sub(removed).ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::AccountingOverflow,
+                "storage process byte accounting underflow",
+            )
+        })?;
+
+        let storage = self.origins.get_mut(origin).ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::AccountingOverflow,
+                "storage origin disappeared during a single-threaded mutation",
+            )
+        })?;
+        if storage.entries.remove(key).is_none() {
+            return Err(StorageError::new(
+                StorageErrorKind::AccountingOverflow,
+                "storage entry disappeared during a single-threaded mutation",
+            ));
+        }
+        storage.bytes = next_origin_bytes;
+        self.total_bytes = next_total_bytes;
         if storage.entries.is_empty() {
             self.origins.remove(origin);
         }
-        true
+        Ok(true)
     }
 
-    pub fn clear_origin(&mut self, origin: &Origin) -> bool {
-        let Some(storage) = self.origins.remove(origin) else {
-            return false;
+    pub fn clear_origin(&mut self, origin: &Origin) -> Result<bool, StorageError> {
+        let Some(storage) = self.origins.get(origin) else {
+            return Ok(false);
         };
-        self.total_bytes = self.total_bytes.saturating_sub(storage.bytes);
-        true
+        let next_total_bytes = self.total_bytes.checked_sub(storage.bytes).ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::AccountingOverflow,
+                "storage process byte accounting underflow",
+            )
+        })?;
+        self.origins.remove(origin);
+        self.total_bytes = next_total_bytes;
+        Ok(true)
     }
 
     fn validate_persistent_origin(&self, origin: &Origin) -> Result<(), StorageError> {
@@ -443,6 +475,22 @@ mod tests {
     }
 
     #[test]
+    fn total_byte_quota_failure_is_atomic() {
+        let first = origin("https://a.example/");
+        let second = origin("https://b.example/");
+        let mut storage = StorageProcessState::try_new(process(), limits()).unwrap();
+        storage.put(&first, "a", &[1; 10]).unwrap();
+        storage.put(&second, "b", &[2; 10]).unwrap();
+        let before = storage.total_bytes();
+
+        let error = storage.put(&second, "b", &[3; 11]).unwrap_err();
+
+        assert_eq!(error.kind, StorageErrorKind::TotalByteLimitExceeded);
+        assert_eq!(storage.get(&second, "b"), Some([2; 10].as_slice()));
+        assert_eq!(storage.total_bytes(), before);
+    }
+
+    #[test]
     fn removal_releases_origin_and_global_quota() {
         let first = origin("https://a.example/");
         let second = origin("https://b.example/");
@@ -451,12 +499,12 @@ mod tests {
         storage.put(&first, "a", b"one").unwrap();
         storage.put(&second, "b", b"two").unwrap();
 
-        assert!(storage.clear_origin(&first));
+        assert!(storage.clear_origin(&first).unwrap());
         assert_eq!(storage.origin_count(), 1);
         storage.put(&third, "c", b"three").unwrap();
         assert_eq!(storage.origin_count(), 2);
 
-        assert!(storage.remove(&second, "b"));
+        assert!(storage.remove(&second, "b").unwrap());
         assert_eq!(storage.entry_count(&second), 0);
         assert_eq!(storage.origin_count(), 1);
     }
