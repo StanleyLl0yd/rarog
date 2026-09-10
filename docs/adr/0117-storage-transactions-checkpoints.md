@@ -13,14 +13,14 @@ The portable layer must also distinguish a caller's durability preference from a
 
 ## Decision
 
-`rarog-storage` owns a bounded `StorageTransactionManager` tied to exactly one current `StorageProcessId` and the `StorageLimits` used by its state.
+`rarog-storage` owns a bounded `StorageTransactionManager` tied to exactly one current `StorageProcessId` and configured `StorageLimits`.
 
 - Each transaction retains one exact persistent `Origin`; opaque or oversized persistent-origin identities are rejected before retention.
 - Transaction IDs are monotonic non-zero values and are not reused after commit, abort or identity-space exhaustion.
 - Transactions are explicitly `ReadOnly` or `ReadWrite` and begin in `Waiting` or `Active` state according to exact-origin conflicts.
 - Multiple older/read-only transactions may coexist for an origin, while a conflicting writer and later conflicting work remain ordered behind already waiting transactions rather than bypassing them.
 - The number of retained transactions, mutations per transaction, staged bytes per transaction and total staged bytes are independently bounded. Default bounds are 256 retained transactions, 1024 mutations per transaction, 4 MiB staged per transaction and 16 MiB staged in total.
-- Keys, values and prospective storage quota are validated before staging allocations. Retained origin/key/value data uses fallible allocation paths.
+- Key/value limits and transaction staging budgets are validated before staging allocations. Retained origin/key/value data uses fallible allocation paths; storage quota is revalidated atomically when the staged mutations are applied to the commit candidate.
 - Read-only transactions cannot stage mutations.
 - Commit first builds a fallibly cloned candidate `StorageProcessState`, applies every staged mutation to that candidate under the current storage limits, and swaps it into committed state only after all mutations succeed. A failed commit aborts the transaction and leaves the prior committed state intact.
 - Explicit abort and successful/failed completion release staged accounting and may activate newly unblocked waiters without reusing stale transaction IDs.
