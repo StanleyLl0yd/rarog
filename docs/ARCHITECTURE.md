@@ -130,7 +130,9 @@ R5 extends the process identity space with one Host-owned `StorageProcessId`. It
 
 `rarog-storage` owns the initial storage-process state model. Persistent Web storage is keyed by the exact Rarog `Origin`, not by schemeful site, and opaque origins are rejected from persistent storage by default. Key/value sizes, origin count, entries per origin, per-origin bytes and global bytes are all explicitly bounded. Failed quota checks leave existing state unchanged.
 
-This is a storage ownership/quota foundation, not a claim of Web Storage or IndexedDB API completeness, durability, transactions or filesystem integration. Site code does not receive filesystem authority from this layer. Exact navigation-context origin authority and brokered Host routing are added separately before storage is exposed to Web content. See ADR-0113.
+URL-backed navigation contexts now retain the exact current `Origin` alongside their schemeful-site/process binding. Storage capabilities are bound to that exact origin at grant time, and Host storage routes re-check context, process, class, exact origin and the live Storage-process identity before data access. Same-site cross-origin navigation revokes Storage capabilities; a site-only or opaque-origin context cannot mint persistent Storage authority. Lower-level site-only navigation APIs remain available for R4 topology tests but are explicitly originless for persistent storage. See ADR-0113 and ADR-0114.
+
+This is still a storage ownership/quota/authority foundation, not a claim of Web Storage or IndexedDB API completeness, durability, transactions, filesystem integration or Storage IPC. Site code receives no filesystem authority from this layer.
 
 ## Rendering model
 
@@ -446,7 +448,7 @@ Long-term per-site resident-memory, graphics-cache, background-CPU and broader l
 
 ## Security model
 
-R4 Site-process authority cannot directly select privileged OS resources. The Host/Broker currently issues bounded revocable `Network` and `Clipboard` capability classes to a live Host-owned `SiteProcessId`; production navigation routes additionally bind those grants to the exact `NavigationContextId`. Network origin, credentials, redirect and related Web policy remain owned by the Fetch/navigation layer rather than being inferred from the capability ID.
+R4 Site-process authority cannot directly select privileged OS resources. The Host/Broker issues bounded revocable `Network`, `Clipboard` and R5 `Storage` capability classes to a live Host-owned `SiteProcessId`; production navigation routes additionally bind those grants to the exact `NavigationContextId`. Storage adds a stricter exact-origin binding at grant/use time and checks the live Rarog-owned Storage-process identity before touching storage state. Network origin, credentials, redirect and related Web policy remain owned by the Fetch/navigation layer rather than being inferred from the capability ID.
 
 Future capabilities such as camera, file access or screen capture must add their own explicitly scoped authority and broker checks before any platform side effect. They are examples of later policy design, not capabilities implemented by R4.
 

@@ -33,6 +33,7 @@ impl fmt::Display for CapabilityId {
 pub enum CapabilityClass {
     Network,
     Clipboard,
+    Storage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

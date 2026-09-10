@@ -2304,6 +2304,7 @@ dependencies = [
  "rarog-ipc",
  "rarog-platform",
  "rarog-process",
+ "rarog-storage",
  "rarog-url",
 ]
 
