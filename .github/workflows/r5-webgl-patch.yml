@@ -19,6 +19,8 @@ jobs:
           fetch-depth: 0
       - name: Apply patch
         run: python3 scripts/r5_webgl_patch.py
+      - name: Fix WebGL error equality derive
+        run: python3 -c "from pathlib import Path; p=Path('crates/rarog-webgl/src/lib.rs'); s=p.read_text(); old='#[derive(Clone, Copy, Debug, PartialEq, Eq)]\\npub enum WebGlError'; assert old in s; p.write_text(s.replace(old, '#[derive(Clone, Copy, Debug, PartialEq)]\\npub enum WebGlError', 1))"
       - name: Format
         run: cargo fmt --all
       - name: Check focused crates
