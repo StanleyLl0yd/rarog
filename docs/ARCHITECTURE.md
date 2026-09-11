@@ -222,7 +222,15 @@ This completes the selected R5 WebSocket backlog boundary. WebSocket frame parsi
 
 Each `MediaPlayback` binds one exact live resource to a non-empty, duplicate-free set of exact streams owned by that resource. Foreign/stale stream references fail closed. The portable ownership lifecycle is Ready/Playing/Paused/Ended; Ended is terminal for the playback identity and fixes position at the resource duration. Position uses integer microseconds and cannot exceed that exact duration. A live playback prevents resource retirement. Playback retirement releases playback capacity, while unused resource retirement validates its stream ownership and removes the resource plus all of its streams together for deterministic capacity recovery. Registry maps remain private; consumers receive immutable lookups and count snapshots only. See ADR-0127.
 
-This slice intentionally does not define demux/codec APIs, encoded or decoded sample queues, audio devices, video surfaces, platform media services, Windows media backends, backend tickets, scheduling/background policy, DOM/WebIDL media elements, MSE/EME/WebAudio, autoplay policy, real decoding/playback, WPT qualification or R6 compatibility claims. Those remain later R5 slices.
+### R5 replaceable media adapter boundary
+
+`rarog-media-adapter` is the portable control-plane seam between Rarog media semantics and future demux, decoder and output/device implementations. It depends only on `rarog-media` and exposes three independent traits: `MediaDemuxer`, `MediaDecoder` and `MediaOutput`. Their method signatures carry only immutable Rarog `MediaResource`, `MediaStream` and `MediaPlayback` values plus `MediaTime`, `MediaPlaybackState`, `MediaStreamKind` and adapter-owned ticket wrappers. Container libraries, codec contexts, device objects, native handles and platform types are absent from the contract.
+
+Demux control opens one semantic resource, selects an exact semantic stream, seeks and closes. Decoder control opens one exact stream, flushes or resets it at a portable media time and closes. Output control opens one exact playback/output kind, applies the portable playback state and position and closes. The three ticket types are deliberately distinct opaque non-zero correlation values. Backend implementations may create them, but ticket possession or numeric equality grants no resource, playback, Host or platform authority; later orchestration must revalidate live Rarog ownership before every side effect.
+
+Adapter failures retain only the fixed `MediaAdapterErrorKind` classification instead of arbitrary backend-owned diagnostic strings. Fake-adapter tests prove implementations can be replaced while preserving the exact Rarog identities/time/state crossing the seam, and CI statically rejects target-platform names/types in the portable crate. See ADR-0128.
+
+The media foundation still does not define encoded packet queues, decoded audio blocks/video frames, device selection, Host/media capability routing, scheduler/background resource policy, concrete Windows media integration, DOM/WebIDL media elements, MSE/EME/WebAudio, autoplay policy, real decoding/playback, WPT qualification or R6 compatibility claims. Those remain later R5 slices.
 
 ## Rendering model
 

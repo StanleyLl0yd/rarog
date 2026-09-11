@@ -2340,6 +2340,13 @@ name = "rarog-media"
 version = "0.1.0"
 
 [[package]]
+name = "rarog-media-adapter"
+version = "0.1.0"
+dependencies = [
+ "rarog-media",
+]
+
+[[package]]
 name = "rarog-paint"
 version = "0.1.0"
 dependencies = [

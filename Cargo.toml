@@ -19,6 +19,7 @@ members = [
   "crates/rarog-fetch",
   "crates/rarog-websocket",
   "crates/rarog-media",
+  "crates/rarog-media-adapter",
   "crates/rarog-script",
   "crates/rarog-script-spidermonkey",
   "crates/rarog-scheduler",
