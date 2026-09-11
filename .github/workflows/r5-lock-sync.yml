@@ -18,7 +18,7 @@ jobs:
           ref: r5/webgl-ownership-loss
           fetch-depth: 0
       - name: Generate workspace lockfile
-        run: cargo generate-lockfile --offline
+        run: cargo generate-lockfile
       - name: Commit lockfile
         shell: bash
         run: |
