@@ -33,7 +33,7 @@ Tracking issue: #260.
 - [x] Define platform-neutral bounded media resource/stream/playback ownership.
 - [x] Keep demux/codec/device/platform APIs behind replaceable adapters.
 - [x] Integrate media scheduling with lifecycle/background resource policy.
-- [ ] Add Windows-first media backend foundation without leaking Windows types into Web semantics.
+- [x] Add Windows-first media backend foundation without leaking Windows types into Web semantics.
 
 ## E — Canvas / WebGL
 

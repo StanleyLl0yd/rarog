@@ -2,6 +2,7 @@ mod clipboard;
 mod gpu;
 mod input;
 mod ipc;
+mod media;
 mod process;
 mod storage_process;
 
@@ -13,6 +14,11 @@ pub use input::WindowsInputService;
 pub use ipc::{
     DEFAULT_MAX_WINDOWS_IPC_ENDPOINT_BYTES, WindowsIpcConnection, WindowsIpcEndpointName,
     WindowsIpcError, WindowsIpcErrorKind, WindowsIpcListener, WindowsIpcSiteStream,
+};
+pub use media::{
+    DEFAULT_MAX_WINDOWS_MEDIA_DECODER_SESSIONS, DEFAULT_MAX_WINDOWS_MEDIA_DEMUX_SESSIONS,
+    DEFAULT_MAX_WINDOWS_MEDIA_OUTPUT_SESSIONS, WindowsMediaBackend, WindowsMediaBackendError,
+    WindowsMediaBackendSnapshot, WindowsMediaLimits,
 };
 pub use process::{
     DEFAULT_MAX_SITE_PROCESS_ARGS, WindowsSiteProcess, WindowsSiteProcessCommand,

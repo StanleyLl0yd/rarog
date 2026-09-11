@@ -238,7 +238,15 @@ Lifecycle/resource policy is explicit rather than inferred from a decoder, devic
 
 Generic scheduler IDs and media-adapter tickets do not become authority in this layer. The runtime retains no adapter ticket, encoded packet, decoded frame/sample payload, OS handle or platform type. Suspension/resume therefore preserves semantic playback ownership but does not revive old work identities; resumed execution requires fresh admission. See ADR-0129.
 
-The media foundation still does not define real demux/decoding, encoded packet or decoded audio/video data-plane queues, device selection, Host/media capability routing, concrete Windows media integration, DOM/WebIDL media elements, MSE/EME/WebAudio, autoplay/visibility policy completeness, WPT qualification or R6 compatibility claims. Those remain later R5 slices.
+### R5 Windows-first media backend foundation
+
+`rarog-platform-windows::WindowsMediaBackend` is the first concrete target-owned implementation of the portable media adapter contracts. It implements `MediaDemuxer`, `MediaDecoder` and `MediaOutput` while keeping all backend/session ownership in the Windows platform crate. `WindowsMediaLimits` independently bounds live demux, decoder and output sessions, and admission checks capacity before allocating a correlation ticket or mutating retained state.
+
+Adapter-ticket values come from a process-global monotonic non-zero allocator and are accepted only while present in the exact backend table for their adapter kind. Retired tickets are not reused, repeated close fails closed, and one backend instance cannot consume another instance's ticket. Demux sessions retain the exact semantic resource and duration, reject streams from another resource and reject seeks beyond the retained duration. Decoder sessions retain one exact stream. Output sessions retain one exact playback and audio/video kind; an output session that reaches `Ended` cannot be revived. Exact close releases only the corresponding bounded capacity.
+
+Public construction is target-gated: `WindowsMediaBackend::try_new` succeeds on Windows and reports `UnsupportedTarget` elsewhere, while Linux continues to compile and test the crate for portability. The public media backend surface contains no native handle, COM, Media Foundation, WASAPI, DirectShow or graphics-object type. Windows CI separately verifies the production target path and adapter-session lifecycle. See ADR-0130.
+
+This completes the selected R5 Audio/video foundation boundary, not real media playback. The engine still has no real demux/decoding, encoded packet or decoded audio/video data-plane queues, device enumeration/selection, actual Media Foundation/WASAPI integration, capture, DRM/EME, MSE, WebAudio, DOM/WebIDL media element behavior, autoplay/visibility-policy completeness, WPT qualification or R6 compatibility claim.
 
 ## Rendering model
 
