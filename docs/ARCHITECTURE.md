@@ -330,6 +330,16 @@ incremental reuse or deterministic rebuild
 
 The DOM does not know which selectors, layout nodes or paint items depend on a mutation.
 
+
+### R5 bounded WebGL semantic ownership and context loss
+
+- `rarog-canvas` remains authoritative for exact Canvas surface identity and rendering-context exclusivity. WebGL acquires only a scoped monotonic external-context lease bound to one exact live `CanvasSurfaceId`; a live 2D context and a live WebGL lease are mutually exclusive.
+- `rarog-webgl` owns portable scoped monotonic context, buffer and texture identities plus explicit bounds for live contexts, per-context/global resources, buffer bytes, texture dimensions/pixels and aggregate resource budgets. All aggregate accounting uses checked arithmetic before retained-state mutation.
+- WebGL resources belong to exactly one context. Foreign-context, stale and cross-registry identities fail closed and are never reused after retirement.
+- Context loss transitions semantic state to `Lost`, retires all resource authority and releases accounted buffer/texture budgets, but retains the exact Canvas external-context lease until deterministic context destruction. Destruction revalidates and releases that lease before context capacity is recovered.
+- WebGL semantic contracts expose no GPU device/queue/buffer/texture/view, shader/program/pipeline, command encoder, D3D/DXGI, `wgpu`, platform handle or native pointer authority. The replaceable graphics-backend boundary is intentionally the next R5 Canvas/WebGL slice.
+- See [ADR-0133](adr/0133-webgl-ownership-loss.md).
+
 ### Element names, namespaces and atoms
 
 R0 stores an explicit `Namespace` on every `ElementData` and represents the local element name with an immutable `Atom`. The bootstrap HTML parser assigns `Namespace::Html` only; SVG/MathML tree-building and namespace switching remain standards-parser work. Non-HTML namespaces can already be represented by the DOM without encoding namespace state into tag-name strings.
