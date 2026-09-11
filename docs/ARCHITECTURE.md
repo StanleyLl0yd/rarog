@@ -188,7 +188,15 @@ Opening-handshake intent is semantic data only. `WebSocketProtocols` preserves r
 
 `WebSocketReadyState` records the four Web-facing connecting/open/closing/closed states without pretending to run transport transitions. `WebSocketMessage` privately owns bounded text or binary application data; UTF-8 text is charged by encoded bytes and oversize input is rejected before copying. These are message-level contracts, not WebSocket frames: opcodes, fragmentation, masks, native sockets and queue ownership are intentionally absent. See ADR-0123.
 
-The remaining R5 WebSocket work attaches these semantic contracts to Host-private backend authority, adds bounded inbound/outbound queue accounting, and defines close/error/backpressure lifecycle. DOM/WebIDL exposure and R6 compatibility qualification are not claimed by this foundation.
+### R5 Host-authorized WebSocket transport ownership
+
+`HostControlPlane` is the authority boundary for the current WebSocket transport slice. `rarog-websocket::WebSocketTransport` consumes only a validated `WebSocketHandshakeIntent` plus the exact client `Origin` selected from Host-owned navigation state and returns a Rarog `WebSocketTransportTicket`. The ticket is private backend correlation state rather than Web or Site authority; concrete sockets, TLS sessions and platform handles remain behind the replaceable transport adapter.
+
+A live WebSocket is represented outside the backend by a separate scoped monotonic `WebSocketConnectionId`. The Host binds that reference to the exact navigation context, current Site process, exact Network capability, Host-authenticated client origin and private transport ticket. Context/class/process/broker authority, client-origin availability and the configured connection budget are validated before the transport is touched. The WebSocket target may be cross-origin, but target URL or subprotocol data cannot select a different client identity or mint network authority.
+
+Active connections and tickets awaiting backend abort share one bounded Host budget. Capability revocation, navigation-context close, cross-site replacement and Site-process loss remove Host-visible connection authority and quarantine the backend ticket until explicit abort succeeds. Same-site navigation also quarantines every connection owned by the old document even when its Network capability remains live. A failed abort keeps the ticket charged, and backend ticket reuse across live or quarantined work fails closed rather than aliasing two Host connection references. Independent Host instances allocate distinct connection-ID scopes. See ADR-0124.
+
+This slice still does not own application send/receive queues, WebSocket frames, selected-protocol or extension negotiation, real HTTP Upgrade/TCP/TLS behavior, or complete close/error/backpressure state transitions. The remaining R5 WebSocket work adds bounded inbound/outbound queue accounting and then defines close/error/backpressure lifecycle. DOM/WebIDL exposure and R6 compatibility qualification remain outside this foundation.
 
 ## Rendering model
 

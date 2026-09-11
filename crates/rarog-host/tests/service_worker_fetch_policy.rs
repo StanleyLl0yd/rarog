@@ -36,6 +36,7 @@ fn limits(max_dispatches: usize, max_url_bytes: usize) -> HostLimits {
         max_navigation_contexts: 8,
         max_navigation_context_url_bytes: max_url_bytes,
         max_service_worker_fetch_dispatches: max_dispatches,
+        max_websocket_connections: 4,
     }
 }
 

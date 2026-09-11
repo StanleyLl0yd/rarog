@@ -17,6 +17,10 @@ use rarog_process::{
 };
 use rarog_storage::{StorageError, StorageErrorKind, StorageProcessState};
 use rarog_url::{Origin, SiteIdentity, UrlError, UrlErrorKind, WebUrl};
+use rarog_websocket::{
+    WebSocketHandshakeIntent, WebSocketTransport, WebSocketTransportError,
+    WebSocketTransportErrorKind, WebSocketTransportTicket,
+};
 use rarog_workers::{
     ServiceWorkerError, ServiceWorkerRegistrationId, ServiceWorkerRegistry, ServiceWorkerVersionId,
     ServiceWorkerVersionState,
@@ -30,8 +34,10 @@ pub const DEFAULT_MAX_NETWORK_OPERATIONS: usize = 4096;
 pub const DEFAULT_MAX_NAVIGATION_CONTEXTS: usize = 256;
 pub const DEFAULT_MAX_NAVIGATION_CONTEXT_URL_BYTES: usize = 64 * 1024;
 pub const DEFAULT_MAX_SERVICE_WORKER_FETCH_DISPATCHES: usize = 1024;
+pub const DEFAULT_MAX_WEBSOCKET_CONNECTIONS: usize = 1024;
 
 static NEXT_SERVICE_WORKER_FETCH_DISPATCH_SCOPE: AtomicU64 = AtomicU64::new(1);
+static NEXT_WEBSOCKET_CONNECTION_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostLimits {
@@ -42,6 +48,7 @@ pub struct HostLimits {
     pub max_navigation_contexts: usize,
     pub max_navigation_context_url_bytes: usize,
     pub max_service_worker_fetch_dispatches: usize,
+    pub max_websocket_connections: usize,
 }
 
 impl HostLimits {
@@ -53,6 +60,7 @@ impl HostLimits {
             && self.max_navigation_contexts > 0
             && self.max_navigation_context_url_bytes > 0
             && self.max_service_worker_fetch_dispatches > 0
+            && self.max_websocket_connections > 0
     }
 }
 
@@ -66,6 +74,7 @@ impl Default for HostLimits {
             max_navigation_contexts: DEFAULT_MAX_NAVIGATION_CONTEXTS,
             max_navigation_context_url_bytes: DEFAULT_MAX_NAVIGATION_CONTEXT_URL_BYTES,
             max_service_worker_fetch_dispatches: DEFAULT_MAX_SERVICE_WORKER_FETCH_DISPATCHES,
+            max_websocket_connections: DEFAULT_MAX_WEBSOCKET_CONNECTIONS,
         }
     }
 }
@@ -101,6 +110,11 @@ pub enum HostControlErrorKind {
     ServiceWorkerFetchDispatchLimitExceeded,
     ServiceWorkerFetchDispatchIdentitySpaceExhausted,
     InvalidServiceWorkerFetchDispatchAuthority,
+    WebSocket(WebSocketTransportErrorKind),
+    WebSocketClientOriginUnavailable,
+    WebSocketConnectionLimitExceeded,
+    WebSocketConnectionIdentitySpaceExhausted,
+    InvalidWebSocketConnectionAuthority,
     InvalidNetworkOperationId,
     NetworkOperationLimitExceeded,
     NetworkOperationIdentitySpaceExhausted,
@@ -170,6 +184,12 @@ impl From<FetchError> for HostControlError {
 impl From<ServiceWorkerError> for HostControlError {
     fn from(error: ServiceWorkerError) -> Self {
         Self::new(HostControlErrorKind::ServiceWorker, error.to_string())
+    }
+}
+
+impl From<WebSocketTransportError> for HostControlError {
+    fn from(error: WebSocketTransportError) -> Self {
+        Self::new(HostControlErrorKind::WebSocket(error.kind), error.message)
     }
 }
 
@@ -518,6 +538,76 @@ impl NetworkOperationIdAllocator {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WebSocketConnectionId {
+    scope: NonZeroU64,
+    serial: NonZeroU64,
+}
+
+impl WebSocketConnectionId {
+    pub fn scope(self) -> u64 {
+        self.scope.get()
+    }
+
+    pub fn serial(self) -> u64 {
+        self.serial.get()
+    }
+}
+
+#[derive(Debug)]
+struct WebSocketConnectionIdAllocator {
+    scope: NonZeroU64,
+    next_serial: u64,
+}
+
+impl WebSocketConnectionIdAllocator {
+    fn new() -> Result<Self, HostControlError> {
+        let raw = NEXT_WEBSOCKET_CONNECTION_SCOPE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| {
+                HostControlError::new(
+                    HostControlErrorKind::WebSocketConnectionIdentitySpaceExhausted,
+                    "WebSocket connection scope identity space is exhausted",
+                )
+            })?;
+        let scope = NonZeroU64::new(raw).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::WebSocketConnectionIdentitySpaceExhausted,
+                "WebSocket connection scope identity space is exhausted",
+            )
+        })?;
+        Ok(Self {
+            scope,
+            next_serial: 1,
+        })
+    }
+
+    fn allocate(&mut self) -> Result<WebSocketConnectionId, HostControlError> {
+        let serial = NonZeroU64::new(self.next_serial).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::WebSocketConnectionIdentitySpaceExhausted,
+                "WebSocket connection serial identity space is exhausted",
+            )
+        })?;
+        self.next_serial = self.next_serial.checked_add(1).unwrap_or(0);
+        Ok(WebSocketConnectionId {
+            scope: self.scope,
+            serial,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WebSocketConnection {
+    context: NavigationContextId,
+    owner: SiteProcessId,
+    capability: CapabilityId,
+    client_origin: Origin,
+    ticket: WebSocketTransportTicket,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServiceWorkerFetchDispatchId {
     scope: NonZeroU64,
     serial: NonZeroU64,
@@ -650,6 +740,7 @@ pub struct HostControlPlane {
     max_navigation_contexts: usize,
     max_navigation_context_url_bytes: usize,
     max_service_worker_fetch_dispatches: usize,
+    max_websocket_connections: usize,
     navigation_context_allocator: NavigationContextIdAllocator,
     navigation_contexts: HashMap<NavigationContextId, NavigationContext>,
     navigation_context_capabilities: HashMap<CapabilityId, NavigationContextId>,
@@ -657,6 +748,9 @@ pub struct HostControlPlane {
     network_operation_allocator: NetworkOperationIdAllocator,
     network_operations: HashMap<NetworkOperationId, NetworkOperation>,
     pending_network_cancellations: VecDeque<NetworkTicket>,
+    websocket_connection_allocator: WebSocketConnectionIdAllocator,
+    websocket_connections: HashMap<WebSocketConnectionId, WebSocketConnection>,
+    pending_websocket_aborts: VecDeque<WebSocketTransportTicket>,
     service_worker_fetch_dispatch_allocator: ServiceWorkerFetchDispatchIdAllocator,
     service_worker_fetch_dispatches:
         HashMap<ServiceWorkerFetchDispatchId, ServiceWorkerFetchDispatch>,
@@ -680,6 +774,7 @@ impl HostControlPlane {
             max_navigation_contexts: limits.max_navigation_contexts,
             max_navigation_context_url_bytes: limits.max_navigation_context_url_bytes,
             max_service_worker_fetch_dispatches: limits.max_service_worker_fetch_dispatches,
+            max_websocket_connections: limits.max_websocket_connections,
             navigation_context_allocator: NavigationContextIdAllocator::new(),
             navigation_contexts: HashMap::new(),
             navigation_context_capabilities: HashMap::new(),
@@ -687,6 +782,9 @@ impl HostControlPlane {
             network_operation_allocator: NetworkOperationIdAllocator::new(),
             network_operations: HashMap::new(),
             pending_network_cancellations: VecDeque::new(),
+            websocket_connection_allocator: WebSocketConnectionIdAllocator::new()?,
+            websocket_connections: HashMap::new(),
+            pending_websocket_aborts: VecDeque::new(),
             service_worker_fetch_dispatch_allocator: ServiceWorkerFetchDispatchIdAllocator::new()?,
             service_worker_fetch_dispatches: HashMap::new(),
             sites: HashMap::new(),
@@ -721,6 +819,20 @@ impl HostControlPlane {
         self.network_operations
             .len()
             .saturating_add(self.pending_network_cancellations.len())
+    }
+
+    pub fn active_websocket_connections(&self) -> usize {
+        self.websocket_connections.len()
+    }
+
+    pub fn pending_websocket_aborts(&self) -> usize {
+        self.pending_websocket_aborts.len()
+    }
+
+    pub fn tracked_websocket_connections(&self) -> usize {
+        self.websocket_connections
+            .len()
+            .saturating_add(self.pending_websocket_aborts.len())
     }
 
     pub fn active_navigation_contexts(&self) -> usize {
@@ -875,6 +987,7 @@ impl HostControlPlane {
         self.navigation_context_capabilities.remove(&id);
         self.navigation_context_storage_origins.remove(&id);
         self.quarantine_network_operations_for_capability(id);
+        self.quarantine_websocket_connections_for_capability(id);
         self.discard_service_worker_fetch_dispatches_for_capability(id);
         Ok(grant)
     }
@@ -895,6 +1008,7 @@ impl HostControlPlane {
         }
 
         self.discard_service_worker_fetch_dispatches_for_process(process);
+        self.quarantine_websocket_connections_for_process(process);
         let mut instance = self
             .sites
             .remove(&process)
@@ -1061,6 +1175,111 @@ impl HostControlPlane {
         Ok(cancelled)
     }
 
+    pub fn start_navigation_context_websocket(
+        &mut self,
+        capability: NavigationContextCapability,
+        handshake: WebSocketHandshakeIntent,
+        transport: &mut dyn WebSocketTransport,
+    ) -> Result<WebSocketConnectionId, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let client_origin = self
+            .require_navigation_context(capability.context)?
+            .origin
+            .clone()
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::WebSocketClientOriginUnavailable,
+                    "navigation context has no Host-owned client origin for WebSocket opening",
+                )
+            })?;
+        if self.tracked_websocket_connections() >= self.max_websocket_connections {
+            return Err(HostControlError::new(
+                HostControlErrorKind::WebSocketConnectionLimitExceeded,
+                format!(
+                    "WebSocket connection limit {} reached",
+                    self.max_websocket_connections
+                ),
+            ));
+        }
+
+        let connection = self.websocket_connection_allocator.allocate()?;
+        if self.websocket_connections.contains_key(&connection) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                "WebSocket connection allocator reused a live identity",
+            ));
+        }
+
+        let ticket = transport.start(handshake, client_origin.clone())?;
+        if self.pending_websocket_aborts.contains(&ticket) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "WebSocket backend reused a ticket awaiting Host abort",
+            ));
+        }
+        if let Some(existing_id) = self
+            .websocket_connections
+            .iter()
+            .find_map(|(id, active)| (active.ticket == ticket).then_some(*id))
+        {
+            if let Some(existing) = self.websocket_connections.remove(&existing_id) {
+                self.quarantine_websocket_ticket(existing.ticket);
+            }
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                "WebSocket backend reused a live ticket; affected Host connection authority was revoked",
+            ));
+        }
+
+        if let Some(existing) = self.websocket_connections.insert(
+            connection,
+            WebSocketConnection {
+                context: capability.context,
+                owner: process,
+                capability: capability.id,
+                client_origin,
+                ticket,
+            },
+        ) {
+            self.websocket_connections.remove(&connection);
+            self.quarantine_websocket_ticket(existing.ticket);
+            self.quarantine_websocket_ticket(ticket);
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                "WebSocket connection allocator reused a live identity",
+            ));
+        }
+
+        Ok(connection)
+    }
+
+    pub fn revoke_navigation_context_websocket(
+        &mut self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+    ) -> Result<(), HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let ticket = self.websocket_ticket(process, capability, connection)?;
+        self.websocket_connections.remove(&connection);
+        self.quarantine_websocket_ticket(ticket);
+        Ok(())
+    }
+
+    pub fn abort_pending_websocket_connections(
+        &mut self,
+        transport: &mut dyn WebSocketTransport,
+    ) -> Result<usize, HostControlError> {
+        let mut aborted = 0;
+        while let Some(ticket) = self.pending_websocket_aborts.front().copied() {
+            transport.abort(ticket)?;
+            self.pending_websocket_aborts.pop_front();
+            aborted += 1;
+        }
+        Ok(aborted)
+    }
+
     pub fn read_clipboard_text(
         &self,
         process: SiteProcessId,
@@ -1200,6 +1419,7 @@ impl HostControlPlane {
         if previous_site == target_site {
             let transition =
                 self.begin_document_navigation_to_site(Some(&current), target_site.clone())?;
+            self.quarantine_websocket_connections_for_context(context);
             self.clear_service_worker_fetch_state_for_context(context)?;
             {
                 let state = self.require_navigation_context_mut(context)?;
@@ -2140,6 +2360,100 @@ impl HostControlPlane {
         Ok(process)
     }
 
+    fn quarantine_websocket_ticket(&mut self, ticket: WebSocketTransportTicket) {
+        if !self.pending_websocket_aborts.contains(&ticket) {
+            self.pending_websocket_aborts.push_back(ticket);
+        }
+    }
+
+    fn quarantine_websocket_connections_for_capability(
+        &mut self,
+        capability: CapabilityId,
+    ) -> usize {
+        let connections = self
+            .websocket_connections
+            .iter()
+            .filter_map(|(id, connection)| (connection.capability == capability).then_some(*id))
+            .collect::<Vec<_>>();
+        for id in &connections {
+            if let Some(connection) = self.websocket_connections.remove(id) {
+                self.quarantine_websocket_ticket(connection.ticket);
+            }
+        }
+        connections.len()
+    }
+
+    fn quarantine_websocket_connections_for_context(
+        &mut self,
+        context: NavigationContextId,
+    ) -> usize {
+        let connections = self
+            .websocket_connections
+            .iter()
+            .filter_map(|(id, connection)| (connection.context == context).then_some(*id))
+            .collect::<Vec<_>>();
+        for id in &connections {
+            if let Some(connection) = self.websocket_connections.remove(id) {
+                self.quarantine_websocket_ticket(connection.ticket);
+            }
+        }
+        connections.len()
+    }
+
+    fn quarantine_websocket_connections_for_process(&mut self, process: SiteProcessId) -> usize {
+        let connections = self
+            .websocket_connections
+            .iter()
+            .filter_map(|(id, connection)| (connection.owner == process).then_some(*id))
+            .collect::<Vec<_>>();
+        for id in &connections {
+            if let Some(connection) = self.websocket_connections.remove(id) {
+                self.quarantine_websocket_ticket(connection.ticket);
+            }
+        }
+        connections.len()
+    }
+
+    fn websocket_ticket(
+        &self,
+        process: SiteProcessId,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+    ) -> Result<WebSocketTransportTicket, HostControlError> {
+        let active = self.websocket_connections.get(&connection).ok_or_else(|| {
+            HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                "unknown WebSocket connection",
+            )
+        })?;
+        if active.owner != process
+            || active.context != capability.context
+            || active.capability != capability.id
+        {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                "WebSocket connection authority does not match the navigation context capability",
+            ));
+        }
+        let current_origin = self
+            .require_navigation_context(active.context)?
+            .origin
+            .as_ref()
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::WebSocketClientOriginUnavailable,
+                    "navigation context lost its Host-owned WebSocket client origin",
+                )
+            })?;
+        if current_origin != &active.client_origin {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                "WebSocket connection client origin no longer matches the navigation context",
+            ));
+        }
+        Ok(active.ticket)
+    }
+
     fn quarantine_network_ticket(&mut self, ticket: NetworkTicket) {
         if !self.pending_network_cancellations.contains(&ticket) {
             self.pending_network_cancellations.push_back(ticket);
@@ -2277,6 +2591,7 @@ mod tests {
             max_navigation_contexts: 4,
             max_navigation_context_url_bytes: 512,
             max_service_worker_fetch_dispatches: 4,
+            max_websocket_connections: 4,
         }
     }
 
