@@ -17,10 +17,19 @@ jobs:
         with:
           ref: r5/webgl-ownership-loss
           fetch-depth: 0
-      - name: Restore exact base lock
-        run: git checkout e9be9ba819896e9920322c57c48d2c6fc451b801 -- Cargo.lock
-      - name: Add only local workspace package to lock
-        run: cargo check --offline -p rarog-webgl
+      - name: Restore exact base lock and add local workspace package
+        shell: bash
+        run: |
+          git checkout e9be9ba819896e9920322c57c48d2c6fc451b801 -- Cargo.lock
+          cat >> Cargo.lock <<'EOF'
+
+          [[package]]
+          name = "rarog-webgl"
+          version = "0.1.0"
+          dependencies = [
+           "rarog-canvas",
+          ]
+          EOF
       - name: Reject external dependency drift
         shell: bash
         run: |
@@ -44,6 +53,8 @@ jobs:
               print(d)
               raise SystemExit('Cargo.lock contains dependency drift beyond rarog-webgl workspace package')
           PY
+      - name: Verify exact lock
+        run: cargo check --locked -p rarog-webgl --all-targets
       - name: Commit minimal lock
         shell: bash
         run: |
