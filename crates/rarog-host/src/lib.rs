@@ -18,8 +18,10 @@ use rarog_process::{
 use rarog_storage::{StorageError, StorageErrorKind, StorageProcessState};
 use rarog_url::{Origin, SiteIdentity, UrlError, UrlErrorKind, WebUrl};
 use rarog_websocket::{
-    WebSocketHandshakeIntent, WebSocketTransport, WebSocketTransportError,
-    WebSocketTransportErrorKind, WebSocketTransportTicket,
+    WebSocketHandshakeIntent, WebSocketMessage, WebSocketMessageQueues, WebSocketQueueError,
+    WebSocketQueueErrorKind, WebSocketQueueLimits, WebSocketQueueSnapshot, WebSocketTransport,
+    WebSocketTransportError, WebSocketTransportErrorKind, WebSocketTransportReceive,
+    WebSocketTransportSend, WebSocketTransportTicket,
 };
 use rarog_workers::{
     ServiceWorkerError, ServiceWorkerRegistrationId, ServiceWorkerRegistry, ServiceWorkerVersionId,
@@ -49,6 +51,7 @@ pub struct HostLimits {
     pub max_navigation_context_url_bytes: usize,
     pub max_service_worker_fetch_dispatches: usize,
     pub max_websocket_connections: usize,
+    pub websocket_queues: WebSocketQueueLimits,
 }
 
 impl HostLimits {
@@ -61,6 +64,7 @@ impl HostLimits {
             && self.max_navigation_context_url_bytes > 0
             && self.max_service_worker_fetch_dispatches > 0
             && self.max_websocket_connections > 0
+            && self.websocket_queues.is_valid()
     }
 }
 
@@ -75,6 +79,7 @@ impl Default for HostLimits {
             max_navigation_context_url_bytes: DEFAULT_MAX_NAVIGATION_CONTEXT_URL_BYTES,
             max_service_worker_fetch_dispatches: DEFAULT_MAX_SERVICE_WORKER_FETCH_DISPATCHES,
             max_websocket_connections: DEFAULT_MAX_WEBSOCKET_CONNECTIONS,
+            websocket_queues: WebSocketQueueLimits::default(),
         }
     }
 }
@@ -115,6 +120,7 @@ pub enum HostControlErrorKind {
     WebSocketConnectionLimitExceeded,
     WebSocketConnectionIdentitySpaceExhausted,
     InvalidWebSocketConnectionAuthority,
+    WebSocketQueue(WebSocketQueueErrorKind),
     InvalidNetworkOperationId,
     NetworkOperationLimitExceeded,
     NetworkOperationIdentitySpaceExhausted,
@@ -190,6 +196,15 @@ impl From<ServiceWorkerError> for HostControlError {
 impl From<WebSocketTransportError> for HostControlError {
     fn from(error: WebSocketTransportError) -> Self {
         Self::new(HostControlErrorKind::WebSocket(error.kind), error.message)
+    }
+}
+
+impl From<WebSocketQueueError> for HostControlError {
+    fn from(error: WebSocketQueueError) -> Self {
+        Self::new(
+            HostControlErrorKind::WebSocketQueue(error.kind),
+            error.message,
+        )
     }
 }
 
@@ -605,6 +620,21 @@ struct WebSocketConnection {
     capability: CapabilityId,
     client_origin: Origin,
     ticket: WebSocketTransportTicket,
+    queues: WebSocketMessageQueues,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketOutboundFlush {
+    Empty,
+    Accepted,
+    Backpressure,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketInboundPoll {
+    Pending,
+    Queued,
+    QueueFull,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -741,6 +771,7 @@ pub struct HostControlPlane {
     max_navigation_context_url_bytes: usize,
     max_service_worker_fetch_dispatches: usize,
     max_websocket_connections: usize,
+    websocket_queue_limits: WebSocketQueueLimits,
     navigation_context_allocator: NavigationContextIdAllocator,
     navigation_contexts: HashMap<NavigationContextId, NavigationContext>,
     navigation_context_capabilities: HashMap<CapabilityId, NavigationContextId>,
@@ -775,6 +806,7 @@ impl HostControlPlane {
             max_navigation_context_url_bytes: limits.max_navigation_context_url_bytes,
             max_service_worker_fetch_dispatches: limits.max_service_worker_fetch_dispatches,
             max_websocket_connections: limits.max_websocket_connections,
+            websocket_queue_limits: limits.websocket_queues,
             navigation_context_allocator: NavigationContextIdAllocator::new(),
             navigation_contexts: HashMap::new(),
             navigation_context_capabilities: HashMap::new(),
@@ -1211,6 +1243,7 @@ impl HostControlPlane {
             ));
         }
 
+        let queues = WebSocketMessageQueues::try_new(self.websocket_queue_limits)?;
         let ticket = transport.start(handshake, client_origin.clone())?;
         if self.pending_websocket_aborts.contains(&ticket) {
             return Err(HostControlError::new(
@@ -1240,6 +1273,7 @@ impl HostControlPlane {
                 capability: capability.id,
                 client_origin,
                 ticket,
+                queues,
             },
         ) {
             self.websocket_connections.remove(&connection);
@@ -1252,6 +1286,168 @@ impl HostControlPlane {
         }
 
         Ok(connection)
+    }
+
+    pub fn websocket_queue_snapshot(
+        &self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+    ) -> Result<WebSocketQueueSnapshot, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let _ = self.websocket_ticket(process, capability, connection)?;
+        Ok(self
+            .websocket_connections
+            .get(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?
+            .queues
+            .snapshot())
+    }
+
+    pub fn queue_navigation_context_websocket_message(
+        &mut self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+        message: WebSocketMessage,
+    ) -> Result<(), HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let _ = self.websocket_ticket(process, capability, connection)?;
+        self.websocket_connections
+            .get_mut(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?
+            .queues
+            .enqueue_outbound(message)?;
+        Ok(())
+    }
+
+    pub fn flush_navigation_context_websocket_message(
+        &mut self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+        transport: &mut dyn WebSocketTransport,
+    ) -> Result<WebSocketOutboundFlush, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let ticket = self.websocket_ticket(process, capability, connection)?;
+        let send = {
+            let active = self.websocket_connections.get(&connection).ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?;
+            let Some(message) = active.queues.outbound_front() else {
+                return Ok(WebSocketOutboundFlush::Empty);
+            };
+            transport.send(ticket, message)?
+        };
+        match send {
+            WebSocketTransportSend::Backpressure => Ok(WebSocketOutboundFlush::Backpressure),
+            WebSocketTransportSend::Accepted => {
+                self.websocket_connections
+                    .get_mut(&connection)
+                    .ok_or_else(|| {
+                        HostControlError::new(
+                            HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                            "WebSocket connection disappeared during outbound completion",
+                        )
+                    })?
+                    .queues
+                    .complete_outbound()?
+                    .ok_or_else(|| {
+                        HostControlError::new(
+                            HostControlErrorKind::InconsistentState,
+                            "WebSocket outbound queue became empty after backend acceptance",
+                        )
+                    })?;
+                Ok(WebSocketOutboundFlush::Accepted)
+            }
+        }
+    }
+
+    pub fn poll_navigation_context_websocket_message(
+        &mut self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+        transport: &mut dyn WebSocketTransport,
+    ) -> Result<WebSocketInboundPoll, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let ticket = self.websocket_ticket(process, capability, connection)?;
+        let max_message_bytes = self
+            .websocket_connections
+            .get(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?
+            .queues
+            .inbound_receive_limit()?;
+        let Some(max_message_bytes) = max_message_bytes else {
+            return Ok(WebSocketInboundPoll::QueueFull);
+        };
+
+        let received = transport.receive(ticket, max_message_bytes)?;
+        let WebSocketTransportReceive::Message(message) = received else {
+            return Ok(WebSocketInboundPoll::Pending);
+        };
+        if message.len() > max_message_bytes {
+            if let Some(active) = self.websocket_connections.remove(&connection) {
+                self.quarantine_websocket_ticket(active.ticket);
+            }
+            return Err(HostControlError::new(
+                HostControlErrorKind::InconsistentState,
+                format!(
+                    "WebSocket backend returned {} bytes after Host advertised a {max_message_bytes}-byte receive limit",
+                    message.len()
+                ),
+            ));
+        }
+        self.websocket_connections
+            .get_mut(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "WebSocket connection disappeared during inbound delivery",
+                )
+            })?
+            .queues
+            .enqueue_inbound(message)?;
+        Ok(WebSocketInboundPoll::Queued)
+    }
+
+    pub fn take_navigation_context_websocket_message(
+        &mut self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+    ) -> Result<Option<WebSocketMessage>, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let _ = self.websocket_ticket(process, capability, connection)?;
+        Ok(self
+            .websocket_connections
+            .get_mut(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?
+            .queues
+            .take_inbound()?)
     }
 
     pub fn revoke_navigation_context_websocket(
@@ -2592,6 +2788,7 @@ mod tests {
             max_navigation_context_url_bytes: 512,
             max_service_worker_fetch_dispatches: 4,
             max_websocket_connections: 4,
+            websocket_queues: Default::default(),
         }
     }
 

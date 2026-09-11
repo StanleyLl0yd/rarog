@@ -126,6 +126,7 @@ mod tests {
             max_navigation_context_url_bytes: 512,
             max_service_worker_fetch_dispatches: 4,
             max_websocket_connections: 4,
+            websocket_queues: Default::default(),
         })
         .unwrap()
     }
