@@ -4,8 +4,9 @@ use rarog_host::{
 };
 use rarog_url::{Origin, WebUrl};
 use rarog_websocket::{
-    WebSocketHandshakeIntent, WebSocketLimits, WebSocketMessage, WebSocketQueueErrorKind,
-    WebSocketQueueLimits, WebSocketTransport, WebSocketTransportError, WebSocketTransportErrorKind,
+    WebSocketCloseIntent, WebSocketHandshakeIntent, WebSocketLimits, WebSocketMessage,
+    WebSocketQueueErrorKind, WebSocketQueueLimits, WebSocketTransport, WebSocketTransportClosePoll,
+    WebSocketTransportCloseStart, WebSocketTransportError, WebSocketTransportErrorKind,
     WebSocketTransportReceive, WebSocketTransportSend, WebSocketTransportTicket,
 };
 use std::collections::VecDeque;
@@ -131,6 +132,21 @@ impl WebSocketTransport for FixtureTransport {
         })
     }
 
+    fn begin_close(
+        &mut self,
+        _ticket: WebSocketTransportTicket,
+        _close: &WebSocketCloseIntent,
+    ) -> Result<WebSocketTransportCloseStart, WebSocketTransportError> {
+        Ok(WebSocketTransportCloseStart::Started)
+    }
+
+    fn poll_close(
+        &mut self,
+        _ticket: WebSocketTransportTicket,
+    ) -> Result<WebSocketTransportClosePoll, WebSocketTransportError> {
+        Ok(WebSocketTransportClosePoll::Closed)
+    }
+
     fn abort(&mut self, ticket: WebSocketTransportTicket) -> Result<(), WebSocketTransportError> {
         self.aborts.push(ticket.get());
         Ok(())
@@ -147,7 +163,7 @@ fn start(
 }
 
 #[test]
-fn outbound_fifo_backpressure_and_errors_preserve_owned_messages() {
+fn outbound_fifo_backpressure_preserves_until_acceptance_and_errors_are_terminal() {
     let mut host = host_with_queues(queue_limits());
     let context = open_context(&mut host, "https://app.example/");
     let capability = network_capability(&mut host, context);
@@ -182,20 +198,6 @@ fn outbound_fifo_backpressure_and_errors_preserve_owned_messages() {
         snapshot
     );
 
-    transport.send_mode = SendMode::Error;
-    let error = host
-        .flush_navigation_context_websocket_message(capability, connection, &mut transport)
-        .unwrap_err();
-    assert_eq!(
-        error.kind,
-        HostControlErrorKind::WebSocket(WebSocketTransportErrorKind::Backend)
-    );
-    assert_eq!(
-        host.websocket_queue_snapshot(capability, connection)
-            .unwrap(),
-        snapshot
-    );
-
     transport.send_mode = SendMode::Accepted;
     assert_eq!(
         host.flush_navigation_context_websocket_message(capability, connection, &mut transport)
@@ -208,6 +210,23 @@ fn outbound_fifo_backpressure_and_errors_preserve_owned_messages() {
         .unwrap();
     assert_eq!(after.outbound_messages(), 1);
     assert_eq!(after.outbound_bytes(), 3);
+
+    transport.send_mode = SendMode::Error;
+    let error = host
+        .flush_navigation_context_websocket_message(capability, connection, &mut transport)
+        .unwrap_err();
+    assert_eq!(
+        error.kind,
+        HostControlErrorKind::WebSocket(WebSocketTransportErrorKind::Backend)
+    );
+    assert_eq!(host.active_websocket_connections(), 0);
+    assert_eq!(host.pending_websocket_aborts(), 1);
+    assert_eq!(
+        host.websocket_queue_snapshot(capability, connection)
+            .unwrap_err()
+            .kind,
+        HostControlErrorKind::InvalidWebSocketConnectionAuthority
+    );
 }
 
 #[test]

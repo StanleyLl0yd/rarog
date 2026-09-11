@@ -5,7 +5,8 @@ use rarog_host::{
 };
 use rarog_url::{Origin, WebUrl};
 use rarog_websocket::{
-    WebSocketHandshakeIntent, WebSocketLimits, WebSocketMessage, WebSocketTransport,
+    WebSocketCloseIntent, WebSocketHandshakeIntent, WebSocketLimits, WebSocketMessage,
+    WebSocketTransport, WebSocketTransportClosePoll, WebSocketTransportCloseStart,
     WebSocketTransportError, WebSocketTransportErrorKind, WebSocketTransportReceive,
     WebSocketTransportSend, WebSocketTransportTicket,
 };
@@ -110,6 +111,21 @@ impl WebSocketTransport for FixtureTransport {
         _max_message_bytes: usize,
     ) -> Result<WebSocketTransportReceive, WebSocketTransportError> {
         Ok(WebSocketTransportReceive::Pending)
+    }
+
+    fn begin_close(
+        &mut self,
+        _ticket: WebSocketTransportTicket,
+        _close: &WebSocketCloseIntent,
+    ) -> Result<WebSocketTransportCloseStart, WebSocketTransportError> {
+        Ok(WebSocketTransportCloseStart::Started)
+    }
+
+    fn poll_close(
+        &mut self,
+        _ticket: WebSocketTransportTicket,
+    ) -> Result<WebSocketTransportClosePoll, WebSocketTransportError> {
+        Ok(WebSocketTransportClosePoll::Closed)
     }
 
     fn abort(&mut self, ticket: WebSocketTransportTicket) -> Result<(), WebSocketTransportError> {

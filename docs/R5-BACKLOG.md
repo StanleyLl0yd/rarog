@@ -26,7 +26,7 @@ Tracking issue: #260.
 - [x] Define Rarog-owned WebSocket URL/handshake/state/message contracts.
 - [x] Keep socket/backend identities private behind Host/network capability routing.
 - [x] Bound inbound/outbound message size and queued bytes/messages.
-- [ ] Add close/error/backpressure lifecycle coverage.
+- [x] Add close/error/backpressure lifecycle coverage.
 
 ## D — Audio / video
 
