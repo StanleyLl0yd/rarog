@@ -144,9 +144,11 @@ fn loss_and_destroy_retire_stale_resources_and_release_canvas_lease() {
     let buffer = webgl.create_buffer(context, 8).unwrap();
     let texture = webgl.create_texture(context, 2, 2).unwrap();
 
-    assert!(webgl
-        .lose_context(context, WebGlContextLossReason::ResourcePressure)
-        .unwrap());
+    assert!(
+        webgl
+            .lose_context(context, WebGlContextLossReason::ResourcePressure)
+            .unwrap()
+    );
     assert!(webgl.buffer(buffer).is_none());
     assert!(webgl.texture(texture).is_none());
     assert_eq!(webgl.total_buffer_bytes(), 0);
