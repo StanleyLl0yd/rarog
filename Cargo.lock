@@ -2228,6 +2228,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-canvas"
+version = "0.1.0"
+dependencies = [
+ "rarog-types",
+]
+
+[[package]]
 name = "rarog-compositor"
 version = "0.1.0"
 dependencies = [
