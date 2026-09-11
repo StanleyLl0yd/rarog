@@ -2380,6 +2380,8 @@ dependencies = [
  "rarog-host",
  "rarog-ipc",
  "rarog-layout",
+ "rarog-media",
+ "rarog-media-adapter",
  "rarog-platform",
  "rarog-platform-windows-native",
  "rarog-text-opentype",
