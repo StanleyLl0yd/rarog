@@ -64,8 +64,12 @@ macro_rules! typed_id {
             serial: NonZeroU64,
         }
         impl $name {
-            pub const fn scope(self) -> u64 { self.scope.get() }
-            pub const fn serial(self) -> u64 { self.serial.get() }
+            pub const fn scope(self) -> u64 {
+                self.scope.get()
+            }
+            pub const fn serial(self) -> u64 {
+                self.serial.get()
+            }
         }
     };
 }
@@ -99,12 +103,24 @@ pub struct WebGlContextView {
 }
 
 impl WebGlContextView {
-    pub const fn id(self) -> WebGlContextId { self.id }
-    pub const fn surface(self) -> CanvasSurfaceId { self.surface }
-    pub const fn state(self) -> WebGlContextState { self.state }
-    pub const fn resource_count(self) -> usize { self.resource_count }
-    pub const fn buffer_bytes(self) -> u64 { self.buffer_bytes }
-    pub const fn texture_pixels(self) -> u64 { self.texture_pixels }
+    pub const fn id(self) -> WebGlContextId {
+        self.id
+    }
+    pub const fn surface(self) -> CanvasSurfaceId {
+        self.surface
+    }
+    pub const fn state(self) -> WebGlContextState {
+        self.state
+    }
+    pub const fn resource_count(self) -> usize {
+        self.resource_count
+    }
+    pub const fn buffer_bytes(self) -> u64 {
+        self.buffer_bytes
+    }
+    pub const fn texture_pixels(self) -> u64 {
+        self.texture_pixels
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,9 +131,15 @@ pub struct WebGlBufferView {
 }
 
 impl WebGlBufferView {
-    pub const fn id(self) -> WebGlBufferId { self.id }
-    pub const fn context(self) -> WebGlContextId { self.context }
-    pub const fn bytes(self) -> u64 { self.bytes }
+    pub const fn id(self) -> WebGlBufferId {
+        self.id
+    }
+    pub const fn context(self) -> WebGlContextId {
+        self.context
+    }
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,38 +152,78 @@ pub struct WebGlTextureView {
 }
 
 impl WebGlTextureView {
-    pub const fn id(self) -> WebGlTextureId { self.id }
-    pub const fn context(self) -> WebGlContextId { self.context }
-    pub const fn width(self) -> u32 { self.width }
-    pub const fn height(self) -> u32 { self.height }
-    pub const fn pixels(self) -> u64 { self.pixels }
+    pub const fn id(self) -> WebGlTextureId {
+        self.id
+    }
+    pub const fn context(self) -> WebGlContextId {
+        self.context
+    }
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+    pub const fn height(self) -> u32 {
+        self.height
+    }
+    pub const fn pixels(self) -> u64 {
+        self.pixels
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WebGlError {
     InvalidLimits,
     RegistryScopeExhausted,
     ContextIdentitySpaceExhausted,
     BufferIdentitySpaceExhausted,
     TextureIdentitySpaceExhausted,
-    ContextLimitExceeded { contexts: usize, limit: usize },
-    ResourceLimitExceeded { resources: usize, limit: usize },
-    ContextResourceLimitExceeded { resources: usize, limit: usize },
+    ContextLimitExceeded {
+        contexts: usize,
+        limit: usize,
+    },
+    ResourceLimitExceeded {
+        resources: usize,
+        limit: usize,
+    },
+    ContextResourceLimitExceeded {
+        resources: usize,
+        limit: usize,
+    },
     InvalidBufferSize,
-    BufferByteLimitExceeded { bytes: u64, limit: u64 },
+    BufferByteLimitExceeded {
+        bytes: u64,
+        limit: u64,
+    },
     TotalBufferByteOverflow,
-    TotalBufferByteLimitExceeded { bytes: u64, limit: u64 },
+    TotalBufferByteLimitExceeded {
+        bytes: u64,
+        limit: u64,
+    },
     InvalidTextureDimensions,
-    TextureDimensionLimitExceeded { dimension: u32, limit: u32 },
-    TexturePixelLimitExceeded { pixels: u64, limit: u64 },
+    TextureDimensionLimitExceeded {
+        dimension: u32,
+        limit: u32,
+    },
+    TexturePixelLimitExceeded {
+        pixels: u64,
+        limit: u64,
+    },
     TotalTexturePixelOverflow,
-    TotalTexturePixelLimitExceeded { pixels: u64, limit: u64 },
+    TotalTexturePixelLimitExceeded {
+        pixels: u64,
+        limit: u64,
+    },
     UnknownContext(WebGlContextId),
     UnknownBuffer(WebGlBufferId),
     UnknownTexture(WebGlTextureId),
     ContextLost(WebGlContextId),
-    ForeignBuffer { buffer: WebGlBufferId, context: WebGlContextId },
-    ForeignTexture { texture: WebGlTextureId, context: WebGlContextId },
+    ForeignBuffer {
+        buffer: WebGlBufferId,
+        context: WebGlContextId,
+    },
+    ForeignTexture {
+        texture: WebGlTextureId,
+        context: WebGlContextId,
+    },
     Canvas(CanvasError),
     InconsistentState,
 }
@@ -173,7 +235,9 @@ impl fmt::Display for WebGlError {
 }
 impl std::error::Error for WebGlError {}
 impl From<CanvasError> for WebGlError {
-    fn from(value: CanvasError) -> Self { Self::Canvas(value) }
+    fn from(value: CanvasError) -> Self {
+        Self::Canvas(value)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -186,22 +250,39 @@ struct IdAllocator {
 
 impl IdAllocator {
     const fn new(scope: NonZeroU64) -> Self {
-        Self { scope, next_context: 1, next_buffer: 1, next_texture: 1 }
+        Self {
+            scope,
+            next_context: 1,
+            next_buffer: 1,
+            next_texture: 1,
+        }
     }
     fn context(&mut self) -> Result<WebGlContextId, WebGlError> {
-        let serial = NonZeroU64::new(self.next_context).ok_or(WebGlError::ContextIdentitySpaceExhausted)?;
+        let serial =
+            NonZeroU64::new(self.next_context).ok_or(WebGlError::ContextIdentitySpaceExhausted)?;
         self.next_context = self.next_context.checked_add(1).unwrap_or(0);
-        Ok(WebGlContextId { scope: self.scope, serial })
+        Ok(WebGlContextId {
+            scope: self.scope,
+            serial,
+        })
     }
     fn buffer(&mut self) -> Result<WebGlBufferId, WebGlError> {
-        let serial = NonZeroU64::new(self.next_buffer).ok_or(WebGlError::BufferIdentitySpaceExhausted)?;
+        let serial =
+            NonZeroU64::new(self.next_buffer).ok_or(WebGlError::BufferIdentitySpaceExhausted)?;
         self.next_buffer = self.next_buffer.checked_add(1).unwrap_or(0);
-        Ok(WebGlBufferId { scope: self.scope, serial })
+        Ok(WebGlBufferId {
+            scope: self.scope,
+            serial,
+        })
     }
     fn texture(&mut self) -> Result<WebGlTextureId, WebGlError> {
-        let serial = NonZeroU64::new(self.next_texture).ok_or(WebGlError::TextureIdentitySpaceExhausted)?;
+        let serial =
+            NonZeroU64::new(self.next_texture).ok_or(WebGlError::TextureIdentitySpaceExhausted)?;
         self.next_texture = self.next_texture.checked_add(1).unwrap_or(0);
-        Ok(WebGlTextureId { scope: self.scope, serial })
+        Ok(WebGlTextureId {
+            scope: self.scope,
+            serial,
+        })
     }
 }
 
@@ -216,9 +297,17 @@ struct ContextRecord {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct BufferRecord { context: WebGlContextId, bytes: u64 }
+struct BufferRecord {
+    context: WebGlContextId,
+    bytes: u64,
+}
 #[derive(Clone, Copy, Debug)]
-struct TextureRecord { context: WebGlContextId, width: u32, height: u32, pixels: u64 }
+struct TextureRecord {
+    context: WebGlContextId,
+    width: u32,
+    height: u32,
+    pixels: u64,
+}
 
 #[derive(Debug)]
 pub struct WebGlRegistry {
@@ -233,7 +322,9 @@ pub struct WebGlRegistry {
 
 impl WebGlRegistry {
     pub fn try_new(limits: WebGlLimits) -> Result<Self, WebGlError> {
-        if !limits.is_valid() { return Err(WebGlError::InvalidLimits); }
+        if !limits.is_valid() {
+            return Err(WebGlError::InvalidLimits);
+        }
         let scope = allocate_scope()?;
         Ok(Self {
             limits,
@@ -246,26 +337,48 @@ impl WebGlRegistry {
         })
     }
 
-    pub const fn limits(&self) -> WebGlLimits { self.limits }
-    pub fn context_count(&self) -> usize { self.contexts.len() }
-    pub fn resource_count(&self) -> usize { self.buffers.len() + self.textures.len() }
-    pub const fn total_buffer_bytes(&self) -> u64 { self.total_buffer_bytes }
-    pub const fn total_texture_pixels(&self) -> u64 { self.total_texture_pixels }
+    pub const fn limits(&self) -> WebGlLimits {
+        self.limits
+    }
+    pub fn context_count(&self) -> usize {
+        self.contexts.len()
+    }
+    pub fn resource_count(&self) -> usize {
+        self.buffers.len() + self.textures.len()
+    }
+    pub const fn total_buffer_bytes(&self) -> u64 {
+        self.total_buffer_bytes
+    }
+    pub const fn total_texture_pixels(&self) -> u64 {
+        self.total_texture_pixels
+    }
 
     pub fn context(&self, id: WebGlContextId) -> Option<WebGlContextView> {
         self.contexts.get(&id).map(|c| WebGlContextView {
-            id, surface: c.surface, state: c.state, resource_count: c.resource_count,
-            buffer_bytes: c.buffer_bytes, texture_pixels: c.texture_pixels,
+            id,
+            surface: c.surface,
+            state: c.state,
+            resource_count: c.resource_count,
+            buffer_bytes: c.buffer_bytes,
+            texture_pixels: c.texture_pixels,
         })
     }
 
     pub fn buffer(&self, id: WebGlBufferId) -> Option<WebGlBufferView> {
-        self.buffers.get(&id).map(|b| WebGlBufferView { id, context: b.context, bytes: b.bytes })
+        self.buffers.get(&id).map(|b| WebGlBufferView {
+            id,
+            context: b.context,
+            bytes: b.bytes,
+        })
     }
 
     pub fn texture(&self, id: WebGlTextureId) -> Option<WebGlTextureView> {
         self.textures.get(&id).map(|t| WebGlTextureView {
-            id, context: t.context, width: t.width, height: t.height, pixels: t.pixels,
+            id,
+            context: t.context,
+            width: t.width,
+            height: t.height,
+            pixels: t.pixels,
         })
     }
 
@@ -274,11 +387,19 @@ impl WebGlRegistry {
         canvas: &mut CanvasRegistry,
         surface: CanvasSurfaceId,
     ) -> Result<WebGlContextId, WebGlError> {
-        let next = self.contexts.len().checked_add(1).ok_or(WebGlError::ContextLimitExceeded {
-            contexts: usize::MAX, limit: self.limits.max_contexts,
-        })?;
+        let next = self
+            .contexts
+            .len()
+            .checked_add(1)
+            .ok_or(WebGlError::ContextLimitExceeded {
+                contexts: usize::MAX,
+                limit: self.limits.max_contexts,
+            })?;
         if next > self.limits.max_contexts {
-            return Err(WebGlError::ContextLimitExceeded { contexts: next, limit: self.limits.max_contexts });
+            return Err(WebGlError::ContextLimitExceeded {
+                contexts: next,
+                limit: self.limits.max_contexts,
+            });
         }
         let lease = canvas.acquire_external_context(surface)?;
         let id = match self.ids.context() {
@@ -288,93 +409,242 @@ impl WebGlRegistry {
                 return Err(error);
             }
         };
-        let old = self.contexts.insert(id, ContextRecord {
-            surface, lease, state: WebGlContextState::Active, resource_count: 0,
-            buffer_bytes: 0, texture_pixels: 0,
-        });
+        let old = self.contexts.insert(
+            id,
+            ContextRecord {
+                surface,
+                lease,
+                state: WebGlContextState::Active,
+                resource_count: 0,
+                buffer_bytes: 0,
+                texture_pixels: 0,
+            },
+        );
         debug_assert!(old.is_none());
         Ok(id)
     }
 
-    pub fn create_buffer(&mut self, context: WebGlContextId, bytes: u64) -> Result<WebGlBufferId, WebGlError> {
-        if bytes == 0 { return Err(WebGlError::InvalidBufferSize); }
+    pub fn create_buffer(
+        &mut self,
+        context: WebGlContextId,
+        bytes: u64,
+    ) -> Result<WebGlBufferId, WebGlError> {
+        if bytes == 0 {
+            return Err(WebGlError::InvalidBufferSize);
+        }
         if bytes > self.limits.max_buffer_bytes {
-            return Err(WebGlError::BufferByteLimitExceeded { bytes, limit: self.limits.max_buffer_bytes });
+            return Err(WebGlError::BufferByteLimitExceeded {
+                bytes,
+                limit: self.limits.max_buffer_bytes,
+            });
         }
         self.require_active_context(context)?;
         self.check_resource_capacity(context)?;
-        let next_total = self.total_buffer_bytes.checked_add(bytes).ok_or(WebGlError::TotalBufferByteOverflow)?;
+        let next_total = self
+            .total_buffer_bytes
+            .checked_add(bytes)
+            .ok_or(WebGlError::TotalBufferByteOverflow)?;
         if next_total > self.limits.max_total_buffer_bytes {
-            return Err(WebGlError::TotalBufferByteLimitExceeded { bytes: next_total, limit: self.limits.max_total_buffer_bytes });
+            return Err(WebGlError::TotalBufferByteLimitExceeded {
+                bytes: next_total,
+                limit: self.limits.max_total_buffer_bytes,
+            });
         }
+        let owner = self
+            .contexts
+            .get(&context)
+            .ok_or(WebGlError::InconsistentState)?;
+        let next_owner_resources = owner
+            .resource_count
+            .checked_add(1)
+            .ok_or(WebGlError::InconsistentState)?;
+        let next_owner_bytes = owner
+            .buffer_bytes
+            .checked_add(bytes)
+            .ok_or(WebGlError::InconsistentState)?;
         let id = self.ids.buffer()?;
         let old = self.buffers.insert(id, BufferRecord { context, bytes });
         debug_assert!(old.is_none());
-        let owner = self.contexts.get_mut(&context).ok_or(WebGlError::InconsistentState)?;
-        owner.resource_count += 1;
-        owner.buffer_bytes += bytes;
+        let owner = self
+            .contexts
+            .get_mut(&context)
+            .ok_or(WebGlError::InconsistentState)?;
+        owner.resource_count = next_owner_resources;
+        owner.buffer_bytes = next_owner_bytes;
         self.total_buffer_bytes = next_total;
         Ok(id)
     }
 
-    pub fn create_texture(&mut self, context: WebGlContextId, width: u32, height: u32) -> Result<WebGlTextureId, WebGlError> {
-        if width == 0 || height == 0 { return Err(WebGlError::InvalidTextureDimensions); }
+    pub fn create_texture(
+        &mut self,
+        context: WebGlContextId,
+        width: u32,
+        height: u32,
+    ) -> Result<WebGlTextureId, WebGlError> {
+        if width == 0 || height == 0 {
+            return Err(WebGlError::InvalidTextureDimensions);
+        }
         let dimension = width.max(height);
         if dimension > self.limits.max_texture_dimension {
-            return Err(WebGlError::TextureDimensionLimitExceeded { dimension, limit: self.limits.max_texture_dimension });
+            return Err(WebGlError::TextureDimensionLimitExceeded {
+                dimension,
+                limit: self.limits.max_texture_dimension,
+            });
         }
         let pixels = u64::from(width) * u64::from(height);
         if pixels > self.limits.max_texture_pixels {
-            return Err(WebGlError::TexturePixelLimitExceeded { pixels, limit: self.limits.max_texture_pixels });
+            return Err(WebGlError::TexturePixelLimitExceeded {
+                pixels,
+                limit: self.limits.max_texture_pixels,
+            });
         }
         self.require_active_context(context)?;
         self.check_resource_capacity(context)?;
-        let next_total = self.total_texture_pixels.checked_add(pixels).ok_or(WebGlError::TotalTexturePixelOverflow)?;
+        let next_total = self
+            .total_texture_pixels
+            .checked_add(pixels)
+            .ok_or(WebGlError::TotalTexturePixelOverflow)?;
         if next_total > self.limits.max_total_texture_pixels {
-            return Err(WebGlError::TotalTexturePixelLimitExceeded { pixels: next_total, limit: self.limits.max_total_texture_pixels });
+            return Err(WebGlError::TotalTexturePixelLimitExceeded {
+                pixels: next_total,
+                limit: self.limits.max_total_texture_pixels,
+            });
         }
+        let owner = self
+            .contexts
+            .get(&context)
+            .ok_or(WebGlError::InconsistentState)?;
+        let next_owner_resources = owner
+            .resource_count
+            .checked_add(1)
+            .ok_or(WebGlError::InconsistentState)?;
+        let next_owner_pixels = owner
+            .texture_pixels
+            .checked_add(pixels)
+            .ok_or(WebGlError::InconsistentState)?;
         let id = self.ids.texture()?;
-        let old = self.textures.insert(id, TextureRecord { context, width, height, pixels });
+        let old = self.textures.insert(
+            id,
+            TextureRecord {
+                context,
+                width,
+                height,
+                pixels,
+            },
+        );
         debug_assert!(old.is_none());
-        let owner = self.contexts.get_mut(&context).ok_or(WebGlError::InconsistentState)?;
-        owner.resource_count += 1;
-        owner.texture_pixels += pixels;
+        let owner = self
+            .contexts
+            .get_mut(&context)
+            .ok_or(WebGlError::InconsistentState)?;
+        owner.resource_count = next_owner_resources;
+        owner.texture_pixels = next_owner_pixels;
         self.total_texture_pixels = next_total;
         Ok(id)
     }
 
-    pub fn destroy_buffer(&mut self, context: WebGlContextId, buffer: WebGlBufferId) -> Result<(), WebGlError> {
-        let record = *self.buffers.get(&buffer).ok_or(WebGlError::UnknownBuffer(buffer))?;
-        if record.context != context { return Err(WebGlError::ForeignBuffer { buffer, context }); }
+    pub fn destroy_buffer(
+        &mut self,
+        context: WebGlContextId,
+        buffer: WebGlBufferId,
+    ) -> Result<(), WebGlError> {
+        let record = *self
+            .buffers
+            .get(&buffer)
+            .ok_or(WebGlError::UnknownBuffer(buffer))?;
+        if record.context != context {
+            return Err(WebGlError::ForeignBuffer { buffer, context });
+        }
         self.buffers.remove(&buffer);
-        let owner = self.contexts.get_mut(&context).ok_or(WebGlError::InconsistentState)?;
-        owner.resource_count = owner.resource_count.checked_sub(1).ok_or(WebGlError::InconsistentState)?;
-        owner.buffer_bytes = owner.buffer_bytes.checked_sub(record.bytes).ok_or(WebGlError::InconsistentState)?;
-        self.total_buffer_bytes = self.total_buffer_bytes.checked_sub(record.bytes).ok_or(WebGlError::InconsistentState)?;
+        let owner = self
+            .contexts
+            .get_mut(&context)
+            .ok_or(WebGlError::InconsistentState)?;
+        owner.resource_count = owner
+            .resource_count
+            .checked_sub(1)
+            .ok_or(WebGlError::InconsistentState)?;
+        owner.buffer_bytes = owner
+            .buffer_bytes
+            .checked_sub(record.bytes)
+            .ok_or(WebGlError::InconsistentState)?;
+        self.total_buffer_bytes = self
+            .total_buffer_bytes
+            .checked_sub(record.bytes)
+            .ok_or(WebGlError::InconsistentState)?;
         Ok(())
     }
 
-    pub fn destroy_texture(&mut self, context: WebGlContextId, texture: WebGlTextureId) -> Result<(), WebGlError> {
-        let record = *self.textures.get(&texture).ok_or(WebGlError::UnknownTexture(texture))?;
-        if record.context != context { return Err(WebGlError::ForeignTexture { texture, context }); }
+    pub fn destroy_texture(
+        &mut self,
+        context: WebGlContextId,
+        texture: WebGlTextureId,
+    ) -> Result<(), WebGlError> {
+        let record = *self
+            .textures
+            .get(&texture)
+            .ok_or(WebGlError::UnknownTexture(texture))?;
+        if record.context != context {
+            return Err(WebGlError::ForeignTexture { texture, context });
+        }
         self.textures.remove(&texture);
-        let owner = self.contexts.get_mut(&context).ok_or(WebGlError::InconsistentState)?;
-        owner.resource_count = owner.resource_count.checked_sub(1).ok_or(WebGlError::InconsistentState)?;
-        owner.texture_pixels = owner.texture_pixels.checked_sub(record.pixels).ok_or(WebGlError::InconsistentState)?;
-        self.total_texture_pixels = self.total_texture_pixels.checked_sub(record.pixels).ok_or(WebGlError::InconsistentState)?;
+        let owner = self
+            .contexts
+            .get_mut(&context)
+            .ok_or(WebGlError::InconsistentState)?;
+        owner.resource_count = owner
+            .resource_count
+            .checked_sub(1)
+            .ok_or(WebGlError::InconsistentState)?;
+        owner.texture_pixels = owner
+            .texture_pixels
+            .checked_sub(record.pixels)
+            .ok_or(WebGlError::InconsistentState)?;
+        self.total_texture_pixels = self
+            .total_texture_pixels
+            .checked_sub(record.pixels)
+            .ok_or(WebGlError::InconsistentState)?;
         Ok(())
     }
 
-    pub fn lose_context(&mut self, context: WebGlContextId, reason: WebGlContextLossReason) -> Result<bool, WebGlError> {
-        let state = self.contexts.get(&context).ok_or(WebGlError::UnknownContext(context))?.state;
-        if matches!(state, WebGlContextState::Lost(_)) { return Ok(false); }
+    pub fn lose_context(
+        &mut self,
+        context: WebGlContextId,
+        reason: WebGlContextLossReason,
+    ) -> Result<bool, WebGlError> {
+        let state = self
+            .contexts
+            .get(&context)
+            .ok_or(WebGlError::UnknownContext(context))?
+            .state;
+        if matches!(state, WebGlContextState::Lost(_)) {
+            return Ok(false);
+        }
         self.retire_resources(context)?;
-        self.contexts.get_mut(&context).ok_or(WebGlError::InconsistentState)?.state = WebGlContextState::Lost(reason);
+        self.contexts
+            .get_mut(&context)
+            .ok_or(WebGlError::InconsistentState)?
+            .state = WebGlContextState::Lost(reason);
         Ok(true)
     }
 
-    pub fn destroy_context(&mut self, canvas: &mut CanvasRegistry, context: WebGlContextId) -> Result<(), WebGlError> {
-        let lease = self.contexts.get(&context).ok_or(WebGlError::UnknownContext(context))?.lease;
+    pub fn destroy_context(
+        &mut self,
+        canvas: &mut CanvasRegistry,
+        context: WebGlContextId,
+    ) -> Result<(), WebGlError> {
+        let record = self
+            .contexts
+            .get(&context)
+            .ok_or(WebGlError::UnknownContext(context))?;
+        let lease = record.lease;
+        if canvas
+            .surface(record.surface)
+            .and_then(|surface| surface.external_context())
+            != Some(lease)
+        {
+            return Err(WebGlError::InconsistentState);
+        }
         self.retire_resources(context)?;
         canvas.release_external_context(lease)?;
         self.contexts.remove(&context);
@@ -382,39 +652,77 @@ impl WebGlRegistry {
     }
 
     fn require_active_context(&self, context: WebGlContextId) -> Result<(), WebGlError> {
-        match self.contexts.get(&context).ok_or(WebGlError::UnknownContext(context))?.state {
+        match self
+            .contexts
+            .get(&context)
+            .ok_or(WebGlError::UnknownContext(context))?
+            .state
+        {
             WebGlContextState::Active => Ok(()),
             WebGlContextState::Lost(_) => Err(WebGlError::ContextLost(context)),
         }
     }
 
     fn check_resource_capacity(&self, context: WebGlContextId) -> Result<(), WebGlError> {
-        let owner = self.contexts.get(&context).ok_or(WebGlError::UnknownContext(context))?;
-        let context_next = owner.resource_count.checked_add(1).ok_or(WebGlError::ContextResourceLimitExceeded {
-            resources: usize::MAX, limit: self.limits.max_resources_per_context,
-        })?;
+        let owner = self
+            .contexts
+            .get(&context)
+            .ok_or(WebGlError::UnknownContext(context))?;
+        let context_next = owner.resource_count.checked_add(1).ok_or(
+            WebGlError::ContextResourceLimitExceeded {
+                resources: usize::MAX,
+                limit: self.limits.max_resources_per_context,
+            },
+        )?;
         if context_next > self.limits.max_resources_per_context {
-            return Err(WebGlError::ContextResourceLimitExceeded { resources: context_next, limit: self.limits.max_resources_per_context });
+            return Err(WebGlError::ContextResourceLimitExceeded {
+                resources: context_next,
+                limit: self.limits.max_resources_per_context,
+            });
         }
-        let total_next = self.resource_count().checked_add(1).ok_or(WebGlError::ResourceLimitExceeded {
-            resources: usize::MAX, limit: self.limits.max_resources,
-        })?;
+        let current_total = self.buffers.len().checked_add(self.textures.len()).ok_or(
+            WebGlError::ResourceLimitExceeded {
+                resources: usize::MAX,
+                limit: self.limits.max_resources,
+            },
+        )?;
+        let total_next = current_total
+            .checked_add(1)
+            .ok_or(WebGlError::ResourceLimitExceeded {
+                resources: usize::MAX,
+                limit: self.limits.max_resources,
+            })?;
         if total_next > self.limits.max_resources {
-            return Err(WebGlError::ResourceLimitExceeded { resources: total_next, limit: self.limits.max_resources });
+            return Err(WebGlError::ResourceLimitExceeded {
+                resources: total_next,
+                limit: self.limits.max_resources,
+            });
         }
         Ok(())
     }
 
     fn retire_resources(&mut self, context: WebGlContextId) -> Result<(), WebGlError> {
         let (buffer_bytes, texture_pixels) = {
-            let owner = self.contexts.get(&context).ok_or(WebGlError::UnknownContext(context))?;
+            let owner = self
+                .contexts
+                .get(&context)
+                .ok_or(WebGlError::UnknownContext(context))?;
             (owner.buffer_bytes, owner.texture_pixels)
         };
         self.buffers.retain(|_, record| record.context != context);
         self.textures.retain(|_, record| record.context != context);
-        self.total_buffer_bytes = self.total_buffer_bytes.checked_sub(buffer_bytes).ok_or(WebGlError::InconsistentState)?;
-        self.total_texture_pixels = self.total_texture_pixels.checked_sub(texture_pixels).ok_or(WebGlError::InconsistentState)?;
-        let owner = self.contexts.get_mut(&context).ok_or(WebGlError::InconsistentState)?;
+        self.total_buffer_bytes = self
+            .total_buffer_bytes
+            .checked_sub(buffer_bytes)
+            .ok_or(WebGlError::InconsistentState)?;
+        self.total_texture_pixels = self
+            .total_texture_pixels
+            .checked_sub(texture_pixels)
+            .ok_or(WebGlError::InconsistentState)?;
+        let owner = self
+            .contexts
+            .get_mut(&context)
+            .ok_or(WebGlError::InconsistentState)?;
         owner.resource_count = 0;
         owner.buffer_bytes = 0;
         owner.texture_pixels = 0;
@@ -423,7 +731,11 @@ impl WebGlRegistry {
 }
 
 fn allocate_scope() -> Result<NonZeroU64, WebGlError> {
-    let scope = NEXT_WEBGL_REGISTRY_SCOPE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| current.checked_add(1)).map_err(|_| WebGlError::RegistryScopeExhausted)?;
+    let scope = NEXT_WEBGL_REGISTRY_SCOPE
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .map_err(|_| WebGlError::RegistryScopeExhausted)?;
     NonZeroU64::new(scope).ok_or(WebGlError::RegistryScopeExhausted)
 }
 
@@ -439,7 +751,8 @@ mod tests {
             max_pixels_per_surface: 64,
             max_total_pixels: 128,
             max_state_stack_depth: 4,
-        }).unwrap()
+        })
+        .unwrap()
     }
 
     fn limits() -> WebGlLimits {
@@ -476,9 +789,18 @@ mod tests {
         let cb = webgl.create_context(&mut canvas, b).unwrap();
         let buffer = webgl.create_buffer(ca, 8).unwrap();
         let texture = webgl.create_texture(ca, 2, 2).unwrap();
-        assert!(matches!(webgl.create_buffer(ca, 1), Err(WebGlError::ContextResourceLimitExceeded { .. })));
-        assert!(matches!(webgl.destroy_buffer(cb, buffer), Err(WebGlError::ForeignBuffer { .. })));
-        assert!(matches!(webgl.destroy_texture(cb, texture), Err(WebGlError::ForeignTexture { .. })));
+        assert!(matches!(
+            webgl.create_buffer(ca, 1),
+            Err(WebGlError::ContextResourceLimitExceeded { .. })
+        ));
+        assert!(matches!(
+            webgl.destroy_buffer(cb, buffer),
+            Err(WebGlError::ForeignBuffer { .. })
+        ));
+        assert!(matches!(
+            webgl.destroy_texture(cb, texture),
+            Err(WebGlError::ForeignTexture { .. })
+        ));
     }
 
     #[test]
@@ -489,13 +811,23 @@ mod tests {
         let context = webgl.create_context(&mut canvas, surface).unwrap();
         let buffer = webgl.create_buffer(context, 8).unwrap();
         let texture = webgl.create_texture(context, 2, 2).unwrap();
-        assert!(webgl.lose_context(context, WebGlContextLossReason::Explicit).unwrap());
-        assert!(!webgl.lose_context(context, WebGlContextLossReason::DeviceReset).unwrap());
+        assert!(
+            webgl
+                .lose_context(context, WebGlContextLossReason::Explicit)
+                .unwrap()
+        );
+        assert!(
+            !webgl
+                .lose_context(context, WebGlContextLossReason::DeviceReset)
+                .unwrap()
+        );
         assert!(webgl.buffer(buffer).is_none());
         assert!(webgl.texture(texture).is_none());
         assert_eq!(webgl.total_buffer_bytes(), 0);
         assert_eq!(webgl.total_texture_pixels(), 0);
-        assert!(matches!(webgl.create_buffer(context, 1), Err(WebGlError::ContextLost(id)) if id == context));
+        assert!(
+            matches!(webgl.create_buffer(context, 1), Err(WebGlError::ContextLost(id)) if id == context)
+        );
         webgl.destroy_context(&mut canvas, context).unwrap();
     }
 
