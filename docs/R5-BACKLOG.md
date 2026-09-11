@@ -31,7 +31,7 @@ Tracking issue: #260.
 ## D — Audio / video
 
 - [x] Define platform-neutral bounded media resource/stream/playback ownership.
-- [ ] Keep demux/codec/device/platform APIs behind replaceable adapters.
+- [x] Keep demux/codec/device/platform APIs behind replaceable adapters.
 - [ ] Integrate media scheduling with lifecycle/background resource policy.
 - [ ] Add Windows-first media backend foundation without leaking Windows types into Web semantics.
 
