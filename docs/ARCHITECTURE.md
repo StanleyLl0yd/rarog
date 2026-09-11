@@ -186,7 +186,7 @@ This R5 interception boundary does not claim script-visible `FetchEvent`/`respon
 
 Opening-handshake intent is semantic data only. `WebSocketProtocols` preserves requested subprotocol order while enforcing a bounded count, bounded bytes per value, non-empty HTTP-token grammar and case-sensitive duplicate rejection before values are retained. `WebSocketHandshakeIntent` owns only the validated canonical URL plus requested protocols; random keys, raw Upgrade headers, extension negotiation and backend connection identity remain later integration work.
 
-`WebSocketReadyState` records the four Web-facing connecting/open/closing/closed states without pretending to run transport transitions. `WebSocketMessage` privately owns bounded text or binary application data; UTF-8 text is charged by encoded bytes and oversize input is rejected before copying. These are message-level contracts, not WebSocket frames: opcodes, fragmentation, masks, native sockets and queue ownership are intentionally absent. See ADR-0123.
+`WebSocketReadyState` records the four Web-facing connecting/open/closing/closed states without pretending to run transport transitions. `WebSocketMessage` privately owns bounded text or binary application data; UTF-8 text is charged by encoded bytes and oversize input is rejected before copying. These are message-level contracts, not WebSocket frames: opcodes, fragmentation, masks and native sockets remain absent; bounded queue ownership is layered above this payload contract. See ADR-0123.
 
 ### R5 Host-authorized WebSocket transport ownership
 
@@ -196,7 +196,15 @@ A live WebSocket is represented outside the backend by a separate scoped monoton
 
 Active connections and tickets awaiting backend abort share one bounded Host budget. Capability revocation, navigation-context close, cross-site replacement and Site-process loss remove Host-visible connection authority and quarantine the backend ticket until explicit abort succeeds. Same-site navigation also quarantines every connection owned by the old document even when its Network capability remains live. A failed abort keeps the ticket charged, and backend ticket reuse across live or quarantined work fails closed rather than aliasing two Host connection references. Independent Host instances allocate distinct connection-ID scopes. See ADR-0124.
 
-This slice still does not own application send/receive queues, WebSocket frames, selected-protocol or extension negotiation, real HTTP Upgrade/TCP/TLS behavior, or complete close/error/backpressure state transitions. The remaining R5 WebSocket work adds bounded inbound/outbound queue accounting and then defines close/error/backpressure lifecycle. DOM/WebIDL exposure and R6 compatibility qualification remain outside this foundation.
+### R5 bounded WebSocket application queues
+
+Each live Host WebSocket connection now owns one `WebSocketMessageQueues` value with independent FIFO inbound and outbound budgets. `WebSocketQueueLimits` bounds retained message count and aggregate bytes separately in each direction. Enqueue accounting uses checked addition before mutation, dequeue uses checked subtraction, and rejected operations leave both contents and counters unchanged. Empty messages remain valid: when inbound bytes are fully charged but message-count capacity remains, the receive bound is explicitly zero rather than being confused with a count-full queue.
+
+Host queue access remains behind the exact navigation-context Network capability and `WebSocketConnectionId` binding from ADR-0124. Outbound transport handoff borrows the oldest queued message and releases it only after `WebSocketTransportSend::Accepted`; explicit backpressure and backend errors retain the same payload and byte charge. Inbound polling does not touch the backend when message-count capacity is exhausted, otherwise it supplies the exact remaining byte budget and revalidates the returned message before retaining it. A backend that exceeds the advertised receive bound causes the Host to revoke the connection and quarantine the private transport ticket rather than accepting oversized data.
+
+Navigation, capability revocation, context close and Site-process loss remove the live connection and therefore discard its application queues, while pending backend cleanup remains charged independently through the existing transport-ticket quarantine. Queue state never widens connection authority and one connection cannot consume or expose another connection's FIFO. See ADR-0125.
+
+The remaining R5 WebSocket work defines close/error/backpressure lifecycle, including terminal state transitions and close metadata. WebSocket frame parsing/masking, ping/pong, selected-protocol or extension negotiation, real HTTP Upgrade/TCP/TLS behavior, DOM/WebIDL exposure and R6 compatibility qualification remain outside this foundation.
 
 ## Rendering model
 

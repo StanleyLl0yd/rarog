@@ -5,8 +5,9 @@ use rarog_host::{
 };
 use rarog_url::{Origin, WebUrl};
 use rarog_websocket::{
-    WebSocketHandshakeIntent, WebSocketLimits, WebSocketTransport, WebSocketTransportError,
-    WebSocketTransportErrorKind, WebSocketTransportTicket,
+    WebSocketHandshakeIntent, WebSocketLimits, WebSocketMessage, WebSocketTransport,
+    WebSocketTransportError, WebSocketTransportErrorKind, WebSocketTransportReceive,
+    WebSocketTransportSend, WebSocketTransportTicket,
 };
 use std::num::NonZeroU64;
 
@@ -93,6 +94,22 @@ impl WebSocketTransport for FixtureTransport {
             }
         };
         Ok(WebSocketTransportTicket::new(NonZeroU64::new(raw).unwrap()))
+    }
+
+    fn send(
+        &mut self,
+        _ticket: WebSocketTransportTicket,
+        _message: &WebSocketMessage,
+    ) -> Result<WebSocketTransportSend, WebSocketTransportError> {
+        Ok(WebSocketTransportSend::Accepted)
+    }
+
+    fn receive(
+        &mut self,
+        _ticket: WebSocketTransportTicket,
+        _max_message_bytes: usize,
+    ) -> Result<WebSocketTransportReceive, WebSocketTransportError> {
+        Ok(WebSocketTransportReceive::Pending)
     }
 
     fn abort(&mut self, ticket: WebSocketTransportTicket) -> Result<(), WebSocketTransportError> {

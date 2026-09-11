@@ -1,3 +1,6 @@
+mod queue;
+pub use queue::*;
+
 use rarog_url::{Origin, WebUrl};
 use std::fmt;
 use std::num::NonZeroU64;
@@ -365,12 +368,36 @@ impl fmt::Display for WebSocketTransportError {
 
 impl std::error::Error for WebSocketTransportError {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketTransportSend {
+    Accepted,
+    Backpressure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WebSocketTransportReceive {
+    Pending,
+    Message(WebSocketMessage),
+}
+
 pub trait WebSocketTransport {
     fn start(
         &mut self,
         handshake: WebSocketHandshakeIntent,
         client_origin: Origin,
     ) -> Result<WebSocketTransportTicket, WebSocketTransportError>;
+
+    fn send(
+        &mut self,
+        ticket: WebSocketTransportTicket,
+        message: &WebSocketMessage,
+    ) -> Result<WebSocketTransportSend, WebSocketTransportError>;
+
+    fn receive(
+        &mut self,
+        ticket: WebSocketTransportTicket,
+        max_message_bytes: usize,
+    ) -> Result<WebSocketTransportReceive, WebSocketTransportError>;
 
     fn abort(&mut self, ticket: WebSocketTransportTicket) -> Result<(), WebSocketTransportError>;
 }
