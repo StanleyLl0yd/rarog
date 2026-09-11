@@ -230,7 +230,15 @@ Demux control opens one semantic resource, selects an exact semantic stream, see
 
 Adapter failures retain only the fixed `MediaAdapterErrorKind` classification instead of arbitrary backend-owned diagnostic strings. Fake-adapter tests prove implementations can be replaced while preserving the exact Rarog identities/time/state crossing the seam, and CI statically rejects target-platform names/types in the portable crate. See ADR-0128.
 
-The media foundation still does not define encoded packet queues, decoded audio blocks/video frames, device selection, Host/media capability routing, scheduler/background resource policy, concrete Windows media integration, DOM/WebIDL media elements, MSE/EME/WebAudio, autoplay policy, real decoding/playback, WPT qualification or R6 compatibility claims. Those remain later R5 slices.
+### R5 bounded media scheduling and lifecycle policy
+
+`rarog-media-runtime` owns the portable execution-policy layer above semantic media ownership. Each runtime allocates scoped monotonic `MediaWorkId` references and bounds the combined pending plus active work count. A work item binds one exact live playback to either one exact selected stream for demux/decode work or one exact selected audio/video kind for output work. Admission revalidates the live `MediaRegistry`, requires the playback to be `Playing`, verifies exact selected-stream/resource ownership, applies environment policy, rejects duplicate work and checks capacity before allocating an identity or mutating the queue.
+
+Lifecycle/resource policy is explicit rather than inferred from a decoder, device or operating-system handle. `Foreground` permits otherwise-valid work, `Background` applies independent audio/video eligibility from `MediaBackgroundPolicy`, and `Suspended` permits no new work. This allows background audio to remain eligible while queued video work is discarded without destroying the underlying resource/playback ownership. Pending work is FIFO and revalidated immediately before export; stale playback/stream state or a newly ineligible environment causes the pending command to be discarded instead of reaching a backend. Environment and policy changes reconcile queued work immediately and are rejected while one work item is active, avoiding a policy transition underneath an already exported command.
+
+Generic scheduler IDs and media-adapter tickets do not become authority in this layer. The runtime retains no adapter ticket, encoded packet, decoded frame/sample payload, OS handle or platform type. Suspension/resume therefore preserves semantic playback ownership but does not revive old work identities; resumed execution requires fresh admission. See ADR-0129.
+
+The media foundation still does not define real demux/decoding, encoded packet or decoded audio/video data-plane queues, device selection, Host/media capability routing, concrete Windows media integration, DOM/WebIDL media elements, MSE/EME/WebAudio, autoplay/visibility policy completeness, WPT qualification or R6 compatibility claims. Those remain later R5 slices.
 
 ## Rendering model
 
