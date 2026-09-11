@@ -1,5 +1,6 @@
-use rarog_url::WebUrl;
+use rarog_url::{Origin, WebUrl};
 use std::fmt;
+use std::num::NonZeroU64;
 
 pub const DEFAULT_MAX_WEBSOCKET_URL_BYTES: usize = 64 * 1024;
 pub const DEFAULT_MAX_WEBSOCKET_SUBPROTOCOLS: usize = 32;
@@ -320,6 +321,58 @@ impl WebSocketHandshakeIntent {
     pub fn protocols(&self) -> &WebSocketProtocols {
         &self.protocols
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WebSocketTransportTicket(NonZeroU64);
+
+impl WebSocketTransportTicket {
+    pub const fn new(value: NonZeroU64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketTransportErrorKind {
+    InvalidTicket,
+    Backend,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSocketTransportError {
+    pub kind: WebSocketTransportErrorKind,
+    pub message: String,
+}
+
+impl WebSocketTransportError {
+    pub fn new(kind: WebSocketTransportErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for WebSocketTransportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for WebSocketTransportError {}
+
+pub trait WebSocketTransport {
+    fn start(
+        &mut self,
+        handshake: WebSocketHandshakeIntent,
+        client_origin: Origin,
+    ) -> Result<WebSocketTransportTicket, WebSocketTransportError>;
+
+    fn abort(&mut self, ticket: WebSocketTransportTicket) -> Result<(), WebSocketTransportError>;
 }
 
 #[repr(u8)]
