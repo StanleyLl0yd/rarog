@@ -18,8 +18,10 @@ use rarog_process::{
 use rarog_storage::{StorageError, StorageErrorKind, StorageProcessState};
 use rarog_url::{Origin, SiteIdentity, UrlError, UrlErrorKind, WebUrl};
 use rarog_websocket::{
-    WebSocketHandshakeIntent, WebSocketMessage, WebSocketMessageQueues, WebSocketQueueError,
-    WebSocketQueueErrorKind, WebSocketQueueLimits, WebSocketQueueSnapshot, WebSocketTransport,
+    WebSocketCloseIntent, WebSocketHandshakeIntent, WebSocketLifecycle, WebSocketLifecycleError,
+    WebSocketLifecycleErrorKind, WebSocketMessage, WebSocketMessageQueues, WebSocketQueueError,
+    WebSocketQueueErrorKind, WebSocketQueueLimits, WebSocketQueueSnapshot, WebSocketReadyState,
+    WebSocketTransport, WebSocketTransportClosePoll, WebSocketTransportCloseStart,
     WebSocketTransportError, WebSocketTransportErrorKind, WebSocketTransportReceive,
     WebSocketTransportSend, WebSocketTransportTicket,
 };
@@ -120,6 +122,8 @@ pub enum HostControlErrorKind {
     WebSocketConnectionLimitExceeded,
     WebSocketConnectionIdentitySpaceExhausted,
     InvalidWebSocketConnectionAuthority,
+    InvalidWebSocketLifecycleState,
+    WebSocketLifecycle(WebSocketLifecycleErrorKind),
     WebSocketQueue(WebSocketQueueErrorKind),
     InvalidNetworkOperationId,
     NetworkOperationLimitExceeded,
@@ -196,6 +200,15 @@ impl From<ServiceWorkerError> for HostControlError {
 impl From<WebSocketTransportError> for HostControlError {
     fn from(error: WebSocketTransportError) -> Self {
         Self::new(HostControlErrorKind::WebSocket(error.kind), error.message)
+    }
+}
+
+impl From<WebSocketLifecycleError> for HostControlError {
+    fn from(error: WebSocketLifecycleError) -> Self {
+        Self::new(
+            HostControlErrorKind::WebSocketLifecycle(error.kind),
+            error.message,
+        )
     }
 }
 
@@ -621,6 +634,9 @@ struct WebSocketConnection {
     client_origin: Origin,
     ticket: WebSocketTransportTicket,
     queues: WebSocketMessageQueues,
+    lifecycle: WebSocketLifecycle,
+    close_intent: Option<WebSocketCloseIntent>,
+    close_started: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -635,6 +651,15 @@ pub enum WebSocketInboundPoll {
     Pending,
     Queued,
     QueueFull,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketCloseProgress {
+    Draining,
+    Backpressure,
+    Started,
+    Pending,
+    Closed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1244,6 +1269,8 @@ impl HostControlPlane {
         }
 
         let queues = WebSocketMessageQueues::try_new(self.websocket_queue_limits)?;
+        let mut lifecycle = WebSocketLifecycle::new();
+        lifecycle.mark_open()?;
         let ticket = transport.start(handshake, client_origin.clone())?;
         if self.pending_websocket_aborts.contains(&ticket) {
             return Err(HostControlError::new(
@@ -1274,6 +1301,9 @@ impl HostControlPlane {
                 client_origin,
                 ticket,
                 queues,
+                lifecycle,
+                close_intent: None,
+                close_started: false,
             },
         ) {
             self.websocket_connections.remove(&connection);
@@ -1286,6 +1316,144 @@ impl HostControlPlane {
         }
 
         Ok(connection)
+    }
+
+    pub fn websocket_ready_state(
+        &self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+    ) -> Result<WebSocketReadyState, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let _ = self.websocket_ticket(process, capability, connection)?;
+        Ok(self
+            .websocket_connections
+            .get(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?
+            .lifecycle
+            .state())
+    }
+
+    pub fn begin_navigation_context_websocket_close(
+        &mut self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+        close: WebSocketCloseIntent,
+    ) -> Result<WebSocketReadyState, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let _ = self.websocket_ticket(process, capability, connection)?;
+        let active = self
+            .websocket_connections
+            .get_mut(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?;
+        match active.lifecycle.state() {
+            WebSocketReadyState::Open => {
+                active.lifecycle.begin_closing()?;
+                active.close_intent = Some(close);
+                active.close_started = false;
+                Ok(active.lifecycle.state())
+            }
+            WebSocketReadyState::Closing if active.close_intent.as_ref() == Some(&close) => {
+                Ok(WebSocketReadyState::Closing)
+            }
+            state => Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketLifecycleState,
+                format!("cannot begin WebSocket close while connection is {state:?}"),
+            )),
+        }
+    }
+
+    pub fn progress_navigation_context_websocket_close(
+        &mut self,
+        capability: NavigationContextCapability,
+        connection: WebSocketConnectionId,
+        transport: &mut dyn WebSocketTransport,
+    ) -> Result<WebSocketCloseProgress, HostControlError> {
+        let process = self
+            .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
+        let ticket = self.websocket_ticket(process, capability, connection)?;
+        let (state, outbound_messages, close_started, close) = {
+            let active = self.websocket_connections.get(&connection).ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?;
+            (
+                active.lifecycle.state(),
+                active.queues.snapshot().outbound_messages(),
+                active.close_started,
+                active.close_intent.clone(),
+            )
+        };
+        if state != WebSocketReadyState::Closing {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketLifecycleState,
+                format!("cannot progress WebSocket close while connection is {state:?}"),
+            ));
+        }
+        if outbound_messages != 0 {
+            return Ok(WebSocketCloseProgress::Draining);
+        }
+
+        if !close_started {
+            let close = close.ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InconsistentState,
+                    "closing WebSocket connection has no close intent",
+                )
+            })?;
+            let result = match transport.begin_close(ticket, &close) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.fail_websocket_connection(connection)?;
+                    return Err(error.into());
+                }
+            };
+            return match result {
+                WebSocketTransportCloseStart::Backpressure => {
+                    Ok(WebSocketCloseProgress::Backpressure)
+                }
+                WebSocketTransportCloseStart::Started => {
+                    self.websocket_connections
+                        .get_mut(&connection)
+                        .ok_or_else(|| {
+                            HostControlError::new(
+                                HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                                "WebSocket connection disappeared while starting close",
+                            )
+                        })?
+                        .close_started = true;
+                    Ok(WebSocketCloseProgress::Started)
+                }
+            };
+        }
+
+        let result = match transport.poll_close(ticket) {
+            Ok(result) => result,
+            Err(error) => {
+                self.fail_websocket_connection(connection)?;
+                return Err(error.into());
+            }
+        };
+        match result {
+            WebSocketTransportClosePoll::Pending => Ok(WebSocketCloseProgress::Pending),
+            WebSocketTransportClosePoll::Closed => {
+                self.complete_websocket_connection(connection)?;
+                Ok(WebSocketCloseProgress::Closed)
+            }
+        }
     }
 
     pub fn websocket_queue_snapshot(
@@ -1318,16 +1486,22 @@ impl HostControlPlane {
         let process = self
             .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
         let _ = self.websocket_ticket(process, capability, connection)?;
-        self.websocket_connections
+        let active = self
+            .websocket_connections
             .get_mut(&connection)
             .ok_or_else(|| {
                 HostControlError::new(
                     HostControlErrorKind::InvalidWebSocketConnectionAuthority,
                     "unknown WebSocket connection",
                 )
-            })?
-            .queues
-            .enqueue_outbound(message)?;
+            })?;
+        if active.lifecycle.state() != WebSocketReadyState::Open {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketLifecycleState,
+                "new WebSocket application messages require an Open connection",
+            ));
+        }
+        active.queues.enqueue_outbound(message)?;
         Ok(())
     }
 
@@ -1347,10 +1521,25 @@ impl HostControlPlane {
                     "unknown WebSocket connection",
                 )
             })?;
+            if !matches!(
+                active.lifecycle.state(),
+                WebSocketReadyState::Open | WebSocketReadyState::Closing
+            ) {
+                return Err(HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketLifecycleState,
+                    "WebSocket outbound flush requires an Open or Closing connection",
+                ));
+            }
             let Some(message) = active.queues.outbound_front() else {
                 return Ok(WebSocketOutboundFlush::Empty);
             };
-            transport.send(ticket, message)?
+            match transport.send(ticket, message) {
+                Ok(send) => send,
+                Err(error) => {
+                    self.fail_websocket_connection(connection)?;
+                    return Err(error.into());
+                }
+            }
         };
         match send {
             WebSocketTransportSend::Backpressure => Ok(WebSocketOutboundFlush::Backpressure),
@@ -1385,29 +1574,37 @@ impl HostControlPlane {
         let process = self
             .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
         let ticket = self.websocket_ticket(process, capability, connection)?;
-        let max_message_bytes = self
-            .websocket_connections
-            .get(&connection)
-            .ok_or_else(|| {
+        let max_message_bytes = {
+            let active = self.websocket_connections.get(&connection).ok_or_else(|| {
                 HostControlError::new(
                     HostControlErrorKind::InvalidWebSocketConnectionAuthority,
                     "unknown WebSocket connection",
                 )
-            })?
-            .queues
-            .inbound_receive_limit()?;
+            })?;
+            if active.lifecycle.state() != WebSocketReadyState::Open {
+                return Err(HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketLifecycleState,
+                    "WebSocket inbound polling requires an Open connection",
+                ));
+            }
+            active.queues.inbound_receive_limit()?
+        };
         let Some(max_message_bytes) = max_message_bytes else {
             return Ok(WebSocketInboundPoll::QueueFull);
         };
 
-        let received = transport.receive(ticket, max_message_bytes)?;
+        let received = match transport.receive(ticket, max_message_bytes) {
+            Ok(received) => received,
+            Err(error) => {
+                self.fail_websocket_connection(connection)?;
+                return Err(error.into());
+            }
+        };
         let WebSocketTransportReceive::Message(message) = received else {
             return Ok(WebSocketInboundPoll::Pending);
         };
         if message.len() > max_message_bytes {
-            if let Some(active) = self.websocket_connections.remove(&connection) {
-                self.quarantine_websocket_ticket(active.ticket);
-            }
+            self.fail_websocket_connection(connection)?;
             return Err(HostControlError::new(
                 HostControlErrorKind::InconsistentState,
                 format!(
@@ -1437,7 +1634,7 @@ impl HostControlPlane {
         let process = self
             .authorize_navigation_context_capability_class(capability, CapabilityClass::Network)?;
         let _ = self.websocket_ticket(process, capability, connection)?;
-        Ok(self
+        let active = self
             .websocket_connections
             .get_mut(&connection)
             .ok_or_else(|| {
@@ -1445,9 +1642,17 @@ impl HostControlPlane {
                     HostControlErrorKind::InvalidWebSocketConnectionAuthority,
                     "unknown WebSocket connection",
                 )
-            })?
-            .queues
-            .take_inbound()?)
+            })?;
+        if !matches!(
+            active.lifecycle.state(),
+            WebSocketReadyState::Open | WebSocketReadyState::Closing
+        ) {
+            return Err(HostControlError::new(
+                HostControlErrorKind::InvalidWebSocketLifecycleState,
+                "WebSocket inbound dequeue requires an Open or Closing connection",
+            ));
+        }
+        Ok(active.queues.take_inbound()?)
     }
 
     pub fn revoke_navigation_context_websocket(
@@ -2554,6 +2759,60 @@ impl HostControlPlane {
             .process;
         self.authorize_capability(process, capability.id, class)?;
         Ok(process)
+    }
+
+    fn fail_websocket_connection(
+        &mut self,
+        connection: WebSocketConnectionId,
+    ) -> Result<(), HostControlError> {
+        let active = self
+            .websocket_connections
+            .get_mut(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?;
+        active.lifecycle.mark_closed()?;
+        active.queues.clear();
+        let active = self
+            .websocket_connections
+            .remove(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InconsistentState,
+                    "WebSocket connection disappeared during terminal failure",
+                )
+            })?;
+        self.quarantine_websocket_ticket(active.ticket);
+        Ok(())
+    }
+
+    fn complete_websocket_connection(
+        &mut self,
+        connection: WebSocketConnectionId,
+    ) -> Result<(), HostControlError> {
+        let active = self
+            .websocket_connections
+            .get_mut(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InvalidWebSocketConnectionAuthority,
+                    "unknown WebSocket connection",
+                )
+            })?;
+        active.lifecycle.mark_closed()?;
+        active.queues.clear();
+        self.websocket_connections
+            .remove(&connection)
+            .ok_or_else(|| {
+                HostControlError::new(
+                    HostControlErrorKind::InconsistentState,
+                    "WebSocket connection disappeared during graceful close completion",
+                )
+            })?;
+        Ok(())
     }
 
     fn quarantine_websocket_ticket(&mut self, ticket: WebSocketTransportTicket) {

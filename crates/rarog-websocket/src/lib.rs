@@ -368,6 +368,134 @@ impl fmt::Display for WebSocketTransportError {
 
 impl std::error::Error for WebSocketTransportError {}
 
+pub const MAX_WEBSOCKET_CLOSE_REASON_BYTES: usize = 123;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WebSocketCloseLimits {
+    pub max_reason_bytes: usize,
+}
+
+impl WebSocketCloseLimits {
+    pub fn is_valid(self) -> bool {
+        self.max_reason_bytes > 0 && self.max_reason_bytes <= MAX_WEBSOCKET_CLOSE_REASON_BYTES
+    }
+}
+
+impl Default for WebSocketCloseLimits {
+    fn default() -> Self {
+        Self {
+            max_reason_bytes: MAX_WEBSOCKET_CLOSE_REASON_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketCloseErrorKind {
+    InvalidLimits,
+    InvalidCode,
+    ReasonRequiresCode,
+    ReasonLimitExceeded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSocketCloseError {
+    pub kind: WebSocketCloseErrorKind,
+    pub message: String,
+}
+
+impl WebSocketCloseError {
+    fn new(kind: WebSocketCloseErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for WebSocketCloseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for WebSocketCloseError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSocketCloseIntent {
+    code: Option<u16>,
+    reason: String,
+}
+
+impl WebSocketCloseIntent {
+    pub fn try_new(
+        code: Option<u16>,
+        reason: &str,
+        limits: WebSocketCloseLimits,
+    ) -> Result<Self, WebSocketCloseError> {
+        if !limits.is_valid() {
+            return Err(WebSocketCloseError::new(
+                WebSocketCloseErrorKind::InvalidLimits,
+                "WebSocket close reason limit must be between 1 and 123 bytes",
+            ));
+        }
+        if code.is_none() && !reason.is_empty() {
+            return Err(WebSocketCloseError::new(
+                WebSocketCloseErrorKind::ReasonRequiresCode,
+                "WebSocket close reason requires an explicit close code",
+            ));
+        }
+        if let Some(code) = code {
+            if code != 1000 && !(3000..=4999).contains(&code) {
+                return Err(WebSocketCloseError::new(
+                    WebSocketCloseErrorKind::InvalidCode,
+                    format!("WebSocket local close code {code} is not allowed"),
+                ));
+            }
+        }
+        if reason.len() > limits.max_reason_bytes {
+            return Err(WebSocketCloseError::new(
+                WebSocketCloseErrorKind::ReasonLimitExceeded,
+                format!(
+                    "WebSocket close reason requires {} UTF-8 bytes; limit is {}",
+                    reason.len(),
+                    limits.max_reason_bytes
+                ),
+            ));
+        }
+        Ok(Self {
+            code,
+            reason: reason.to_owned(),
+        })
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            code: None,
+            reason: String::new(),
+        }
+    }
+
+    pub fn code(&self) -> Option<u16> {
+        self.code
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketTransportCloseStart {
+    Started,
+    Backpressure,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketTransportClosePoll {
+    Pending,
+    Closed,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WebSocketTransportSend {
     Accepted,
@@ -399,6 +527,17 @@ pub trait WebSocketTransport {
         max_message_bytes: usize,
     ) -> Result<WebSocketTransportReceive, WebSocketTransportError>;
 
+    fn begin_close(
+        &mut self,
+        ticket: WebSocketTransportTicket,
+        close: &WebSocketCloseIntent,
+    ) -> Result<WebSocketTransportCloseStart, WebSocketTransportError>;
+
+    fn poll_close(
+        &mut self,
+        ticket: WebSocketTransportTicket,
+    ) -> Result<WebSocketTransportClosePoll, WebSocketTransportError>;
+
     fn abort(&mut self, ticket: WebSocketTransportTicket) -> Result<(), WebSocketTransportError>;
 }
 
@@ -415,6 +554,97 @@ pub enum WebSocketReadyState {
 impl WebSocketReadyState {
     pub fn as_u8(self) -> u8 {
         self as u8
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketLifecycleErrorKind {
+    InvalidTransition,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSocketLifecycleError {
+    pub kind: WebSocketLifecycleErrorKind,
+    pub message: String,
+}
+
+impl WebSocketLifecycleError {
+    fn invalid_transition(from: WebSocketReadyState, to: WebSocketReadyState) -> Self {
+        Self {
+            kind: WebSocketLifecycleErrorKind::InvalidTransition,
+            message: format!("invalid WebSocket lifecycle transition from {from:?} to {to:?}"),
+        }
+    }
+}
+
+impl fmt::Display for WebSocketLifecycleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for WebSocketLifecycleError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSocketLifecycle {
+    state: WebSocketReadyState,
+}
+
+impl WebSocketLifecycle {
+    pub fn new() -> Self {
+        Self {
+            state: WebSocketReadyState::Connecting,
+        }
+    }
+
+    pub fn state(&self) -> WebSocketReadyState {
+        self.state
+    }
+
+    pub fn mark_open(&mut self) -> Result<(), WebSocketLifecycleError> {
+        match self.state {
+            WebSocketReadyState::Connecting => {
+                self.state = WebSocketReadyState::Open;
+                Ok(())
+            }
+            WebSocketReadyState::Open => Ok(()),
+            state => Err(WebSocketLifecycleError::invalid_transition(
+                state,
+                WebSocketReadyState::Open,
+            )),
+        }
+    }
+
+    pub fn begin_closing(&mut self) -> Result<(), WebSocketLifecycleError> {
+        match self.state {
+            WebSocketReadyState::Connecting | WebSocketReadyState::Open => {
+                self.state = WebSocketReadyState::Closing;
+                Ok(())
+            }
+            WebSocketReadyState::Closing => Ok(()),
+            WebSocketReadyState::Closed => Err(WebSocketLifecycleError::invalid_transition(
+                WebSocketReadyState::Closed,
+                WebSocketReadyState::Closing,
+            )),
+        }
+    }
+
+    pub fn mark_closed(&mut self) -> Result<(), WebSocketLifecycleError> {
+        match self.state {
+            WebSocketReadyState::Closed => Ok(()),
+            WebSocketReadyState::Connecting
+            | WebSocketReadyState::Open
+            | WebSocketReadyState::Closing => {
+                self.state = WebSocketReadyState::Closed;
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Default for WebSocketLifecycle {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -544,6 +774,72 @@ mod tests {
             max_subprotocol_bytes: 12,
             max_message_bytes: 4,
         }
+    }
+
+    #[test]
+    fn close_intent_validates_code_and_utf8_reason_before_copy() {
+        let limits = WebSocketCloseLimits::default();
+        let normal = WebSocketCloseIntent::try_new(Some(1000), "done", limits).unwrap();
+        assert_eq!(normal.code(), Some(1000));
+        assert_eq!(normal.reason(), "done");
+        assert_eq!(WebSocketCloseIntent::empty().code(), None);
+
+        assert_eq!(
+            WebSocketCloseIntent::try_new(None, "reason", limits)
+                .unwrap_err()
+                .kind,
+            WebSocketCloseErrorKind::ReasonRequiresCode
+        );
+        assert_eq!(
+            WebSocketCloseIntent::try_new(Some(1001), "", limits)
+                .unwrap_err()
+                .kind,
+            WebSocketCloseErrorKind::InvalidCode
+        );
+        assert!(WebSocketCloseIntent::try_new(Some(3000), "", limits).is_ok());
+        assert!(WebSocketCloseIntent::try_new(Some(4999), "", limits).is_ok());
+
+        let mut tiny = limits;
+        tiny.max_reason_bytes = 3;
+        assert_eq!(
+            WebSocketCloseIntent::try_new(Some(1000), "éé", tiny)
+                .unwrap_err()
+                .kind,
+            WebSocketCloseErrorKind::ReasonLimitExceeded
+        );
+        tiny.max_reason_bytes = MAX_WEBSOCKET_CLOSE_REASON_BYTES + 1;
+        assert_eq!(
+            WebSocketCloseIntent::try_new(Some(1000), "", tiny)
+                .unwrap_err()
+                .kind,
+            WebSocketCloseErrorKind::InvalidLimits
+        );
+    }
+
+    #[test]
+    fn lifecycle_never_revives_after_terminal_close() {
+        let mut lifecycle = WebSocketLifecycle::new();
+        assert_eq!(lifecycle.state(), WebSocketReadyState::Connecting);
+        lifecycle.mark_open().unwrap();
+        assert_eq!(lifecycle.state(), WebSocketReadyState::Open);
+        lifecycle.begin_closing().unwrap();
+        assert_eq!(lifecycle.state(), WebSocketReadyState::Closing);
+        lifecycle.mark_closed().unwrap();
+        lifecycle.mark_closed().unwrap();
+        assert_eq!(lifecycle.state(), WebSocketReadyState::Closed);
+        assert_eq!(
+            lifecycle.mark_open().unwrap_err().kind,
+            WebSocketLifecycleErrorKind::InvalidTransition
+        );
+        assert_eq!(
+            lifecycle.begin_closing().unwrap_err().kind,
+            WebSocketLifecycleErrorKind::InvalidTransition
+        );
+
+        let mut connecting = WebSocketLifecycle::new();
+        connecting.begin_closing().unwrap();
+        connecting.mark_closed().unwrap();
+        assert_eq!(connecting.state(), WebSocketReadyState::Closed);
     }
 
     #[test]
