@@ -2347,6 +2347,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rarog-media-runtime"
+version = "0.1.0"
+dependencies = [
+ "rarog-media",
+]
+
+[[package]]
 name = "rarog-paint"
 version = "0.1.0"
 dependencies = [
