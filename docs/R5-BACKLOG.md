@@ -37,7 +37,7 @@ Tracking issue: #260.
 
 ## E — Canvas / WebGL
 
-- [ ] Add bounded Canvas 2D surface/context/state ownership.
+- [x] Add bounded Canvas 2D surface/context/state ownership.
 - [ ] Connect Canvas output to resource revision/paint/compositor invalidation.
 - [ ] Add a WebGL context/resource abstraction with explicit GPU limits and loss semantics.
 - [ ] Keep graphics backend objects outside DOM/Web API contracts.

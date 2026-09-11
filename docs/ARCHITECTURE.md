@@ -248,6 +248,15 @@ Public construction is target-gated: `WindowsMediaBackend::try_new` succeeds on 
 
 This completes the selected R5 Audio/video foundation boundary, not real media playback. The engine still has no real demux/decoding, encoded packet or decoded audio/video data-plane queues, device enumeration/selection, actual Media Foundation/WASAPI integration, capture, DRM/EME, MSE, WebAudio, DOM/WebIDL media element behavior, autoplay/visibility-policy completeness, WPT qualification or R6 compatibility claim.
 
+
+### R5 bounded Canvas 2D semantic ownership
+
+`rarog-canvas` owns the first Canvas 2D semantic lifetime boundary independently of paint, compositor, GPU and platform backends. `CanvasRegistry` allocates a fresh process-local scope and separate monotonic non-zero serials for `CanvasSurfaceId` and `CanvasContextId`, so retired identities are not reused and references from independent registries cannot alias. `CanvasLimits` bounds live surfaces, live contexts, pixels per surface, aggregate retained surface pixels and per-context saved-state depth. Surface admission validates non-zero dimensions and all pixel/count budgets before retained-state mutation.
+
+Each live surface may own one live 2D context in this foundation. Context creation binds to one exact live surface; a surface cannot retire until its context retires, after which context and pixel capacity recover deterministically. `Canvas2dState` contains only portable fill/stroke colors, global alpha, line width and a finite affine transform. Setters validate ranges/finiteness before mutation. `save()` retains a state snapshot only within the configured stack bound, while `restore()` on an empty stack is a deterministic no-op. State and saved stacks remain isolated by exact context identity. See ADR-0131.
+
+This slice intentionally owns no pixel buffer, draw-command log, image resource/revision, display-list item, compositor/GPU resource, backend ticket, platform handle or native pointer. Connecting Canvas output to resource revisions and paint/compositor invalidation is the next R5 Canvas slice; WebGL, DOM/WebIDL Canvas APIs, drawing/readback/serialization and R6 qualification remain later work.
+
 ## Rendering model
 
 ```text
