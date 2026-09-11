@@ -1,0 +1,18 @@
+[package]
+name = "rarog-canvas-output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-canvas = { path = "../rarog-canvas" }
+rarog-resources = { path = "../rarog-resources" }
+
+[dev-dependencies]
+rarog-compositor = { path = "../rarog-compositor" }
+rarog-paint = { path = "../rarog-paint" }
+rarog-types = { path = "../rarog-types" }
+
+[lints]
+workspace = true
