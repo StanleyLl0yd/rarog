@@ -214,6 +214,16 @@ A close request revalidates exact navigation-context Network authority, records 
 
 This completes the selected R5 WebSocket backlog boundary. WebSocket frame parsing/masking, ping/pong scheduling, compression/extensions, complete peer close-frame metadata, selected-protocol negotiation, real HTTP Upgrade/TCP/TLS behavior, DOM/WebIDL exposure, WPT qualification and R6 compatibility qualification remain outside this foundation.
 
+### R5 bounded media resource, stream and playback ownership
+
+`rarog-media` owns the first Audio/video semantic lifetime boundary independently of decoder, demuxer, device and operating-system APIs. `MediaRegistry` allocates one fresh process-local scope and separate monotonic non-zero serials for `MediaResourceId`, `MediaStreamId` and `MediaPlaybackId`. These identities are correlation references only: they carry no Host capability, process identity, platform handle or backend ticket, and retired identities are never reused.
+
+`MediaLimits` bounds live resources, total streams, streams per resource, live playback sessions, audio channel/sample-rate metadata and video dimensions. `MediaResourceDescriptor` validates bounded stream metadata before copy, while registry insertion revalidates it against the registry's own limits so a descriptor created under a wider policy cannot bypass the destination owner. Resources retain a finite unsigned-microsecond duration and exact stream identities. Audio streams currently retain only channel count/sample rate; video streams retain only dimensions. Codec/container names, encoded/decoded buffers and backend objects are deliberately absent. Aggregate count admission uses checked arithmetic before mutation.
+
+Each `MediaPlayback` binds one exact live resource to a non-empty, duplicate-free set of exact streams owned by that resource. Foreign/stale stream references fail closed. The portable ownership lifecycle is Ready/Playing/Paused/Ended; Ended is terminal for the playback identity and fixes position at the resource duration. Position uses integer microseconds and cannot exceed that exact duration. A live playback prevents resource retirement. Playback retirement releases playback capacity, while unused resource retirement validates its stream ownership and removes the resource plus all of its streams together for deterministic capacity recovery. Registry maps remain private; consumers receive immutable lookups and count snapshots only. See ADR-0127.
+
+This slice intentionally does not define demux/codec APIs, encoded or decoded sample queues, audio devices, video surfaces, platform media services, Windows media backends, backend tickets, scheduling/background policy, DOM/WebIDL media elements, MSE/EME/WebAudio, autoplay policy, real decoding/playback, WPT qualification or R6 compatibility claims. Those remain later R5 slices.
+
 ## Rendering model
 
 ```text
