@@ -255,7 +255,18 @@ This completes the selected R5 Audio/video foundation boundary, not real media p
 
 Each live surface may own one live 2D context in this foundation. Context creation binds to one exact live surface; a surface cannot retire until its context retires, after which context and pixel capacity recover deterministically. `Canvas2dState` contains only portable fill/stroke colors, global alpha, line width and a finite affine transform. Setters validate ranges/finiteness before mutation. `save()` retains a state snapshot only within the configured stack bound, while `restore()` on an empty stack is a deterministic no-op. State and saved stacks remain isolated by exact context identity. See ADR-0131.
 
-This slice intentionally owns no pixel buffer, draw-command log, image resource/revision, display-list item, compositor/GPU resource, backend ticket, platform handle or native pointer. Connecting Canvas output to resource revisions and paint/compositor invalidation is the next R5 Canvas slice; WebGL, DOM/WebIDL Canvas APIs, drawing/readback/serialization and R6 qualification remain later work.
+At the E/1 boundary Canvas intentionally owned no pixel buffer, image-resource revision or paint/compositor object. The E/2 output slice below adds bounded portable pixel ownership and a separate image-publication bridge without changing the rule that Canvas semantic identities do not own resource, compositor, GPU, backend or platform authority. WebGL, DOM/WebIDL Canvas APIs, broad drawing/readback/serialization and R6 qualification remain later work.
+
+
+### R5 Canvas output revisions and render invalidation
+
+Canvas surfaces now retain a bounded portable RGBA output allocation and a monotonic `CanvasContentRevision`. A new surface allocates deterministic transparent pixels only after count and pixel-budget admission succeeds. Whole-surface fill/clear is intentionally narrow: the complete candidate allocation and next revision are established before live output changes, so allocation failure or revision exhaustion leaves the previous pixels and revision intact. `CanvasSurfaceSnapshot` clones an immutable shared allocation and cannot mutate the live surface.
+
+`rarog-canvas-output` is a separate bounded bridge from exact live `CanvasSurfaceId` authority to the existing image-resource model. First publication reserves and resolves one `ImageResourceId`; later Canvas revisions call `ImageResourceStore::replace_ready` on that same ID and receive a newer `ImageResourceRef`. An unchanged Canvas revision returns the current reference without changing the image revision. Failed first publication removes its temporary reservation, replacement failure leaves bridge metadata unchanged, external resource drift fails closed, and explicit detach releases both image-resource and bridge capacity. The semantic Canvas registry itself still has no dependency on `rarog-resources`, paint or compositor.
+
+Paint already carries `ImageResourceRef` in `DisplayCommand::DrawImage`. `DisplayList::refresh_image_resource` replaces an older revision of the same resource and returns exact damage for the affected item; the resulting `ResourceReady` frame can be planned with that damage even when `DisplayListRevision` itself is unchanged. Thus Canvas output invalidation reuses existing resource/paint/compositor primitives instead of granting Canvas compositor or GPU authority. See ADR-0132.
+
+This slice does not claim broad Canvas 2D drawing completeness, paths/text/images/filters/compositing modes, readback/serialization, DOM/WebIDL Canvas exposure, WebGL, direct GPU resources, native platform objects, WPT qualification or R6 work.
 
 ## Rendering model
 

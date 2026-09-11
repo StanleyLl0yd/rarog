@@ -2,6 +2,7 @@ use rarog_types::Color;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU64;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const DEFAULT_MAX_CANVAS_SURFACES: usize = 256;
@@ -74,6 +75,46 @@ impl CanvasContextId {
 
     pub const fn serial(self) -> u64 {
         self.serial.get()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CanvasContentRevision(u64);
+
+impl CanvasContentRevision {
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasSurfaceSnapshot {
+    id: CanvasSurfaceId,
+    width: u32,
+    height: u32,
+    content_revision: CanvasContentRevision,
+    pixels: Arc<[Color]>,
+}
+
+impl CanvasSurfaceSnapshot {
+    pub const fn id(&self) -> CanvasSurfaceId {
+        self.id
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub const fn content_revision(&self) -> CanvasContentRevision {
+        self.content_revision
+    }
+
+    pub fn pixels(&self) -> &[Color] {
+        &self.pixels
     }
 }
 
@@ -159,6 +200,8 @@ pub struct CanvasSurface {
     width: u32,
     height: u32,
     pixels: u64,
+    content_revision: CanvasContentRevision,
+    output: Arc<[Color]>,
     context: Option<CanvasContextId>,
 }
 
@@ -177,6 +220,10 @@ impl CanvasSurface {
 
     pub const fn pixel_count(&self) -> u64 {
         self.pixels
+    }
+
+    pub const fn content_revision(&self) -> CanvasContentRevision {
+        self.content_revision
     }
 
     pub const fn context(&self) -> Option<CanvasContextId> {
@@ -220,6 +267,8 @@ pub enum CanvasError {
     SurfacePixelLimitExceeded { pixels: u64, limit: u64 },
     TotalPixelOverflow,
     TotalPixelLimitExceeded { pixels: u64, limit: u64 },
+    PixelAllocationFailed { pixels: u64 },
+    ContentRevisionExhausted(CanvasSurfaceId),
     SurfaceIdentitySpaceExhausted,
     ContextIdentitySpaceExhausted,
     UnknownSurface(CanvasSurfaceId),
@@ -261,6 +310,16 @@ impl fmt::Display for CanvasError {
             Self::TotalPixelLimitExceeded { pixels, limit } => write!(
                 formatter,
                 "Canvas registry would retain {pixels} pixels; total limit is {limit}"
+            ),
+            Self::PixelAllocationFailed { pixels } => write!(
+                formatter,
+                "Canvas surface could not allocate a bounded output buffer for {pixels} pixels"
+            ),
+            Self::ContentRevisionExhausted(id) => write!(
+                formatter,
+                "Canvas surface {}:{} content revision space is exhausted",
+                id.scope(),
+                id.serial()
             ),
             Self::SurfaceIdentitySpaceExhausted => {
                 formatter.write_str("Canvas surface identity space is exhausted")
@@ -436,6 +495,7 @@ impl CanvasRegistry {
             });
         }
 
+        let output = allocate_canvas_pixels(pixels, Color::TRANSPARENT)?;
         let id = self.surface_ids.allocate_surface()?;
         let previous = self.surfaces.insert(
             id,
@@ -444,6 +504,8 @@ impl CanvasRegistry {
                 width,
                 height,
                 pixels,
+                content_revision: CanvasContentRevision::default(),
+                output,
                 context: None,
             },
         );
@@ -467,6 +529,56 @@ impl CanvasRegistry {
         self.surfaces.remove(&id);
         self.total_pixels = next_total;
         Ok(())
+    }
+
+    pub fn surface_snapshot(
+        &self,
+        id: CanvasSurfaceId,
+    ) -> Result<CanvasSurfaceSnapshot, CanvasError> {
+        let surface = self
+            .surfaces
+            .get(&id)
+            .ok_or(CanvasError::UnknownSurface(id))?;
+        Ok(CanvasSurfaceSnapshot {
+            id,
+            width: surface.width,
+            height: surface.height,
+            content_revision: surface.content_revision,
+            pixels: Arc::clone(&surface.output),
+        })
+    }
+
+    pub fn fill_surface(
+        &mut self,
+        id: CanvasSurfaceId,
+        color: Color,
+    ) -> Result<CanvasContentRevision, CanvasError> {
+        let (pixels, current_revision) = {
+            let surface = self
+                .surfaces
+                .get(&id)
+                .ok_or(CanvasError::UnknownSurface(id))?;
+            (surface.pixels, surface.content_revision)
+        };
+        let next_revision = current_revision
+            .0
+            .checked_add(1)
+            .ok_or(CanvasError::ContentRevisionExhausted(id))?;
+        let output = allocate_canvas_pixels(pixels, color)?;
+        let surface = self
+            .surfaces
+            .get_mut(&id)
+            .ok_or(CanvasError::InconsistentState)?;
+        surface.output = output;
+        surface.content_revision = CanvasContentRevision(next_revision);
+        Ok(surface.content_revision)
+    }
+
+    pub fn clear_surface(
+        &mut self,
+        id: CanvasSurfaceId,
+    ) -> Result<CanvasContentRevision, CanvasError> {
+        self.fill_surface(id, Color::TRANSPARENT)
     }
 
     pub fn create_2d_context(
@@ -625,6 +737,17 @@ impl CanvasRegistry {
             .get_mut(&id)
             .ok_or(CanvasError::UnknownContext(id))
     }
+}
+
+fn allocate_canvas_pixels(pixels: u64, color: Color) -> Result<Arc<[Color]>, CanvasError> {
+    let length =
+        usize::try_from(pixels).map_err(|_| CanvasError::PixelAllocationFailed { pixels })?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(length)
+        .map_err(|_| CanvasError::PixelAllocationFailed { pixels })?;
+    output.resize(length, color);
+    Ok(output.into())
 }
 
 fn allocate_registry_scope() -> Result<NonZeroU64, CanvasError> {
@@ -946,5 +1069,67 @@ mod tests {
         let second = registry.create_2d_context(second_surface).unwrap();
         assert_ne!(first, second);
         assert!(second.serial() > first.serial());
+    }
+
+    #[test]
+    fn surface_output_starts_transparent_and_snapshots_are_immutable() {
+        let mut registry = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let surface = registry.create_surface(2, 2).unwrap();
+        let initial = registry.surface_snapshot(surface).unwrap();
+        assert_eq!(initial.id(), surface);
+        assert_eq!(initial.width(), 2);
+        assert_eq!(initial.height(), 2);
+        assert_eq!(initial.content_revision().get(), 0);
+        assert_eq!(initial.pixels(), &[Color::TRANSPARENT; 4]);
+
+        let revision = registry.fill_surface(surface, Color::WHITE).unwrap();
+        assert_eq!(revision.get(), 1);
+        let changed = registry.surface_snapshot(surface).unwrap();
+        assert_eq!(changed.content_revision(), revision);
+        assert_eq!(changed.pixels(), &[Color::WHITE; 4]);
+        assert_eq!(initial.pixels(), &[Color::TRANSPARENT; 4]);
+
+        let cleared = registry.clear_surface(surface).unwrap();
+        assert_eq!(cleared.get(), 2);
+        assert_eq!(
+            registry.surface_snapshot(surface).unwrap().pixels(),
+            &[Color::TRANSPARENT; 4]
+        );
+    }
+
+    #[test]
+    fn output_mutation_rejects_foreign_and_retired_surface_identities() {
+        let mut first = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let mut second = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let foreign = first.create_surface(1, 1).unwrap();
+        let retired = second.create_surface(1, 1).unwrap();
+        second.retire_surface(retired).unwrap();
+
+        assert_eq!(
+            second.fill_surface(foreign, Color::WHITE),
+            Err(CanvasError::UnknownSurface(foreign))
+        );
+        assert_eq!(
+            second.surface_snapshot(retired),
+            Err(CanvasError::UnknownSurface(retired))
+        );
+    }
+
+    #[test]
+    fn content_revision_exhaustion_is_atomic() {
+        let mut registry = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let surface = registry.create_surface(1, 1).unwrap();
+        registry
+            .surfaces
+            .get_mut(&surface)
+            .unwrap()
+            .content_revision = CanvasContentRevision(u64::MAX);
+        let before = registry.surface_snapshot(surface).unwrap();
+
+        assert_eq!(
+            registry.fill_surface(surface, Color::WHITE),
+            Err(CanvasError::ContentRevisionExhausted(surface))
+        );
+        assert_eq!(registry.surface_snapshot(surface).unwrap(), before);
     }
 }
