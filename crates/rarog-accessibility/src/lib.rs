@@ -1,4 +1,4 @@
-use rarog_dom::{Document, ElementData, NodeId, NodeKind};
+use rarog_dom::{Document, ElementData, Namespace, NodeId, NodeKind};
 use rarog_layout::{Fragment, FragmentTree};
 use rarog_types::Rect;
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const DEFAULT_MAX_ACCESSIBILITY_NODES: usize = 4096;
 pub const DEFAULT_MAX_ACCESSIBILITY_IDENTITIES: usize = 8192;
+pub const DEFAULT_MAX_ACCESSIBILITY_DOM_NODES_SCANNED: usize = 16384;
 pub const DEFAULT_MAX_ACCESSIBILITY_FRAGMENTS: usize = 16384;
 pub const DEFAULT_MAX_ACCESSIBILITY_NAME_BYTES_PER_NODE: usize = 16 * 1024;
 pub const DEFAULT_MAX_TOTAL_ACCESSIBILITY_NAME_BYTES: usize = 1024 * 1024;
@@ -18,6 +19,7 @@ static NEXT_ACCESSIBILITY_SCOPE: AtomicU64 = AtomicU64::new(1);
 pub struct AccessibilityLimits {
     pub max_nodes: usize,
     pub max_identities: usize,
+    pub max_dom_nodes_scanned: usize,
     pub max_fragments: usize,
     pub max_name_bytes_per_node: usize,
     pub max_total_name_bytes: usize,
@@ -27,6 +29,7 @@ impl AccessibilityLimits {
     pub const fn is_valid(self) -> bool {
         self.max_nodes > 0
             && self.max_identities >= self.max_nodes
+            && self.max_dom_nodes_scanned >= self.max_nodes
             && self.max_fragments > 0
             && self.max_name_bytes_per_node > 0
             && self.max_total_name_bytes >= self.max_name_bytes_per_node
@@ -38,6 +41,7 @@ impl Default for AccessibilityLimits {
         Self {
             max_nodes: DEFAULT_MAX_ACCESSIBILITY_NODES,
             max_identities: DEFAULT_MAX_ACCESSIBILITY_IDENTITIES,
+            max_dom_nodes_scanned: DEFAULT_MAX_ACCESSIBILITY_DOM_NODES_SCANNED,
             max_fragments: DEFAULT_MAX_ACCESSIBILITY_FRAGMENTS,
             max_name_bytes_per_node: DEFAULT_MAX_ACCESSIBILITY_NAME_BYTES_PER_NODE,
             max_total_name_bytes: DEFAULT_MAX_TOTAL_ACCESSIBILITY_NAME_BYTES,
@@ -201,6 +205,10 @@ pub enum AccessibilityError {
         identities: usize,
         limit: usize,
     },
+    DomNodeLimitExceeded {
+        nodes: usize,
+        limit: usize,
+    },
     FragmentLimitExceeded {
         fragments: usize,
         limit: usize,
@@ -268,6 +276,7 @@ impl AccessibilityTreeState {
         self.identities.len()
     }
 
+    #[cfg(test)]
     fn retained_id(&self, source: NodeId) -> Option<AccessibilityNodeId> {
         self.identities.get(&source).copied()
     }
@@ -281,14 +290,18 @@ impl AccessibilityTreeState {
         let mut drafts = Vec::new();
         let mut total_name_bytes = 0usize;
         let mut stack = vec![document.root()];
+        let mut dom_nodes_queued = 1usize;
 
         while let Some(source) = stack.pop() {
             let node = document
                 .node(source)
                 .ok_or(AccessibilityError::InconsistentTree)?;
-            for child in node.children.iter().rev().copied() {
-                stack.push(child);
-            }
+            push_dom_children(
+                &mut stack,
+                &node.children,
+                &mut dom_nodes_queued,
+                self.limits.max_dom_nodes_scanned,
+            )?;
 
             let node_bounds = if source == document.root() {
                 match bounds.get(&source).copied() {
@@ -309,6 +322,7 @@ impl AccessibilityTreeState {
                 &node.kind,
                 role,
                 self.limits.max_name_bytes_per_node,
+                self.limits.max_dom_nodes_scanned,
             )?;
             if matches!(node.kind, NodeKind::Text(_)) && name.is_empty() {
                 continue;
@@ -453,6 +467,28 @@ impl AccessibilityTreeState {
     }
 }
 
+fn push_dom_children(
+    stack: &mut Vec<NodeId>,
+    children: &[NodeId],
+    queued: &mut usize,
+    limit: usize,
+) -> Result<(), AccessibilityError> {
+    for child in children.iter().rev().copied() {
+        let next = queued
+            .checked_add(1)
+            .ok_or(AccessibilityError::DomNodeLimitExceeded {
+                nodes: usize::MAX,
+                limit,
+            })?;
+        if next > limit {
+            return Err(AccessibilityError::DomNodeLimitExceeded { nodes: next, limit });
+        }
+        stack.push(child);
+        *queued = next;
+    }
+    Ok(())
+}
+
 fn allocate_scope() -> Result<NonZeroU64, AccessibilityError> {
     let scope = NEXT_ACCESSIBILITY_SCOPE
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
@@ -468,22 +504,23 @@ fn collect_fragment_bounds(
 ) -> Result<BTreeMap<NodeId, Rect>, AccessibilityError> {
     let mut bounds = BTreeMap::new();
     let mut stack: Vec<&Fragment> = vec![&tree.root];
-    let mut visited = 0usize;
+    let mut queued = 1usize;
     while let Some(fragment) = stack.pop() {
-        visited = visited
-            .checked_add(1)
-            .ok_or(AccessibilityError::FragmentLimitExceeded {
-                fragments: usize::MAX,
-                limit: max_fragments,
-            })?;
-        if visited > max_fragments {
-            return Err(AccessibilityError::FragmentLimitExceeded {
-                fragments: visited,
-                limit: max_fragments,
-            });
-        }
         for child in fragment.children.iter().rev() {
+            let next = queued
+                .checked_add(1)
+                .ok_or(AccessibilityError::FragmentLimitExceeded {
+                    fragments: usize::MAX,
+                    limit: max_fragments,
+                })?;
+            if next > max_fragments {
+                return Err(AccessibilityError::FragmentLimitExceeded {
+                    fragments: next,
+                    limit: max_fragments,
+                });
+            }
             stack.push(child);
+            queued = next;
         }
         let Some(source) = fragment.dom_node else {
             continue;
@@ -553,6 +590,9 @@ fn role_for_node(kind: &NodeKind) -> AccessibilityRole {
 }
 
 fn role_for_element(element: &ElementData) -> AccessibilityRole {
+    if element.namespace != Namespace::Html {
+        return AccessibilityRole::GenericContainer;
+    }
     let tag = element.tag_name.as_str();
     if tag.eq_ignore_ascii_case("button") {
         return AccessibilityRole::Button;
@@ -581,9 +621,13 @@ fn role_for_element(element: &ElementData) -> AccessibilityRole {
         if matches_ascii_case(input_type, &["button", "submit", "reset"]) {
             return AccessibilityRole::Button;
         }
-        if !input_type.eq_ignore_ascii_case("hidden") {
+        if matches_ascii_case(
+            input_type,
+            &["text", "search", "email", "url", "tel", "password"],
+        ) {
             return AccessibilityRole::TextField;
         }
+        return AccessibilityRole::GenericContainer;
     }
     if tag.eq_ignore_ascii_case("img") {
         return AccessibilityRole::Image;
@@ -602,7 +646,14 @@ fn state_for_node(kind: &NodeKind, role: AccessibilityRole) -> AccessibilityStat
         return AccessibilityState::default();
     };
     let aria_disabled = boolean_attribute_value(element, "aria-disabled");
-    let disabled = element.attributes.contains_key("disabled") || aria_disabled == Some(true);
+    let native_disabled = matches!(
+        role,
+        AccessibilityRole::Button
+            | AccessibilityRole::TextField
+            | AccessibilityRole::CheckBox
+            | AccessibilityRole::RadioButton
+    ) && element.attributes.contains_key("disabled");
+    let disabled = native_disabled || aria_disabled == Some(true);
     let expanded = boolean_attribute_value(element, "aria-expanded");
     let checked = boolean_attribute_value(element, "aria-checked").or_else(|| {
         matches!(
@@ -649,6 +700,7 @@ fn name_for_node(
     kind: &NodeKind,
     role: AccessibilityRole,
     limit: usize,
+    dom_node_limit: usize,
 ) -> Result<String, AccessibilityError> {
     match kind {
         NodeKind::Document => Ok(String::new()),
@@ -680,7 +732,9 @@ fn name_for_node(
                 AccessibilityRole::Button
                 | AccessibilityRole::Link
                 | AccessibilityRole::Heading
-                | AccessibilityRole::ListItem => descendant_text_name(document, source, limit),
+                | AccessibilityRole::ListItem => {
+                    descendant_text_name(document, source, limit, dom_node_limit)
+                }
                 _ => Ok(String::new()),
             }
         }
@@ -691,26 +745,27 @@ fn descendant_text_name(
     document: &Document,
     source: NodeId,
     limit: usize,
+    dom_node_limit: usize,
 ) -> Result<String, AccessibilityError> {
     let mut accumulator = NameAccumulator::new(source, limit);
-    let mut stack = document
+    let mut stack = Vec::new();
+    let mut dom_nodes_queued = 1usize;
+    let children = document
         .children(source)
-        .ok_or(AccessibilityError::InconsistentTree)?
-        .iter()
-        .rev()
-        .copied()
-        .collect::<Vec<_>>();
+        .ok_or(AccessibilityError::InconsistentTree)?;
+    push_dom_children(&mut stack, children, &mut dom_nodes_queued, dom_node_limit)?;
     while let Some(current) = stack.pop() {
         let node = document
             .node(current)
             .ok_or(AccessibilityError::InconsistentTree)?;
         match &node.kind {
             NodeKind::Text(text) => accumulator.push_text(text)?,
-            NodeKind::Document | NodeKind::Element(_) => {
-                for child in node.children.iter().rev().copied() {
-                    stack.push(child);
-                }
-            }
+            NodeKind::Document | NodeKind::Element(_) => push_dom_children(
+                &mut stack,
+                &node.children,
+                &mut dom_nodes_queued,
+                dom_node_limit,
+            )?,
         }
     }
     Ok(accumulator.finish())
@@ -808,6 +863,7 @@ mod tests {
         AccessibilityLimits {
             max_nodes: 32,
             max_identities: 64,
+            max_dom_nodes_scanned: 128,
             max_fragments: 128,
             max_name_bytes_per_node: 128,
             max_total_name_bytes: 1024,
@@ -990,6 +1046,7 @@ mod tests {
         let mut state = AccessibilityTreeState::try_new(AccessibilityLimits {
             max_nodes: 1,
             max_identities: 2,
+            max_dom_nodes_scanned: 16,
             max_fragments: 16,
             max_name_bytes_per_node: 32,
             max_total_name_bytes: 64,
@@ -1016,6 +1073,7 @@ mod tests {
         let mut state = AccessibilityTreeState::try_new(AccessibilityLimits {
             max_nodes: 8,
             max_identities: 8,
+            max_dom_nodes_scanned: 32,
             max_fragments: 32,
             max_name_bytes_per_node: 4,
             max_total_name_bytes: 32,
@@ -1039,6 +1097,7 @@ mod tests {
         let mut state = AccessibilityTreeState::try_new(AccessibilityLimits {
             max_nodes: 3,
             max_identities: 3,
+            max_dom_nodes_scanned: 32,
             max_fragments: 32,
             max_name_bytes_per_node: 32,
             max_total_name_bytes: 64,
@@ -1120,6 +1179,134 @@ mod tests {
             state.build(&document, &layout.fragments),
             Err(AccessibilityError::InvalidBounds(document.root()))
         );
+        assert_eq!(state.identity_count(), 0);
+    }
+
+    #[test]
+    fn native_role_mapping_requires_html_namespace() {
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let svg_button = document
+            .append_new(
+                body,
+                NodeKind::Element(ElementData::new(Namespace::Svg, "button")),
+            )
+            .unwrap();
+        let layout = layout_document(&document, viewport());
+        let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+        let tree = state.build(&document, &layout.fragments).unwrap();
+        assert_eq!(
+            tree.node_for_source(svg_button).unwrap().role(),
+            AccessibilityRole::GenericContainer
+        );
+    }
+
+    #[test]
+    fn unsupported_input_type_does_not_claim_text_field_semantics() {
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let range = document.append_new(body, element("input")).unwrap();
+        document.set_attribute(range, "type", "range").unwrap();
+        document.set_attribute(range, "disabled", "").unwrap();
+        let layout = layout_document(&document, viewport());
+        let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+        let tree = state.build(&document, &layout.fragments).unwrap();
+        let node = tree.node_for_source(range).unwrap();
+        assert_eq!(node.role(), AccessibilityRole::GenericContainer);
+        assert!(!node.state().disabled());
+    }
+
+    #[test]
+    fn dom_traversal_budget_failure_is_atomic() {
+        fn clear_source(fragment: &mut Fragment, source: NodeId) {
+            if fragment.dom_node == Some(source) {
+                fragment.dom_node = None;
+            }
+            for child in &mut fragment.children {
+                clear_source(child, source);
+            }
+        }
+
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let first = document.append_new(body, element("div")).unwrap();
+        let second = document.append_new(first, element("div")).unwrap();
+        let mut layout = layout_document(&document, viewport());
+        clear_source(&mut layout.fragments.root, first);
+        clear_source(&mut layout.fragments.root, second);
+        let mut state = AccessibilityTreeState::try_new(AccessibilityLimits {
+            max_nodes: 2,
+            max_identities: 2,
+            max_dom_nodes_scanned: 3,
+            max_fragments: 32,
+            max_name_bytes_per_node: 32,
+            max_total_name_bytes: 64,
+        })
+        .unwrap();
+        assert!(matches!(
+            state.build(&document, &layout.fragments),
+            Err(AccessibilityError::DomNodeLimitExceeded { .. })
+        ));
+        assert_eq!(state.identity_count(), 0);
+    }
+
+    #[test]
+    fn fragment_budget_failure_is_atomic() {
+        let mut document = Document::new();
+        document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let layout = layout_document(&document, viewport());
+        let mut state = AccessibilityTreeState::try_new(AccessibilityLimits {
+            max_nodes: 8,
+            max_identities: 8,
+            max_dom_nodes_scanned: 16,
+            max_fragments: 1,
+            max_name_bytes_per_node: 32,
+            max_total_name_bytes: 64,
+        })
+        .unwrap();
+        assert!(matches!(
+            state.build(&document, &layout.fragments),
+            Err(AccessibilityError::FragmentLimitExceeded { .. })
+        ));
+        assert_eq!(state.identity_count(), 0);
+    }
+
+    #[test]
+    fn aggregate_name_budget_failure_is_atomic() {
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let first = document.append_new(body, element("button")).unwrap();
+        let second = document.append_new(body, element("button")).unwrap();
+        document
+            .set_attribute(first, "aria-label", "12345")
+            .unwrap();
+        document
+            .set_attribute(second, "aria-label", "67890")
+            .unwrap();
+        let layout = layout_document(&document, viewport());
+        let mut state = AccessibilityTreeState::try_new(AccessibilityLimits {
+            max_nodes: 8,
+            max_identities: 8,
+            max_dom_nodes_scanned: 16,
+            max_fragments: 32,
+            max_name_bytes_per_node: 8,
+            max_total_name_bytes: 9,
+        })
+        .unwrap();
+        assert!(matches!(
+            state.build(&document, &layout.fragments),
+            Err(AccessibilityError::TotalNameByteLimitExceeded { .. })
+        ));
         assert_eq!(state.identity_count(), 0);
     }
 }
