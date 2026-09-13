@@ -18,7 +18,18 @@ jobs:
           ref: r5/graphics-backend-boundary
           fetch-depth: 0
       - name: Apply deterministic hardening
-        run: python3 scripts/r5_graphics_hardening.py
+        shell: bash
+        run: |
+          python3 scripts/r5_graphics_hardening.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/rarog-graphics-adapter/src/lib.rs')
+          text = path.read_text()
+          old = '.map_or(true, |item| item.context() != context)'
+          if text.count(old) != 2:
+              raise SystemExit(f'expected exactly two map_or hardening sites, found {text.count(old)}')
+          path.write_text(text.replace(old, '.is_none_or(|item| item.context() != context)'))
+          PY
       - name: Format
         run: cargo fmt --all
       - name: Enforce exact hardening diff
