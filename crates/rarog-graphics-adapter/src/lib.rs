@@ -220,7 +220,10 @@ pub struct GraphicsAdapter<B: GraphicsBackend> {
 }
 
 impl<B: GraphicsBackend> GraphicsAdapter<B> {
-    pub fn try_new(limits: GraphicsAdapterLimits, backend: B) -> Result<Self, GraphicsAdapterError> {
+    pub fn try_new(
+        limits: GraphicsAdapterLimits,
+        backend: B,
+    ) -> Result<Self, GraphicsAdapterError> {
         if !limits.is_valid() {
             return Err(GraphicsAdapterError::InvalidLimits);
         }
@@ -245,10 +248,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         self.buffers.len() + self.textures.len()
     }
 
-    pub fn context_binding(
-        &self,
-        context: WebGlContextId,
-    ) -> Option<GraphicsContextBindingView> {
+    pub fn context_binding(&self, context: WebGlContextId) -> Option<GraphicsContextBindingView> {
         self.contexts
             .get(&context)
             .map(|binding| GraphicsContextBindingView {
@@ -273,9 +273,9 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         if self.contexts.contains_key(&context) {
             return Err(GraphicsAdapterError::ContextAlreadyBound(context));
         }
-        let view = webgl
-            .context(context)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownContext(context)))?;
+        let view = webgl.context(context).ok_or(GraphicsAdapterError::WebGl(
+            WebGlError::UnknownContext(context),
+        ))?;
         if view.state() != WebGlContextState::Active {
             return Err(GraphicsAdapterError::ContextNotActive(context));
         }
@@ -306,9 +306,12 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
             return Err(GraphicsAdapterError::BufferAlreadyBound(buffer));
         }
         self.require_active_bound_context(webgl, context)?;
-        let view = webgl
-            .buffer(buffer)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownBuffer(buffer)))?;
+        let view =
+            webgl
+                .buffer(buffer)
+                .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownBuffer(
+                    buffer,
+                )))?;
         if view.context() != context {
             return Err(GraphicsAdapterError::BufferOwnerDrift(buffer));
         }
@@ -345,9 +348,9 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
             return Err(GraphicsAdapterError::TextureAlreadyBound(texture));
         }
         self.require_active_bound_context(webgl, context)?;
-        let view = webgl
-            .texture(texture)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownTexture(texture)))?;
+        let view = webgl.texture(texture).ok_or(GraphicsAdapterError::WebGl(
+            WebGlError::UnknownTexture(texture),
+        ))?;
         if view.context() != context {
             return Err(GraphicsAdapterError::TextureOwnerDrift(texture));
         }
@@ -408,9 +411,9 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         context: WebGlContextId,
         loss: GraphicsBackendLoss,
     ) -> Result<bool, GraphicsAdapterError> {
-        let view = webgl
-            .context(context)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownContext(context)))?;
+        let view = webgl.context(context).ok_or(GraphicsAdapterError::WebGl(
+            WebGlError::UnknownContext(context),
+        ))?;
         let binding = self
             .contexts
             .get(&context)
@@ -439,9 +442,9 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         webgl: &mut WebGlRegistry,
         context: WebGlContextId,
     ) -> Result<(), GraphicsAdapterError> {
-        let view = webgl
-            .context(context)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownContext(context)))?;
+        let view = webgl.context(context).ok_or(GraphicsAdapterError::WebGl(
+            WebGlError::UnknownContext(context),
+        ))?;
         let binding = self
             .contexts
             .get(&context)
@@ -471,7 +474,8 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
             .buffers
             .iter()
             .filter_map(|(id, binding)| {
-                (binding.context == context && binding.state == ResourceBindingState::CleanupPending)
+                (binding.context == context
+                    && binding.state == ResourceBindingState::CleanupPending)
                     .then_some(*id)
             })
             .collect();
@@ -479,7 +483,8 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
             .textures
             .iter()
             .filter_map(|(id, binding)| {
-                (binding.context == context && binding.state == ResourceBindingState::CleanupPending)
+                (binding.context == context
+                    && binding.state == ResourceBindingState::CleanupPending)
                     .then_some(*id)
             })
             .collect();
@@ -539,9 +544,9 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         webgl: &WebGlRegistry,
         context: WebGlContextId,
     ) -> Result<WebGlContextView, GraphicsAdapterError> {
-        let view = webgl
-            .context(context)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownContext(context)))?;
+        let view = webgl.context(context).ok_or(GraphicsAdapterError::WebGl(
+            WebGlError::UnknownContext(context),
+        ))?;
         if view.state() != WebGlContextState::Active {
             return Err(GraphicsAdapterError::ContextNotActive(context));
         }
@@ -565,9 +570,12 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         buffer: WebGlBufferId,
     ) -> Result<(), GraphicsAdapterError> {
         self.require_active_bound_context(webgl, context)?;
-        let view = webgl
-            .buffer(buffer)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownBuffer(buffer)))?;
+        let view =
+            webgl
+                .buffer(buffer)
+                .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownBuffer(
+                    buffer,
+                )))?;
         if view.context() != context {
             return Err(GraphicsAdapterError::BufferOwnerDrift(buffer));
         }
@@ -588,9 +596,9 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         texture: WebGlTextureId,
     ) -> Result<(), GraphicsAdapterError> {
         self.require_active_bound_context(webgl, context)?;
-        let view = webgl
-            .texture(texture)
-            .ok_or(GraphicsAdapterError::WebGl(WebGlError::UnknownTexture(texture)))?;
+        let view = webgl.texture(texture).ok_or(GraphicsAdapterError::WebGl(
+            WebGlError::UnknownTexture(texture),
+        ))?;
         if view.context() != context {
             return Err(GraphicsAdapterError::TextureOwnerDrift(texture));
         }
@@ -627,12 +635,13 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
                 limit: self.limits.max_resource_bindings,
             },
         )?;
-        let next = current.checked_add(1).ok_or(
-            GraphicsAdapterError::ResourceBindingLimitExceeded {
-                bindings: usize::MAX,
-                limit: self.limits.max_resource_bindings,
-            },
-        )?;
+        let next =
+            current
+                .checked_add(1)
+                .ok_or(GraphicsAdapterError::ResourceBindingLimitExceeded {
+                    bindings: usize::MAX,
+                    limit: self.limits.max_resource_bindings,
+                })?;
         if next > self.limits.max_resource_bindings {
             return Err(GraphicsAdapterError::ResourceBindingLimitExceeded {
                 bindings: next,
@@ -771,7 +780,10 @@ mod tests {
             context: WebGlContextView,
         ) -> Result<Self::ContextHandle, GraphicsBackendError> {
             let handle = self.allocate();
-            self.state.borrow_mut().contexts.insert(handle, context.id());
+            self.state
+                .borrow_mut()
+                .contexts
+                .insert(handle, context.id());
             Ok(handle)
         }
 
