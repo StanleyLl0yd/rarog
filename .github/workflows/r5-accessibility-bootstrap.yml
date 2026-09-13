@@ -1,0 +1,233 @@
+name: R5 temporary accessibility bootstrap
+
+on:
+  push:
+    branches:
+      - r5/accessibility-tree-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: r5/accessibility-tree-foundation
+          fetch-depth: 0
+
+      - name: Apply reviewed hardening
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/rarog-accessibility/src/lib.rs')
+          text = path.read_text()
+
+          old = '''    pub fn retained_id(&self, source: NodeId) -> Option<AccessibilityNodeId> {
+              self.identities.get(&source).copied()
+          }
+
+          '''
+          if old not in text:
+              raise SystemExit('retained_id block not found')
+          text = text.replace(old, '', 1)
+
+          old = '''            let node_bounds = if source == document.root() {
+                      bounds
+                          .get(&source)
+                          .copied()
+                          .or_else(|| validated_rect(fragments.root.boxes.border_box, source).ok())
+                  } else {
+                      bounds.get(&source).copied()
+                  };
+          '''
+          new = '''            let node_bounds = if source == document.root() {
+                      match bounds.get(&source).copied() {
+                          Some(bounds) => Some(bounds),
+                          None => Some(validated_rect(fragments.root.boxes.border_box, source)?),
+                      }
+                  } else {
+                      bounds.get(&source).copied()
+                  };
+          '''
+          if old not in text:
+              raise SystemExit('root bounds block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    let tabindex_focusable = element
+                  .attributes
+                  .get("tabindex")
+                  .is_some_and(|value| value.trim() != "-1");
+          '''
+          new = '''    let tabindex_focusable = element
+                  .attributes
+                  .get("tabindex")
+                  .and_then(|value| value.trim().parse::<i32>().ok())
+                  .is_some_and(|value| value >= 0);
+          '''
+          if old not in text:
+              raise SystemExit('tabindex block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        assert!(detached.node(first_id).is_none());
+                  assert_eq!(state.retained_id(button), Some(first_id));
+
+                  document.append_child(body, button).unwrap();
+          '''
+          new = '''        assert!(detached.node(first_id).is_none());
+
+                  document.append_child(body, button).unwrap();
+          '''
+          if old not in text:
+              raise SystemExit('detach retained assertion not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    #[test]
+              fn nearest_exposed_parent_flattens_unexposed_intermediates() {
+                  let mut document = Document::new();
+                  let body = document.append_new(document.root(), element("body")).unwrap();
+                  let wrapper = document.append_new(body, element("div")).unwrap();
+                  let child = document.append_new(wrapper, element("button")).unwrap();
+                  let exposed = BTreeSet::from([document.root(), body, child]);
+                  assert_eq!(nearest_exposed_parent(&document, child, &exposed), Some(body));
+              }
+          '''
+          new = '''    #[test]
+              fn nearest_exposed_parent_flattens_unexposed_intermediates_in_snapshot() {
+                  fn clear_source(fragment: &mut Fragment, source: NodeId) {
+                      if fragment.dom_node == Some(source) {
+                          fragment.dom_node = None;
+                      }
+                      for child in &mut fragment.children {
+                          clear_source(child, source);
+                      }
+                  }
+
+                  let mut document = Document::new();
+                  let body = document.append_new(document.root(), element("body")).unwrap();
+                  let wrapper = document.append_new(body, element("div")).unwrap();
+                  let child = document.append_new(wrapper, element("button")).unwrap();
+                  let mut layout = layout_document(&document, viewport());
+                  clear_source(&mut layout.fragments.root, wrapper);
+
+                  let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+                  let tree = state.build(&document, &layout.fragments).unwrap();
+                  assert!(tree.node_for_source(wrapper).is_none());
+                  let body_id = tree.id_for_source(body).unwrap();
+                  let child_node = tree.node_for_source(child).unwrap();
+                  assert_eq!(child_node.parent(), Some(body_id));
+                  assert!(tree.node(body_id).unwrap().children().contains(&child_node.id()));
+              }
+          '''
+          if old not in text:
+              raise SystemExit('nearest parent test not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        assert_eq!(state.identity_count(), 3);
+                  assert_eq!(state.retained_id(first), Some(first_id));
+              }
+          '''
+          new = '''        assert_eq!(state.identity_count(), 3);
+                  let extra = document.children(body).unwrap().last().copied().unwrap();
+                  document.detach(extra).unwrap();
+                  let recovered_layout = layout_document(&document, viewport());
+                  let recovered = state.build(&document, &recovered_layout.fragments).unwrap();
+                  assert_eq!(recovered.id_for_source(first), Some(first_id));
+              }
+          '''
+          if old not in text:
+              raise SystemExit('identity atomic assertion block not found')
+          text = text.replace(old, new, 1)
+
+          insert = '''
+
+              #[test]
+              fn invalid_tabindex_does_not_create_focusability() {
+                  let mut document = Document::new();
+                  let body = document.append_new(document.root(), element("body")).unwrap();
+                  let generic = document.append_new(body, element("div")).unwrap();
+                  document.set_attribute(generic, "tabindex", "not-a-number").unwrap();
+                  let layout = layout_document(&document, viewport());
+                  let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+                  let tree = state.build(&document, &layout.fragments).unwrap();
+                  assert!(!tree.node_for_source(generic).unwrap().state().focusable());
+              }
+          '''
+          marker = '\n          #[test]\n          fn node_budget_failure_does_not_allocate_identities() {'
+          if marker not in text:
+              raise SystemExit('test insertion marker not found')
+          text = text.replace(marker, insert + marker, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Add local lock entry
+        shell: bash
+        run: |
+          if ! grep -q '^name = "rarog-accessibility"$' Cargo.lock; then
+            cat >> Cargo.lock <<'EOF'
+
+          [[package]]
+          name = "rarog-accessibility"
+          version = "0.1.0"
+          dependencies = [
+           "rarog-dom",
+           "rarog-layout",
+           "rarog-types",
+          ]
+          EOF
+          fi
+
+      - name: Format and verify focused crate
+        shell: bash
+        run: |
+          cargo fmt --all
+          cargo check --locked -p rarog-accessibility --all-targets
+          cargo test --locked -p rarog-accessibility
+
+      - name: Reject external lock drift
+        shell: bash
+        run: |
+          git diff ae7033b524dbbe71f1294b44b8a14686f5540317 -- Cargo.lock > /tmp/lock.diff
+          python3 - <<'PY'
+          from pathlib import Path
+          diff = Path('/tmp/lock.diff').read_text()
+          added = [line for line in diff.splitlines() if line.startswith('+') and not line.startswith('+++')]
+          removed = [line for line in diff.splitlines() if line.startswith('-') and not line.startswith('---')]
+          allowed = {
+              '+[[package]]',
+              '+name = "rarog-accessibility"',
+              '+version = "0.1.0"',
+              '+dependencies = [',
+              '+ "rarog-dom",',
+              '+ "rarog-layout",',
+              '+ "rarog-types",',
+              '+]',
+              '+'
+          }
+          unexpected = [line for line in added if line not in allowed]
+          if removed or unexpected or '+name = "rarog-accessibility"' not in added:
+              print(diff)
+              raise SystemExit('unexpected Cargo.lock drift')
+          PY
+
+      - name: Publish verified files through Git data API
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- Cargo.lock crates/rarog-accessibility/src/lib.rs; then
+            exit 0
+          fi
+          base_head=$(git rev-parse HEAD)
+          base_tree=$(git rev-parse HEAD^{tree})
+          lock_b64=$(base64 -w0 Cargo.lock)
+          source_b64=$(base64 -w0 crates/rarog-accessibility/src/lib.rs)
+          lock_blob=$(jq -n --arg content "$lock_b64" '{content:$content,encoding:"base64"}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)
+          source_blob=$(jq -n --arg content "$source_b64" '{content:$content,encoding:"base64"}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)
+          tree_sha=$(jq -n --arg base "$base_tree" --arg lock "$lock_blob" --arg source "$source_blob" '{base_tree:$base,tree:[{path:"Cargo.lock",mode:"100644",type:"blob",sha:$lock},{path:"crates/rarog-accessibility/src/lib.rs",mode:"100644",type:"blob",sha:$source}]}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/trees" --input - --jq .sha)
+          commit_sha=$(jq -n --arg message "R5: harden accessibility tree foundation" --arg tree "$tree_sha" --arg parent "$base_head" '{message:$message,tree:$tree,parents:[$parent]}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" --input - --jq .sha)
+          jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}' | gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/r5/accessibility-tree-foundation" --input -
