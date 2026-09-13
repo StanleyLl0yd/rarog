@@ -1,0 +1,13 @@
+[package]
+name = "rarog-graphics-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rarog-canvas = { path = "../rarog-canvas" }
+rarog-webgl = { path = "../rarog-webgl" }
+
+[lints]
+workspace = true
