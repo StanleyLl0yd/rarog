@@ -563,6 +563,18 @@ The stateful incremental tests add invariants for paint-only geometry preservati
 
 This separation is required for later incremental invalidation, parallelism, process isolation, GPU composition and crash recovery.
 
+## R5 platform-neutral accessibility tree foundation
+
+R5 introduces `rarog-accessibility` as a portable derived-state boundary. The DOM remains semantic authority and the Fragment Tree contributes geometry only; accessibility IDs, Fragment IDs, LayoutNode IDs and later platform/provider IDs are correlation identities, not interchangeable authority. `AccessibilityTreeState` is owned for one document lifecycle and allocates a fresh Rarog scope plus monotonic non-zero `AccessibilityNodeId` values. A new document lifecycle must receive a new state.
+
+Each immutable `AccessibilityTree` snapshot records the exact source DOM generation and contains only current exposed nodes. Non-root sources require current FragmentTree source geometry; omitted intermediates are flattened to the nearest exposed DOM ancestor without changing DOM order. Multiple fragment border boxes for one DOM source are validated and unioned into one portable `Rect`. Fragment/layout allocation identity never escapes as accessibility authority.
+
+The first Accessibility slice deliberately implements only a narrow HTML-native semantic foundation: root web area, generic/static text, button, link, heading, selected text inputs, checkbox/radio, image and list/list-item roles; normalized bounded names; and fixed disabled/checked/expanded/focusable state. Native element-role mapping is HTML-namespace-only, unsupported input types remain generic, and descendant text contributes to selected names only when that text source has current rendered fragment geometry. This is not HTML/ARIA role or Accessible Name algorithm completeness.
+
+Accessibility resource use is explicit and fail-closed. `AccessibilityLimits` bounds exposed nodes, retained identities, connected DOM nodes scanned, fragments traversed, name bytes per node and aggregate retained name bytes. DOM/fragment worklists are bounded before enqueue, arithmetic is checked, names are built under their byte limits, and malformed/non-finite geometry rejects the snapshot before retained identity state is committed. Stable identities survive rebuild and detach/re-attach within one document lifecycle, while stale IDs do not resolve in snapshots where their source is absent.
+
+Actions/events, mutation/render-to-accessibility invalidation and the Windows accessibility bridge remain later R5 slices. This foundation contains no Windows UIA/MSAA/COM/native accessibility objects and makes no WPT, assistive-technology compatibility or R6 qualification claim. See ADR-0135.
+
 ## Platform host boundary
 
 R0 isolates host-platform integration behind two crate layers. `rarog-platform` owns the platform-neutral `PlatformHost` and `PlatformCapabilities` contract consumed by `rarog-engine`. `rarog-platform-windows` is the first target-specific host boundary; engine core never depends on that Windows crate.

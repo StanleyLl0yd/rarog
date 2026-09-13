@@ -315,12 +315,27 @@ impl AccessibilityTreeState {
                 continue;
             }
 
+            let next_nodes =
+                drafts
+                    .len()
+                    .checked_add(1)
+                    .ok_or(AccessibilityError::NodeLimitExceeded {
+                        nodes: usize::MAX,
+                        limit: self.limits.max_nodes,
+                    })?;
+            if next_nodes > self.limits.max_nodes {
+                return Err(AccessibilityError::NodeLimitExceeded {
+                    nodes: next_nodes,
+                    limit: self.limits.max_nodes,
+                });
+            }
             let role = role_for_node(&node.kind);
             let name = name_for_node(
                 document,
                 source,
                 &node.kind,
                 role,
+                &bounds,
                 self.limits.max_name_bytes_per_node,
                 self.limits.max_dom_nodes_scanned,
             )?;
@@ -337,20 +352,6 @@ impl AccessibilityTreeState {
                 return Err(AccessibilityError::TotalNameByteLimitExceeded {
                     bytes: total_name_bytes,
                     limit: self.limits.max_total_name_bytes,
-                });
-            }
-            let next_nodes =
-                drafts
-                    .len()
-                    .checked_add(1)
-                    .ok_or(AccessibilityError::NodeLimitExceeded {
-                        nodes: usize::MAX,
-                        limit: self.limits.max_nodes,
-                    })?;
-            if next_nodes > self.limits.max_nodes {
-                return Err(AccessibilityError::NodeLimitExceeded {
-                    nodes: next_nodes,
-                    limit: self.limits.max_nodes,
                 });
             }
             drafts.push(DraftNode {
@@ -699,6 +700,7 @@ fn name_for_node(
     source: NodeId,
     kind: &NodeKind,
     role: AccessibilityRole,
+    rendered_bounds: &BTreeMap<NodeId, Rect>,
     limit: usize,
     dom_node_limit: usize,
 ) -> Result<String, AccessibilityError> {
@@ -733,7 +735,7 @@ fn name_for_node(
                 | AccessibilityRole::Link
                 | AccessibilityRole::Heading
                 | AccessibilityRole::ListItem => {
-                    descendant_text_name(document, source, limit, dom_node_limit)
+                    descendant_text_name(document, source, rendered_bounds, limit, dom_node_limit)
                 }
                 _ => Ok(String::new()),
             }
@@ -744,6 +746,7 @@ fn name_for_node(
 fn descendant_text_name(
     document: &Document,
     source: NodeId,
+    rendered_bounds: &BTreeMap<NodeId, Rect>,
     limit: usize,
     dom_node_limit: usize,
 ) -> Result<String, AccessibilityError> {
@@ -759,7 +762,11 @@ fn descendant_text_name(
             .node(current)
             .ok_or(AccessibilityError::InconsistentTree)?;
         match &node.kind {
-            NodeKind::Text(text) => accumulator.push_text(text)?,
+            NodeKind::Text(text) => {
+                if rendered_bounds.contains_key(&current) {
+                    accumulator.push_text(text)?;
+                }
+            }
             NodeKind::Document | NodeKind::Element(_) => push_dom_children(
                 &mut stack,
                 &node.children,
@@ -1308,5 +1315,36 @@ mod tests {
             Err(AccessibilityError::TotalNameByteLimitExceeded { .. })
         ));
         assert_eq!(state.identity_count(), 0);
+    }
+
+    #[test]
+    fn descendant_name_ignores_text_without_rendered_source_geometry() {
+        fn clear_source(fragment: &mut Fragment, source: NodeId) {
+            if fragment.dom_node == Some(source) {
+                fragment.dom_node = None;
+            }
+            for child in &mut fragment.children {
+                clear_source(child, source);
+            }
+        }
+
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let button = document.append_new(body, element("button")).unwrap();
+        document
+            .append_new(button, NodeKind::Text("Visible".into()))
+            .unwrap();
+        let hidden_text = document
+            .append_new(button, NodeKind::Text("Hidden".into()))
+            .unwrap();
+        let mut layout = layout_document(&document, viewport());
+        clear_source(&mut layout.fragments.root, hidden_text);
+
+        let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+        let tree = state.build(&document, &layout.fragments).unwrap();
+        assert_eq!(tree.node_for_source(button).unwrap().name(), "Visible");
+        assert!(tree.node_for_source(hidden_text).is_none());
     }
 }
