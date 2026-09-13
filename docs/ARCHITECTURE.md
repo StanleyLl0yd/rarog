@@ -340,6 +340,17 @@ The DOM does not know which selectors, layout nodes or paint items depend on a m
 - WebGL semantic contracts expose no GPU device/queue/buffer/texture/view, shader/program/pipeline, command encoder, D3D/DXGI, `wgpu`, platform handle or native pointer authority. The replaceable graphics-backend boundary is intentionally the next R5 Canvas/WebGL slice.
 - See [ADR-0133](adr/0133-webgl-ownership-loss.md).
 
+### R5 replaceable graphics backend boundary
+
+- `rarog-graphics-adapter` is a portable integration layer depending only on `rarog-canvas` and `rarog-webgl`; it does not select `wgpu`, D3D/DXGI, platform APIs or native handles.
+- One adapter instance binds to one exact `WebGlRegistry` scope. Exact live WebGL context/resource identities remain the only semantic authority; a foreign registry is rejected before backend mutation or cleanup.
+- Concrete backend context/buffer/texture handle types are private generic adapter state. They are never returned as Web/DOM/WebGL authority and never substitute for `WebGlContextId`, `WebGlBufferId` or `WebGlTextureId`.
+- Adapter context/resource bindings have independent explicit bounds. Backend cleanup failures retain private handles as cleanup-pending bindings, so failed destruction remains charged and cannot manufacture backend capacity.
+- Semantic resource/context destruction retires WebGL authority first. Backend destruction then either succeeds or remains bounded for explicit retry; stale backend state cannot resurrect retired semantic IDs.
+- `GraphicsAdapter::reconcile` handles semantic resource destruction, context loss or context destruction performed outside the adapter, but only after exact registry-scope validation. Lost contexts reuse the fixed engine-owned `WebGlContextLossReason` model rather than exposing native/backend errors upward.
+- Mock and no-op implementations prove the backend contract is replaceable on portable CI. Real GPU objects remain private to a future concrete backend and this boundary does not claim WebGL command or hardware-backend completeness.
+- See [ADR-0134](adr/0134-replaceable-graphics-backend-boundary.md).
+
 ### Element names, namespaces and atoms
 
 R0 stores an explicit `Namespace` on every `ElementData` and represents the local element name with an immutable `Atom`. The bootstrap HTML parser assigns `Namespace::Html` only; SVG/MathML tree-building and namespace switching remain standards-parser work. Non-HTML namespaces can already be represented by the DOM without encoding namespace state into tag-name strings.

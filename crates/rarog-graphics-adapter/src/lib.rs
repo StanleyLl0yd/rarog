@@ -155,6 +155,7 @@ impl GraphicsContextBindingView {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GraphicsAdapterError {
     InvalidLimits,
+    RegistryScopeMismatch { expected: u64, actual: u64 },
     ContextBindingLimitExceeded { bindings: usize, limit: usize },
     ResourceBindingLimitExceeded { bindings: usize, limit: usize },
     ContextAlreadyBound(WebGlContextId),
@@ -214,6 +215,7 @@ struct TextureBinding<Handle> {
 pub struct GraphicsAdapter<B: GraphicsBackend> {
     limits: GraphicsAdapterLimits,
     backend: B,
+    webgl_scope: Option<u64>,
     contexts: BTreeMap<WebGlContextId, ContextBinding<B::ContextHandle>>,
     buffers: BTreeMap<WebGlBufferId, BufferBinding<B::BufferHandle>>,
     textures: BTreeMap<WebGlTextureId, TextureBinding<B::TextureHandle>>,
@@ -230,6 +232,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         Ok(Self {
             limits,
             backend,
+            webgl_scope: None,
             contexts: BTreeMap::new(),
             buffers: BTreeMap::new(),
             textures: BTreeMap::new(),
@@ -270,6 +273,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         webgl: &WebGlRegistry,
         context: WebGlContextId,
     ) -> Result<(), GraphicsAdapterError> {
+        self.ensure_registry_scope(webgl)?;
         if self.contexts.contains_key(&context) {
             return Err(GraphicsAdapterError::ContextAlreadyBound(context));
         }
@@ -279,6 +283,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         if view.state() != WebGlContextState::Active {
             return Err(GraphicsAdapterError::ContextNotActive(context));
         }
+        self.bind_registry_scope(webgl)?;
         self.check_context_capacity()?;
         let handle = self
             .backend
@@ -385,10 +390,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
     ) -> Result<(), GraphicsAdapterError> {
         self.require_exact_buffer_binding(webgl, context, buffer)?;
         webgl.destroy_buffer(context, buffer)?;
-        match self.cleanup_buffer_binding(context, buffer) {
-            Ok(()) => Ok(()),
-            Err(kind) => Err(GraphicsAdapterError::BackendCleanupPending(kind)),
-        }
+        self.cleanup_buffer_binding(context, buffer)
     }
 
     pub fn destroy_texture(
@@ -399,10 +401,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
     ) -> Result<(), GraphicsAdapterError> {
         self.require_exact_texture_binding(webgl, context, texture)?;
         webgl.destroy_texture(context, texture)?;
-        match self.cleanup_texture_binding(context, texture) {
-            Ok(()) => Ok(()),
-            Err(kind) => Err(GraphicsAdapterError::BackendCleanupPending(kind)),
-        }
+        self.cleanup_texture_binding(context, texture)
     }
 
     pub fn propagate_backend_loss(
@@ -411,6 +410,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         context: WebGlContextId,
         loss: GraphicsBackendLoss,
     ) -> Result<bool, GraphicsAdapterError> {
+        self.ensure_registry_scope(webgl)?;
         let view = webgl.context(context).ok_or(GraphicsAdapterError::WebGl(
             WebGlError::UnknownContext(context),
         ))?;
@@ -442,6 +442,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         webgl: &mut WebGlRegistry,
         context: WebGlContextId,
     ) -> Result<(), GraphicsAdapterError> {
+        self.ensure_registry_scope(webgl)?;
         let view = webgl.context(context).ok_or(GraphicsAdapterError::WebGl(
             WebGlError::UnknownContext(context),
         ))?;
@@ -491,13 +492,21 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
 
         let mut first_failure = None;
         for buffer in buffer_ids {
-            if let Err(kind) = self.cleanup_buffer_binding(context, buffer) {
-                first_failure.get_or_insert(kind);
+            match self.cleanup_buffer_binding(context, buffer) {
+                Ok(()) => {}
+                Err(GraphicsAdapterError::BackendCleanupPending(kind)) => {
+                    first_failure.get_or_insert(kind);
+                }
+                Err(error) => return Err(error),
             }
         }
         for texture in texture_ids {
-            if let Err(kind) = self.cleanup_texture_binding(context, texture) {
-                first_failure.get_or_insert(kind);
+            match self.cleanup_texture_binding(context, texture) {
+                Ok(()) => {}
+                Err(GraphicsAdapterError::BackendCleanupPending(kind)) => {
+                    first_failure.get_or_insert(kind);
+                }
+                Err(error) => return Err(error),
             }
         }
 
@@ -539,11 +548,104 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         }
     }
 
+    pub fn reconcile(&mut self, webgl: &WebGlRegistry) -> Result<(), GraphicsAdapterError> {
+        self.ensure_registry_scope(webgl)?;
+        let contexts: Vec<_> = self.contexts.keys().copied().collect();
+        let mut first_failure = None;
+
+        for context in contexts {
+            match webgl.context(context) {
+                None => {
+                    let binding = self
+                        .contexts
+                        .get_mut(&context)
+                        .ok_or(GraphicsAdapterError::InconsistentState)?;
+                    binding.state = GraphicsContextBindingState::CleanupPending;
+                    self.mark_context_resources_cleanup_pending(context);
+                }
+                Some(view) => {
+                    let binding = self
+                        .contexts
+                        .get(&context)
+                        .ok_or(GraphicsAdapterError::InconsistentState)?;
+                    if binding.surface != view.surface() {
+                        return Err(GraphicsAdapterError::ContextSurfaceDrift(context));
+                    }
+                    match view.state() {
+                        WebGlContextState::Active => {
+                            if binding.state != GraphicsContextBindingState::Active {
+                                return Err(GraphicsAdapterError::ContextNotActive(context));
+                            }
+                            for (id, binding) in self.buffers.iter_mut() {
+                                if binding.context == context
+                                    && webgl
+                                        .buffer(*id)
+                                        .is_none_or(|item| item.context() != context)
+                                {
+                                    binding.state = ResourceBindingState::CleanupPending;
+                                }
+                            }
+                            for (id, binding) in self.textures.iter_mut() {
+                                if binding.context == context
+                                    && webgl
+                                        .texture(*id)
+                                        .is_none_or(|item| item.context() != context)
+                                {
+                                    binding.state = ResourceBindingState::CleanupPending;
+                                }
+                            }
+                        }
+                        WebGlContextState::Lost(_) => {
+                            let binding = self
+                                .contexts
+                                .get_mut(&context)
+                                .ok_or(GraphicsAdapterError::InconsistentState)?;
+                            binding.state = GraphicsContextBindingState::Lost;
+                            self.mark_context_resources_cleanup_pending(context);
+                        }
+                    }
+                }
+            }
+
+            match self.retry_cleanup(context) {
+                Ok(()) => {}
+                Err(GraphicsAdapterError::BackendCleanupPending(kind)) => {
+                    first_failure.get_or_insert(kind);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        match first_failure {
+            Some(kind) => Err(GraphicsAdapterError::BackendCleanupPending(kind)),
+            None => Ok(()),
+        }
+    }
+
+    fn ensure_registry_scope(&self, webgl: &WebGlRegistry) -> Result<(), GraphicsAdapterError> {
+        let actual = webgl.scope();
+        match self.webgl_scope {
+            Some(expected) if expected != actual => {
+                Err(GraphicsAdapterError::RegistryScopeMismatch { expected, actual })
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn bind_registry_scope(&mut self, webgl: &WebGlRegistry) -> Result<(), GraphicsAdapterError> {
+        self.ensure_registry_scope(webgl)?;
+        if self.webgl_scope.is_none() {
+            self.webgl_scope = Some(webgl.scope());
+        }
+        Ok(())
+    }
+
     fn require_active_bound_context(
         &self,
         webgl: &WebGlRegistry,
         context: WebGlContextId,
     ) -> Result<WebGlContextView, GraphicsAdapterError> {
+        self.ensure_registry_scope(webgl)?;
         let view = webgl.context(context).ok_or(GraphicsAdapterError::WebGl(
             WebGlError::UnknownContext(context),
         ))?;
@@ -668,17 +770,17 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         &mut self,
         context: WebGlContextId,
         buffer: WebGlBufferId,
-    ) -> Result<(), GraphicsBackendErrorKind> {
+    ) -> Result<(), GraphicsAdapterError> {
         let result = {
             let backend = &mut self.backend;
             let contexts = &mut self.contexts;
             let buffers = &mut self.buffers;
             let context_binding = contexts
                 .get_mut(&context)
-                .expect("validated graphics context binding");
+                .ok_or(GraphicsAdapterError::InconsistentState)?;
             let buffer_binding = buffers
                 .get_mut(&buffer)
-                .expect("validated graphics buffer binding");
+                .ok_or(GraphicsAdapterError::InconsistentState)?;
             backend.destroy_buffer(&mut context_binding.handle, &mut buffer_binding.handle)
         };
         match result {
@@ -690,7 +792,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
                 if let Some(binding) = self.buffers.get_mut(&buffer) {
                     binding.state = ResourceBindingState::CleanupPending;
                 }
-                Err(error.kind())
+                Err(GraphicsAdapterError::BackendCleanupPending(error.kind()))
             }
         }
     }
@@ -699,17 +801,17 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
         &mut self,
         context: WebGlContextId,
         texture: WebGlTextureId,
-    ) -> Result<(), GraphicsBackendErrorKind> {
+    ) -> Result<(), GraphicsAdapterError> {
         let result = {
             let backend = &mut self.backend;
             let contexts = &mut self.contexts;
             let textures = &mut self.textures;
             let context_binding = contexts
                 .get_mut(&context)
-                .expect("validated graphics context binding");
+                .ok_or(GraphicsAdapterError::InconsistentState)?;
             let texture_binding = textures
                 .get_mut(&texture)
-                .expect("validated graphics texture binding");
+                .ok_or(GraphicsAdapterError::InconsistentState)?;
             backend.destroy_texture(&mut context_binding.handle, &mut texture_binding.handle)
         };
         match result {
@@ -721,7 +823,7 @@ impl<B: GraphicsBackend> GraphicsAdapter<B> {
                 if let Some(binding) = self.textures.get_mut(&texture) {
                     binding.state = ResourceBindingState::CleanupPending;
                 }
-                Err(error.kind())
+                Err(GraphicsAdapterError::BackendCleanupPending(error.kind()))
             }
         }
     }
@@ -1115,6 +1217,98 @@ mod tests {
             adapter.bind_context(&first_webgl, second_context),
             Err(GraphicsAdapterError::WebGl(WebGlError::UnknownContext(id))) if id == second_context
         ));
+        assert_eq!(state.borrow().contexts.len(), 1);
+    }
+
+    #[test]
+    fn foreign_registry_scope_is_rejected_before_backend_mutation() {
+        let mut first_canvas = canvas();
+        let first_surface = first_canvas.create_surface(1, 1).unwrap();
+        let mut first_webgl = webgl();
+        let first_context = first_webgl
+            .create_context(&mut first_canvas, first_surface)
+            .unwrap();
+        let mut second_canvas = canvas();
+        let second_surface = second_canvas.create_surface(1, 1).unwrap();
+        let mut second_webgl = webgl();
+        let second_context = second_webgl
+            .create_context(&mut second_canvas, second_surface)
+            .unwrap();
+        let (backend, state) = MockBackend::new();
+        let mut adapter = GraphicsAdapter::try_new(adapter_limits(), backend).unwrap();
+        adapter.bind_context(&first_webgl, first_context).unwrap();
+
+        assert_eq!(
+            adapter.bind_context(&second_webgl, second_context),
+            Err(GraphicsAdapterError::RegistryScopeMismatch {
+                expected: first_webgl.scope(),
+                actual: second_webgl.scope(),
+            })
+        );
+        assert_eq!(state.borrow().contexts.len(), 1);
+    }
+
+    #[test]
+    fn reconcile_cleans_resource_destroyed_outside_adapter() {
+        let mut canvas = canvas();
+        let surface = canvas.create_surface(1, 1).unwrap();
+        let mut webgl = webgl();
+        let context = webgl.create_context(&mut canvas, surface).unwrap();
+        let buffer = webgl.create_buffer(context, 4).unwrap();
+        let (backend, state) = MockBackend::new();
+        let mut adapter = GraphicsAdapter::try_new(adapter_limits(), backend).unwrap();
+        adapter.bind_context(&webgl, context).unwrap();
+        adapter.bind_buffer(&webgl, context, buffer).unwrap();
+
+        webgl.destroy_buffer(context, buffer).unwrap();
+        assert_eq!(state.borrow().buffers.len(), 1);
+        adapter.reconcile(&webgl).unwrap();
+        assert_eq!(adapter.resource_binding_count(), 0);
+        assert_eq!(state.borrow().buffers.len(), 0);
+    }
+
+    #[test]
+    fn reconcile_cleans_context_destroyed_outside_adapter() {
+        let mut canvas = canvas();
+        let surface = canvas.create_surface(1, 1).unwrap();
+        let mut webgl = webgl();
+        let context = webgl.create_context(&mut canvas, surface).unwrap();
+        let buffer = webgl.create_buffer(context, 4).unwrap();
+        let (backend, state) = MockBackend::new();
+        let mut adapter = GraphicsAdapter::try_new(adapter_limits(), backend).unwrap();
+        adapter.bind_context(&webgl, context).unwrap();
+        adapter.bind_buffer(&webgl, context, buffer).unwrap();
+
+        webgl.destroy_context(&mut canvas, context).unwrap();
+        adapter.reconcile(&webgl).unwrap();
+        assert_eq!(adapter.context_binding_count(), 0);
+        assert_eq!(adapter.resource_binding_count(), 0);
+        assert_eq!(state.borrow().contexts.len(), 0);
+        assert_eq!(state.borrow().buffers.len(), 0);
+    }
+
+    #[test]
+    fn reconcile_tracks_direct_semantic_loss_without_destroying_context_binding() {
+        let mut canvas = canvas();
+        let surface = canvas.create_surface(1, 1).unwrap();
+        let mut webgl = webgl();
+        let context = webgl.create_context(&mut canvas, surface).unwrap();
+        let texture = webgl.create_texture(context, 1, 1).unwrap();
+        let (backend, state) = MockBackend::new();
+        let mut adapter = GraphicsAdapter::try_new(adapter_limits(), backend).unwrap();
+        adapter.bind_context(&webgl, context).unwrap();
+        adapter.bind_texture(&webgl, context, texture).unwrap();
+
+        webgl
+            .lose_context(context, WebGlContextLossReason::BackendUnavailable)
+            .unwrap();
+        adapter.reconcile(&webgl).unwrap();
+        assert_eq!(adapter.resource_binding_count(), 0);
+        assert_eq!(state.borrow().textures.len(), 0);
+        assert_eq!(
+            adapter.context_binding(context).unwrap().state(),
+            GraphicsContextBindingState::Lost
+        );
         assert_eq!(state.borrow().contexts.len(), 1);
     }
 
