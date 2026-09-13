@@ -340,6 +340,11 @@ impl WebGlRegistry {
     pub const fn limits(&self) -> WebGlLimits {
         self.limits
     }
+
+    pub fn scope(&self) -> u64 {
+        self.ids.scope.get()
+    }
+
     pub fn context_count(&self) -> usize {
         self.contexts.len()
     }
