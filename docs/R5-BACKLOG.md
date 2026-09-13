@@ -44,7 +44,7 @@ Tracking issue: #260.
 
 ## F — Accessibility
 
-- [ ] Add a platform-neutral accessibility tree with stable derived identities, roles, names, states and bounds.
+- [x] Add a platform-neutral accessibility tree with stable derived identities, roles, names, states and bounds.
 - [ ] Define actions/events without making platform accessibility objects authoritative Web state.
 - [ ] Add deterministic DOM/render-to-accessibility invalidation.
 - [ ] Add the Windows accessibility bridge first behind `rarog-platform`/`rarog-platform-windows`.
