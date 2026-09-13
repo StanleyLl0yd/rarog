@@ -1,0 +1,104 @@
+name: R5 temporary accessibility retained-id fix
+
+on:
+  push:
+    branches:
+      - r5/accessibility-tree-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: r5/accessibility-tree-foundation
+          fetch-depth: 0
+
+      - name: Remove test-only retained identity helper
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/rarog-accessibility/src/lib.rs')
+          text = path.read_text()
+          if 'fn retained_id(&self, source: NodeId)' not in text:
+              Path('/tmp/noop').write_text('1')
+              raise SystemExit(0)
+
+          old = '''    fn retained_id(&self, source: NodeId) -> Option<AccessibilityNodeId> {
+              self.identities.get(&source).copied()
+          }
+
+          '''
+          if old not in text:
+              raise SystemExit('retained_id method shape changed')
+          text = text.replace(old, '', 1)
+
+          old = '''        assert!(detached.node(first_id).is_none());
+                  assert_eq!(state.retained_id(button), Some(first_id));
+
+                  document.append_child(body, button).unwrap();'''
+          new = '''        assert!(detached.node(first_id).is_none());
+
+                  document.append_child(body, button).unwrap();'''
+          if old not in text:
+              raise SystemExit('detach retained assertion shape changed')
+          text = text.replace(old, new, 1)
+
+          old = '''        document.append_new(body, element("button")).unwrap();
+                  let expanded_layout = layout_document(&document, viewport());'''
+          new = '''        let second = document.append_new(body, element("button")).unwrap();
+                  let expanded_layout = layout_document(&document, viewport());'''
+          if old not in text:
+              raise SystemExit('identity-budget append shape changed')
+          text = text.replace(old, new, 1)
+
+          old = '''        assert_eq!(state.identity_count(), 3);
+                  assert_eq!(state.retained_id(first), Some(first_id));
+              }
+
+              #[test]
+              fn nearest_exposed_parent_is_reflected_in_snapshot()'''
+          new = '''        assert_eq!(state.identity_count(), 3);
+                  document.detach(second).unwrap();
+                  let recovered_layout = layout_document(&document, viewport());
+                  let recovered = state.build(&document, &recovered_layout.fragments).unwrap();
+                  assert_eq!(recovered.id_for_source(first), Some(first_id));
+                  assert_eq!(state.identity_count(), 3);
+              }
+
+              #[test]
+              fn nearest_exposed_parent_is_reflected_in_snapshot()'''
+          if old not in text:
+              raise SystemExit('identity-budget retained assertion shape changed')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+
+      - name: Verify focused crate
+        if: ${{ !hashFiles('/tmp/noop') }}
+        shell: bash
+        run: |
+          cargo fmt --all
+          cargo check --locked -p rarog-accessibility --all-targets
+          cargo clippy --locked -p rarog-accessibility --all-targets -- -D warnings
+          cargo test --locked -p rarog-accessibility
+
+      - name: Publish source through Git data API
+        if: ${{ !hashFiles('/tmp/noop') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_head=$(git rev-parse HEAD)
+          base_tree=$(git rev-parse HEAD^{tree})
+          source_b64=$(base64 -w0 crates/rarog-accessibility/src/lib.rs)
+          source_blob=$(jq -n --arg content "$source_b64" '{content:$content,encoding:"base64"}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)
+          tree_sha=$(jq -n --arg base "$base_tree" --arg source "$source_blob" '{base_tree:$base,tree:[{path:"crates/rarog-accessibility/src/lib.rs",mode:"100644",type:"blob",sha:$source}]}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/trees" --input - --jq .sha)
+          commit_sha=$(jq -n --arg message "R5: remove test-only retained identity helper" --arg tree "$tree_sha" --arg parent "$base_head" '{message:$message,tree:$tree,parents:[$parent]}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" --input - --jq .sha)
+          jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}' | gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/r5/accessibility-tree-foundation" --input -
