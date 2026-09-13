@@ -3763,3 +3763,11 @@ version = "0.1.0"
 dependencies = [
  "rarog-canvas",
 ]
+
+[[package]]
+name = "rarog-graphics-adapter"
+version = "0.1.0"
+dependencies = [
+ "rarog-canvas",
+ "rarog-webgl",
+]
