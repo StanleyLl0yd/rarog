@@ -193,15 +193,27 @@ pub enum AccessibilityError {
     InvalidLimits,
     ScopeExhausted,
     IdentitySpaceExhausted,
-    NodeLimitExceeded { nodes: usize, limit: usize },
-    IdentityLimitExceeded { identities: usize, limit: usize },
-    FragmentLimitExceeded { fragments: usize, limit: usize },
+    NodeLimitExceeded {
+        nodes: usize,
+        limit: usize,
+    },
+    IdentityLimitExceeded {
+        identities: usize,
+        limit: usize,
+    },
+    FragmentLimitExceeded {
+        fragments: usize,
+        limit: usize,
+    },
     NameByteLimitExceeded {
         node: NodeId,
         bytes: usize,
         limit: usize,
     },
-    TotalNameByteLimitExceeded { bytes: usize, limit: usize },
+    TotalNameByteLimitExceeded {
+        bytes: usize,
+        limit: usize,
+    },
     InvalidBounds(NodeId),
     InconsistentTree,
 }
@@ -256,7 +268,7 @@ impl AccessibilityTreeState {
         self.identities.len()
     }
 
-    pub fn retained_id(&self, source: NodeId) -> Option<AccessibilityNodeId> {
+    fn retained_id(&self, source: NodeId) -> Option<AccessibilityNodeId> {
         self.identities.get(&source).copied()
     }
 
@@ -279,10 +291,10 @@ impl AccessibilityTreeState {
             }
 
             let node_bounds = if source == document.root() {
-                bounds
-                    .get(&source)
-                    .copied()
-                    .or_else(|| validated_rect(fragments.root.boxes.border_box, source).ok())
+                match bounds.get(&source).copied() {
+                    Some(bounds) => Some(bounds),
+                    None => Some(validated_rect(fragments.root.boxes.border_box, source)?),
+                }
             } else {
                 bounds.get(&source).copied()
             };
@@ -313,12 +325,14 @@ impl AccessibilityTreeState {
                     limit: self.limits.max_total_name_bytes,
                 });
             }
-            let next_nodes = drafts.len().checked_add(1).ok_or(
-                AccessibilityError::NodeLimitExceeded {
-                    nodes: usize::MAX,
-                    limit: self.limits.max_nodes,
-                },
-            )?;
+            let next_nodes =
+                drafts
+                    .len()
+                    .checked_add(1)
+                    .ok_or(AccessibilityError::NodeLimitExceeded {
+                        nodes: usize::MAX,
+                        limit: self.limits.max_nodes,
+                    })?;
             if next_nodes > self.limits.max_nodes {
                 return Err(AccessibilityError::NodeLimitExceeded {
                     nodes: next_nodes,
@@ -363,8 +377,8 @@ impl AccessibilityTreeState {
             if preview_identities.contains_key(&draft.source) {
                 continue;
             }
-            let serial = NonZeroU64::new(next_serial)
-                .ok_or(AccessibilityError::IdentitySpaceExhausted)?;
+            let serial =
+                NonZeroU64::new(next_serial).ok_or(AccessibilityError::IdentitySpaceExhausted)?;
             next_serial = next_serial
                 .checked_add(1)
                 .ok_or(AccessibilityError::IdentitySpaceExhausted)?;
@@ -377,7 +391,10 @@ impl AccessibilityTreeState {
             );
         }
 
-        let exposed_sources = drafts.iter().map(|draft| draft.source).collect::<BTreeSet<_>>();
+        let exposed_sources = drafts
+            .iter()
+            .map(|draft| draft.source)
+            .collect::<BTreeSet<_>>();
         let mut nodes = BTreeMap::new();
         let mut sources = BTreeMap::new();
         for draft in &drafts {
@@ -453,12 +470,12 @@ fn collect_fragment_bounds(
     let mut stack: Vec<&Fragment> = vec![&tree.root];
     let mut visited = 0usize;
     while let Some(fragment) = stack.pop() {
-        visited = visited.checked_add(1).ok_or(
-            AccessibilityError::FragmentLimitExceeded {
+        visited = visited
+            .checked_add(1)
+            .ok_or(AccessibilityError::FragmentLimitExceeded {
                 fragments: usize::MAX,
                 limit: max_fragments,
-            },
-        )?;
+            })?;
         if visited > max_fragments {
             return Err(AccessibilityError::FragmentLimitExceeded {
                 fragments: visited,
@@ -501,7 +518,10 @@ fn union_rect(left: Rect, right: Rect, source: NodeId) -> Result<Rect, Accessibi
     let min_y = left.origin.y.min(right.origin.y);
     let max_x = (left.origin.x + left.size.width).max(right.origin.x + right.size.width);
     let max_y = (left.origin.y + left.size.height).max(right.origin.y + right.size.height);
-    validated_rect(Rect::new(min_x, min_y, max_x - min_x, max_y - min_y), source)
+    validated_rect(
+        Rect::new(min_x, min_y, max_x - min_x, max_y - min_y),
+        source,
+    )
 }
 
 fn nearest_exposed_parent(
@@ -585,8 +605,11 @@ fn state_for_node(kind: &NodeKind, role: AccessibilityRole) -> AccessibilityStat
     let disabled = element.attributes.contains_key("disabled") || aria_disabled == Some(true);
     let expanded = boolean_attribute_value(element, "aria-expanded");
     let checked = boolean_attribute_value(element, "aria-checked").or_else(|| {
-        matches!(role, AccessibilityRole::CheckBox | AccessibilityRole::RadioButton)
-            .then_some(element.attributes.contains_key("checked"))
+        matches!(
+            role,
+            AccessibilityRole::CheckBox | AccessibilityRole::RadioButton
+        )
+        .then_some(element.attributes.contains_key("checked"))
     });
     let native_focusable = match role {
         AccessibilityRole::Button
@@ -599,7 +622,8 @@ fn state_for_node(kind: &NodeKind, role: AccessibilityRole) -> AccessibilityStat
     let tabindex_focusable = element
         .attributes
         .get("tabindex")
-        .is_some_and(|value| value.trim() != "-1");
+        .and_then(|value| value.trim().parse::<i32>().ok())
+        .is_some_and(|value| value >= 0);
     AccessibilityState {
         disabled,
         checked,
@@ -644,12 +668,15 @@ fn name_for_node(
                     .transpose()
                     .map(|value| value.unwrap_or_default()),
                 AccessibilityRole::Button
-                    if element.tag_name.as_str().eq_ignore_ascii_case("input") => element
+                    if element.tag_name.as_str().eq_ignore_ascii_case("input") =>
+                {
+                    element
                         .attributes
                         .get("value")
                         .map(|value| normalized_text(source, value, limit))
                         .transpose()
-                        .map(|value| value.unwrap_or_default()),
+                        .map(|value| value.unwrap_or_default())
+                }
                 AccessibilityRole::Button
                 | AccessibilityRole::Link
                 | AccessibilityRole::Heading
@@ -689,11 +716,7 @@ fn descendant_text_name(
     Ok(accumulator.finish())
 }
 
-fn normalized_text(
-    source: NodeId,
-    text: &str,
-    limit: usize,
-) -> Result<String, AccessibilityError> {
+fn normalized_text(source: NodeId, text: &str, limit: usize) -> Result<String, AccessibilityError> {
     let mut accumulator = NameAccumulator::new(source, limit);
     accumulator.push_text(text)?;
     Ok(accumulator.finish())
@@ -734,15 +757,13 @@ impl NameAccumulator {
     }
 
     fn push_character(&mut self, character: char) -> Result<(), AccessibilityError> {
-        let bytes = self
-            .value
-            .len()
-            .checked_add(character.len_utf8())
-            .ok_or(AccessibilityError::NameByteLimitExceeded {
+        let bytes = self.value.len().checked_add(character.len_utf8()).ok_or(
+            AccessibilityError::NameByteLimitExceeded {
                 node: self.source,
                 bytes: usize::MAX,
                 limit: self.limit,
-            })?;
+            },
+        )?;
         if bytes > self.limit {
             return Err(AccessibilityError::NameByteLimitExceeded {
                 node: self.source,
@@ -796,7 +817,9 @@ mod tests {
     #[test]
     fn stable_identity_survives_rebuild_detach_and_reattach() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let button = document.append_new(body, element("button")).unwrap();
         document
             .append_new(button, NodeKind::Text("Save".into()))
@@ -830,7 +853,9 @@ mod tests {
     #[test]
     fn independent_document_states_never_alias_ids() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let layout = layout_document(&document, viewport());
         let mut first = AccessibilityTreeState::try_new(small_limits()).unwrap();
         let mut second = AccessibilityTreeState::try_new(small_limits()).unwrap();
@@ -851,7 +876,9 @@ mod tests {
     #[test]
     fn roles_names_states_and_bounds_are_derived_from_rarog_state() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let button = document.append_new(body, element("button")).unwrap();
         document
             .set_attribute(button, "aria-label", "  Save   changes  ")
@@ -886,7 +913,9 @@ mod tests {
     #[test]
     fn fragmented_text_bounds_union_all_fragment_boxes() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let text = document
             .append_new(
                 body,
@@ -916,7 +945,9 @@ mod tests {
     #[test]
     fn disconnected_sources_are_absent_and_stale_ids_do_not_resolve() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let link = document.append_new(body, element("a")).unwrap();
         document.set_attribute(link, "href", "/next").unwrap();
         document
@@ -937,11 +968,16 @@ mod tests {
     #[test]
     fn nearest_exposed_parent_flattens_unexposed_intermediates() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let wrapper = document.append_new(body, element("div")).unwrap();
         let child = document.append_new(wrapper, element("button")).unwrap();
         let exposed = BTreeSet::from([document.root(), body, child]);
-        assert_eq!(nearest_exposed_parent(&document, child, &exposed), Some(body));
+        assert_eq!(
+            nearest_exposed_parent(&document, child, &exposed),
+            Some(body)
+        );
     }
 
     #[test]
@@ -969,7 +1005,9 @@ mod tests {
     #[test]
     fn name_budget_failure_does_not_allocate_identities() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let button = document.append_new(body, element("button")).unwrap();
         document
             .set_attribute(button, "aria-label", "long label")
@@ -993,7 +1031,9 @@ mod tests {
     #[test]
     fn identity_budget_failure_is_atomic() {
         let mut document = Document::new();
-        let body = document.append_new(document.root(), element("body")).unwrap();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
         let first = document.append_new(body, element("button")).unwrap();
         let initial_layout = layout_document(&document, viewport());
         let mut state = AccessibilityTreeState::try_new(AccessibilityLimits {
@@ -1008,9 +1048,7 @@ mod tests {
         let first_id = initial.id_for_source(first).unwrap();
         assert_eq!(state.identity_count(), 3);
 
-        document
-            .append_new(body, element("button"))
-            .unwrap();
+        document.append_new(body, element("button")).unwrap();
         let expanded_layout = layout_document(&document, viewport());
         assert!(matches!(
             state.build(&document, &expanded_layout.fragments),
@@ -1019,5 +1057,69 @@ mod tests {
         ));
         assert_eq!(state.identity_count(), 3);
         assert_eq!(state.retained_id(first), Some(first_id));
+    }
+
+    #[test]
+    fn nearest_exposed_parent_is_reflected_in_snapshot() {
+        fn clear_source(fragment: &mut Fragment, source: NodeId) {
+            if fragment.dom_node == Some(source) {
+                fragment.dom_node = None;
+            }
+            for child in &mut fragment.children {
+                clear_source(child, source);
+            }
+        }
+
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let wrapper = document.append_new(body, element("div")).unwrap();
+        let child = document.append_new(wrapper, element("button")).unwrap();
+        let mut layout = layout_document(&document, viewport());
+        clear_source(&mut layout.fragments.root, wrapper);
+
+        let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+        let tree = state.build(&document, &layout.fragments).unwrap();
+        assert!(tree.node_for_source(wrapper).is_none());
+        let body_id = tree.id_for_source(body).unwrap();
+        let child_node = tree.node_for_source(child).unwrap();
+        assert_eq!(child_node.parent(), Some(body_id));
+        assert!(
+            tree.node(body_id)
+                .unwrap()
+                .children()
+                .contains(&child_node.id())
+        );
+    }
+
+    #[test]
+    fn invalid_tabindex_does_not_create_focusability() {
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let generic = document.append_new(body, element("div")).unwrap();
+        document
+            .set_attribute(generic, "tabindex", "not-a-number")
+            .unwrap();
+        let layout = layout_document(&document, viewport());
+        let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+        let tree = state.build(&document, &layout.fragments).unwrap();
+        assert!(!tree.node_for_source(generic).unwrap().state().focusable());
+    }
+
+    #[test]
+    fn root_fallback_bounds_fail_closed_when_invalid() {
+        let document = Document::new();
+        let mut layout = layout_document(&document, viewport());
+        layout.fragments.root.dom_node = None;
+        layout.fragments.root.boxes.border_box.size.width = -1.0;
+        let mut state = AccessibilityTreeState::try_new(small_limits()).unwrap();
+        assert_eq!(
+            state.build(&document, &layout.fragments),
+            Err(AccessibilityError::InvalidBounds(document.root()))
+        );
+        assert_eq!(state.identity_count(), 0);
     }
 }
