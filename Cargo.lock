@@ -3771,3 +3771,12 @@ dependencies = [
  "rarog-canvas",
  "rarog-webgl",
 ]
+
+[[package]]
+name = "rarog-accessibility"
+version = "0.1.0"
+dependencies = [
+ "rarog-dom",
+ "rarog-layout",
+ "rarog-types",
+]
