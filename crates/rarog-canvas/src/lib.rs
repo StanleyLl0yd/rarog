@@ -78,6 +78,27 @@ impl CanvasContextId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CanvasExternalContextLease {
+    scope: NonZeroU64,
+    serial: NonZeroU64,
+    surface: CanvasSurfaceId,
+}
+
+impl CanvasExternalContextLease {
+    pub const fn scope(self) -> u64 {
+        self.scope.get()
+    }
+
+    pub const fn serial(self) -> u64 {
+        self.serial.get()
+    }
+
+    pub const fn surface(self) -> CanvasSurfaceId {
+        self.surface
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CanvasContentRevision(u64);
 
@@ -203,6 +224,7 @@ pub struct CanvasSurface {
     content_revision: CanvasContentRevision,
     output: Arc<[Color]>,
     context: Option<CanvasContextId>,
+    external_context: Option<CanvasExternalContextLease>,
 }
 
 impl CanvasSurface {
@@ -228,6 +250,10 @@ impl CanvasSurface {
 
     pub const fn context(&self) -> Option<CanvasContextId> {
         self.context
+    }
+
+    pub const fn external_context(&self) -> Option<CanvasExternalContextLease> {
+        self.external_context
     }
 }
 
@@ -271,8 +297,10 @@ pub enum CanvasError {
     ContentRevisionExhausted(CanvasSurfaceId),
     SurfaceIdentitySpaceExhausted,
     ContextIdentitySpaceExhausted,
+    ExternalContextIdentitySpaceExhausted,
     UnknownSurface(CanvasSurfaceId),
     UnknownContext(CanvasContextId),
+    UnknownExternalContextLease(CanvasExternalContextLease),
     SurfaceAlreadyHasContext(CanvasSurfaceId),
     SurfaceHasLiveContext(CanvasSurfaceId),
     StateStackLimitExceeded { depth: usize, limit: usize },
@@ -327,6 +355,9 @@ impl fmt::Display for CanvasError {
             Self::ContextIdentitySpaceExhausted => {
                 formatter.write_str("Canvas context identity space is exhausted")
             }
+            Self::ExternalContextIdentitySpaceExhausted => {
+                formatter.write_str("Canvas external-context lease identity space is exhausted")
+            }
             Self::UnknownSurface(id) => write!(
                 formatter,
                 "unknown Canvas surface {}:{}",
@@ -339,15 +370,23 @@ impl fmt::Display for CanvasError {
                 id.scope(),
                 id.serial()
             ),
+            Self::UnknownExternalContextLease(lease) => write!(
+                formatter,
+                "unknown Canvas external-context lease {}:{} for surface {}:{}",
+                lease.scope(),
+                lease.serial(),
+                lease.surface().scope(),
+                lease.surface().serial()
+            ),
             Self::SurfaceAlreadyHasContext(id) => write!(
                 formatter,
-                "Canvas surface {}:{} already has a 2D context",
+                "Canvas surface {}:{} already has a rendering context",
                 id.scope(),
                 id.serial()
             ),
             Self::SurfaceHasLiveContext(id) => write!(
                 formatter,
-                "Canvas surface {}:{} cannot retire while its 2D context is live",
+                "Canvas surface {}:{} cannot retire while its rendering context is live",
                 id.scope(),
                 id.serial()
             ),
@@ -402,6 +441,20 @@ impl IdentityAllocator {
             serial,
         })
     }
+
+    fn allocate_external_context(
+        &mut self,
+        surface: CanvasSurfaceId,
+    ) -> Result<CanvasExternalContextLease, CanvasError> {
+        let serial = NonZeroU64::new(self.next_serial)
+            .ok_or(CanvasError::ExternalContextIdentitySpaceExhausted)?;
+        self.next_serial = self.next_serial.checked_add(1).unwrap_or(0);
+        Ok(CanvasExternalContextLease {
+            scope: self.scope,
+            serial,
+            surface,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -409,6 +462,7 @@ pub struct CanvasRegistry {
     limits: CanvasLimits,
     surface_ids: IdentityAllocator,
     context_ids: IdentityAllocator,
+    external_context_ids: IdentityAllocator,
     surfaces: BTreeMap<CanvasSurfaceId, CanvasSurface>,
     contexts: BTreeMap<CanvasContextId, Canvas2dContext>,
     total_pixels: u64,
@@ -424,6 +478,7 @@ impl CanvasRegistry {
             limits,
             surface_ids: IdentityAllocator::new(scope),
             context_ids: IdentityAllocator::new(scope),
+            external_context_ids: IdentityAllocator::new(scope),
             surfaces: BTreeMap::new(),
             contexts: BTreeMap::new(),
             total_pixels: 0,
@@ -507,6 +562,7 @@ impl CanvasRegistry {
                 content_revision: CanvasContentRevision::default(),
                 output,
                 context: None,
+                external_context: None,
             },
         );
         debug_assert!(previous.is_none());
@@ -519,7 +575,7 @@ impl CanvasRegistry {
             .surfaces
             .get(&id)
             .ok_or(CanvasError::UnknownSurface(id))?;
-        if surface.context.is_some() {
+        if surface.context.is_some() || surface.external_context.is_some() {
             return Err(CanvasError::SurfaceHasLiveContext(id));
         }
         let next_total = self
@@ -589,7 +645,7 @@ impl CanvasRegistry {
             .surfaces
             .get(&surface)
             .ok_or(CanvasError::UnknownSurface(surface))?;
-        if owner.context.is_some() {
+        if owner.context.is_some() || owner.external_context.is_some() {
             return Err(CanvasError::SurfaceAlreadyHasContext(surface));
         }
         let next_count =
@@ -643,6 +699,42 @@ impl CanvasRegistry {
             .get_mut(&surface)
             .ok_or(CanvasError::InconsistentState)?
             .context = None;
+        Ok(())
+    }
+
+    pub fn acquire_external_context(
+        &mut self,
+        surface: CanvasSurfaceId,
+    ) -> Result<CanvasExternalContextLease, CanvasError> {
+        let owner = self
+            .surfaces
+            .get(&surface)
+            .ok_or(CanvasError::UnknownSurface(surface))?;
+        if owner.context.is_some() || owner.external_context.is_some() {
+            return Err(CanvasError::SurfaceAlreadyHasContext(surface));
+        }
+        let lease = self
+            .external_context_ids
+            .allocate_external_context(surface)?;
+        self.surfaces
+            .get_mut(&surface)
+            .ok_or(CanvasError::InconsistentState)?
+            .external_context = Some(lease);
+        Ok(lease)
+    }
+
+    pub fn release_external_context(
+        &mut self,
+        lease: CanvasExternalContextLease,
+    ) -> Result<(), CanvasError> {
+        let owner = self
+            .surfaces
+            .get_mut(&lease.surface)
+            .ok_or(CanvasError::UnknownExternalContextLease(lease))?;
+        if owner.external_context != Some(lease) {
+            return Err(CanvasError::UnknownExternalContextLease(lease));
+        }
+        owner.external_context = None;
         Ok(())
     }
 
@@ -1131,5 +1223,67 @@ mod tests {
             Err(CanvasError::ContentRevisionExhausted(surface))
         );
         assert_eq!(registry.surface_snapshot(surface).unwrap(), before);
+    }
+
+    #[test]
+    fn external_context_is_exclusive_with_2d_and_surface_retirement() {
+        let mut registry = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let surface = registry.create_surface(2, 2).unwrap();
+        let lease = registry.acquire_external_context(surface).unwrap();
+        assert_eq!(
+            registry.surface(surface).unwrap().external_context(),
+            Some(lease)
+        );
+        assert_eq!(
+            registry.create_2d_context(surface),
+            Err(CanvasError::SurfaceAlreadyHasContext(surface))
+        );
+        assert_eq!(
+            registry.retire_surface(surface),
+            Err(CanvasError::SurfaceHasLiveContext(surface))
+        );
+        registry.release_external_context(lease).unwrap();
+        assert!(registry.create_2d_context(surface).is_ok());
+    }
+
+    #[test]
+    fn two_d_context_blocks_external_context_and_stale_lease_fails_closed() {
+        let mut registry = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let surface = registry.create_surface(1, 1).unwrap();
+        let context = registry.create_2d_context(surface).unwrap();
+        assert_eq!(
+            registry.acquire_external_context(surface),
+            Err(CanvasError::SurfaceAlreadyHasContext(surface))
+        );
+        registry.retire_context(context).unwrap();
+        let first = registry.acquire_external_context(surface).unwrap();
+        registry.release_external_context(first).unwrap();
+        let second = registry.acquire_external_context(surface).unwrap();
+        assert_ne!(first, second);
+        assert!(second.serial() > first.serial());
+        assert_eq!(
+            registry.release_external_context(first),
+            Err(CanvasError::UnknownExternalContextLease(first))
+        );
+        assert_eq!(
+            registry.surface(surface).unwrap().external_context(),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn foreign_external_context_authority_is_rejected() {
+        let mut first = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let mut second = CanvasRegistry::try_new(tiny_limits()).unwrap();
+        let surface = first.create_surface(1, 1).unwrap();
+        let lease = first.acquire_external_context(surface).unwrap();
+        assert_eq!(
+            second.acquire_external_context(surface),
+            Err(CanvasError::UnknownSurface(surface))
+        );
+        assert_eq!(
+            second.release_external_context(lease),
+            Err(CanvasError::UnknownExternalContextLease(lease))
+        );
     }
 }

@@ -23,6 +23,7 @@ members = [
   "crates/rarog-media-runtime",
   "crates/rarog-canvas",
   "crates/rarog-canvas-output",
+  "crates/rarog-webgl",
   "crates/rarog-script",
   "crates/rarog-script-spidermonkey",
   "crates/rarog-scheduler",
