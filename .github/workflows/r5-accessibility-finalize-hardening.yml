@@ -1,0 +1,93 @@
+name: R5 temporary accessibility finalize hardening
+
+on:
+  push:
+    branches:
+      - r5/accessibility-tree-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: r5/accessibility-tree-foundation
+          fetch-depth: 0
+
+      - name: Apply reviewed hardening and test-only helper fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/r5-accessibility-review-hardening.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(workflow) if line.strip() == "python3 - <<'PY'")
+          end = next(i for i, line in enumerate(workflow[start + 1:], start + 1) if line.strip() == 'PY')
+          patch_lines = []
+          for line in workflow[start + 1:end]:
+              if line.startswith('          '):
+                  line = line[10:]
+              patch_lines.append(line)
+          patch = '\n'.join(patch_lines) + '\n'
+          exec(compile(patch, '<review-hardening>', 'exec'), {})
+
+          path = Path('crates/rarog-accessibility/src/lib.rs')
+          text = path.read_text()
+          old = '    fn retained_id(&self, source: NodeId) -> Option<AccessibilityNodeId> {'
+          new = '    #[cfg(test)]\n    fn retained_id(&self, source: NodeId) -> Option<AccessibilityNodeId> {'
+          if text.count(old) != 1:
+              raise SystemExit(f'retained_id cfg patch expected once, got {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Format and verify focused crate
+        shell: bash
+        run: |
+          cargo fmt --all
+          cargo check --locked -p rarog-accessibility --all-targets
+          cargo clippy --locked -p rarog-accessibility --all-targets -- -D warnings
+          cargo test --locked -p rarog-accessibility
+
+      - name: Reject external dependency drift
+        shell: bash
+        run: |
+          git diff ae7033b524dbbe71f1294b44b8a14686f5540317 -- Cargo.lock > /tmp/lock.diff
+          python3 - <<'PY'
+          from pathlib import Path
+          diff = Path('/tmp/lock.diff').read_text()
+          added = [line for line in diff.splitlines() if line.startswith('+') and not line.startswith('+++')]
+          removed = [line for line in diff.splitlines() if line.startswith('-') and not line.startswith('---')]
+          allowed = {
+              '+[[package]]',
+              '+name = "rarog-accessibility"',
+              '+version = "0.1.0"',
+              '+dependencies = [',
+              '+ "rarog-dom",',
+              '+ "rarog-layout",',
+              '+ "rarog-types",',
+              '+]',
+              '+'
+          }
+          unexpected = [line for line in added if line not in allowed]
+          if removed or unexpected or '+name = "rarog-accessibility"' not in added:
+              print(diff)
+              raise SystemExit('unexpected Cargo.lock drift')
+          PY
+
+      - name: Publish production-only hardened source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_head=$(git rev-parse HEAD)
+          base_tree=$(git rev-parse HEAD^{tree})
+          source_b64=$(base64 -w0 crates/rarog-accessibility/src/lib.rs)
+          source_blob=$(jq -n --arg content "$source_b64" '{content:$content,encoding:"base64"}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)
+          tree_sha=$(jq -n --arg base "$base_tree" --arg source "$source_blob" '{base_tree:$base,tree:[{path:"crates/rarog-accessibility/src/lib.rs",mode:"100644",type:"blob",sha:$source},{path:".github/workflows/r5-accessibility-review-hardening.yml",mode:"100644",type:"blob",sha:null},{path:".github/workflows/r5-accessibility-retained-id-fix.yml",mode:"100644",type:"blob",sha:null},{path:".github/workflows/r5-accessibility-finalize-hardening.yml",mode:"100644",type:"blob",sha:null}]}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/trees" --input - --jq .sha)
+          commit_sha=$(jq -n --arg message "R5: bound accessibility traversal and native semantics" --arg tree "$tree_sha" --arg parent "$base_head" '{message:$message,tree:$tree,parents:[$parent]}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" --input - --jq .sha)
+          jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}' | gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/r5/accessibility-tree-foundation" --input -
