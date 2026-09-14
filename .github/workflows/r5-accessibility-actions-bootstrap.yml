@@ -1,0 +1,82 @@
+name: R5 temporary accessibility actions bootstrap
+
+on:
+  push:
+    branches:
+      - r5/accessibility-actions-events
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: r5/accessibility-actions-events
+          fetch-depth: 0
+
+      - name: Apply module and architecture patch
+        run: python3 scripts/r5_accessibility_actions_bootstrap.py
+
+      - name: Format and verify accessibility actions
+        run: |
+          cargo fmt --all
+          cargo check --locked -p rarog-accessibility --all-targets
+          cargo clippy --locked -p rarog-accessibility --all-targets -- -D warnings
+          cargo test --locked -p rarog-accessibility
+
+      - name: Reject dependency and diff drift
+        shell: bash
+        run: |
+          base=81df36d132f83489e8e7c87a4061abfebb0a5294
+          git diff --exit-code "$base" -- Cargo.lock Cargo.toml crates/rarog-accessibility/Cargo.toml
+          git diff --name-only "$base" \
+            ':(exclude).github/workflows/r5-accessibility-actions-bootstrap.yml' \
+            ':(exclude)scripts/r5_accessibility_actions_bootstrap.py' | sort > /tmp/files
+          cat > /tmp/expected <<'EOF'
+          crates/rarog-accessibility/src/actions.rs
+          crates/rarog-accessibility/src/lib.rs
+          docs/ARCHITECTURE.md
+          docs/adr/0136-accessibility-actions-events.md
+          EOF
+          diff -u /tmp/expected /tmp/files
+
+      - name: Publish production-only verified implementation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_head=$(git rev-parse HEAD)
+          base_tree=$(git rev-parse HEAD^{tree})
+          blob_for() {
+            base64 -w0 "$1" | jq -Rs '{content:.,encoding:"base64"}' | \
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha
+          }
+          actions_blob=$(blob_for crates/rarog-accessibility/src/actions.rs)
+          lib_blob=$(blob_for crates/rarog-accessibility/src/lib.rs)
+          arch_blob=$(blob_for docs/ARCHITECTURE.md)
+          tree_sha=$(jq -n \
+            --arg base "$base_tree" \
+            --arg actions "$actions_blob" \
+            --arg lib "$lib_blob" \
+            --arg arch "$arch_blob" \
+            '{base_tree:$base,tree:[
+              {path:"crates/rarog-accessibility/src/actions.rs",mode:"100644",type:"blob",sha:$actions},
+              {path:"crates/rarog-accessibility/src/lib.rs",mode:"100644",type:"blob",sha:$lib},
+              {path:"docs/ARCHITECTURE.md",mode:"100644",type:"blob",sha:$arch},
+              {path:".github/workflows/r5-accessibility-actions-bootstrap.yml",mode:"100644",type:"blob",sha:null},
+              {path:"scripts/r5_accessibility_actions_bootstrap.py",mode:"100644",type:"blob",sha:null}
+            ]}' | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/trees" --input - --jq .sha)
+          commit_sha=$(jq -n \
+            --arg message "R5: add bounded accessibility actions and events" \
+            --arg tree "$tree_sha" \
+            --arg parent "$base_head" \
+            '{message:$message,tree:$tree,parents:[$parent]}' | \
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" --input - --jq .sha)
+          jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}' | \
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/r5/accessibility-actions-events" --input -
