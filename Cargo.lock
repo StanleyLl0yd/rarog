@@ -2282,6 +2282,7 @@ version = "0.1.0"
 name = "rarog-engine"
 version = "0.1.0"
 dependencies = [
+ "rarog-accessibility",
  "rarog-broker",
  "rarog-compositor",
  "rarog-css",

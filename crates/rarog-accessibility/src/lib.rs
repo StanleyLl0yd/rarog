@@ -1,5 +1,7 @@
 mod actions;
+mod invalidation;
 pub use actions::*;
+pub use invalidation::*;
 
 use rarog_dom::{Document, ElementData, Namespace, NodeId, NodeKind};
 use rarog_layout::{Fragment, FragmentTree};
@@ -246,7 +248,7 @@ struct DraftNode {
     bounds: Option<Rect>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AccessibilityTreeState {
     limits: AccessibilityLimits,
     scope: NonZeroU64,
