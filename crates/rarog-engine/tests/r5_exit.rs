@@ -44,7 +44,7 @@ fn r5_exit_manifest_ci_and_stop_boundary_are_wired() {
     );
     assert!(R5_EXIT.contains("R5 exit is an architecture/correctness gate"));
     assert!(R5_EXIT.contains("WebDriver/BiDi"));
-    assert!(R5_BACKLOG.contains("Do not begin R6 compatibility qualification"));
+    assert!(R5_BACKLOG.contains("R5 completion does not begin or claim R6 compatibility qualification"));
     assert_eq!(CI.matches("name: R5 exit gate").count(), 2);
     assert_eq!(
         CI.matches("cargo test --locked -p rarog-engine --test r5_exit")
