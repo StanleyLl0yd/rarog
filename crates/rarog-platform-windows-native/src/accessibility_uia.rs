@@ -1,45 +1,44 @@
 use crate::accessibility::{
-    native_error, WindowsAccessibilityNativeAction, WindowsAccessibilityNativeActionRequest,
+    WindowsAccessibilityNativeAction, WindowsAccessibilityNativeActionRequest,
     WindowsAccessibilityNativeError, WindowsAccessibilityNativeErrorKind,
     WindowsAccessibilityNativeEventKind, WindowsAccessibilityNativeNode,
-    WindowsAccessibilityNativeRole, WindowsAccessibilityNativeSnapshot,
+    WindowsAccessibilityNativeRole, WindowsAccessibilityNativeSnapshot, native_error,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::num::{NonZeroIsize, NonZeroUsize};
 use std::sync::{Arc, Mutex, MutexGuard};
 use windows::{
-    core::{implement, BSTR, Error, HRESULT, IUnknown, Interface, Result as WinResult, VARIANT},
     Win32::{
         Foundation::{HWND as TypedHwnd, LPARAM as TypedLparam, WPARAM as TypedWparam},
         System::Com::SAFEARRAY,
         UI::Accessibility::{
             ExpandCollapseState, ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded,
             IExpandCollapseProvider, IExpandCollapseProvider_Impl, IInvokeProvider,
-            IInvokeProvider_Impl, IRawElementProviderFragment, IRawElementProviderFragmentRoot,
-            IRawElementProviderFragmentRoot_Impl, IRawElementProviderFragment_Impl,
+            IInvokeProvider_Impl, IRawElementProviderFragment, IRawElementProviderFragment_Impl,
+            IRawElementProviderFragmentRoot, IRawElementProviderFragmentRoot_Impl,
             IRawElementProviderSimple, IRawElementProviderSimple_Impl, IToggleProvider,
             IToggleProvider_Impl, NavigateDirection, NavigateDirection_FirstChild,
             NavigateDirection_LastChild, NavigateDirection_NextSibling, NavigateDirection_Parent,
             NavigateDirection_PreviousSibling, ProviderOptions, ProviderOptions_ServerSideProvider,
             StructureChangeType_ChildrenInvalidated, ToggleState, ToggleState_Off, ToggleState_On,
-            UIA_AutomationFocusChangedEventId, UIA_AutomationPropertyChangedEventId,
-            UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-            UIA_ExpandCollapsePatternId, UIA_InvokePatternId, UIA_Invoke_InvokedEventId,
-            UIA_IsEnabledPropertyId, UIA_IsKeyboardFocusablePropertyId,
-            UIA_LayoutInvalidatedEventId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
-            UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UiaAppendRuntimeId,
-            UiaHostProviderFromHwnd, UiaRaiseAutomationEvent,
+            UIA_AutomationFocusChangedEventId, UIA_ControlTypePropertyId,
+            UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_ExpandCollapsePatternId,
+            UIA_Invoke_InvokedEventId, UIA_InvokePatternId, UIA_IsEnabledPropertyId,
+            UIA_IsKeyboardFocusablePropertyId, UIA_LayoutInvalidatedEventId, UIA_NamePropertyId,
+            UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId,
+            UiaAppendRuntimeId, UiaHostProviderFromHwnd, UiaRaiseAutomationEvent,
             UiaRaiseAutomationPropertyChangedEvent, UiaRaiseStructureChangedEvent, UiaRect,
             UiaReturnRawElementProvider, UiaRootObjectId,
         },
     },
+    core::{BSTR, Error, HRESULT, IUnknown, Interface, Result as WinResult, VARIANT, implement},
 };
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     Graphics::Gdi::ClientToScreen,
     System::{
-        Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED},
+        Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
         Ole::{SafeArrayCreateVector, SafeArrayDestroy, SafeArrayPutElement},
         Variant::VT_I4,
     },
@@ -168,13 +167,16 @@ impl WindowsUiaBridge {
         max_pending_actions: NonZeroUsize,
     ) -> Result<Self, WindowsAccessibilityNativeError> {
         validate_window(hwnd)?;
-        let com_result = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+        let com_result =
+            unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
         let com_uninitialize = if com_result >= 0 {
             true
         } else if com_result == RPC_E_CHANGED_MODE {
             false
         } else {
-            return Err(native_error(WindowsAccessibilityNativeErrorKind::ComFailure));
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::ComFailure,
+            ));
         };
         let shared = Arc::new(UiaShared {
             hwnd,
@@ -200,7 +202,9 @@ impl WindowsUiaBridge {
             if com_uninitialize {
                 unsafe { CoUninitialize() };
             }
-            return Err(native_error(WindowsAccessibilityNativeErrorKind::ComFailure));
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::ComFailure,
+            ));
         }
         Ok(Self {
             hwnd,
@@ -262,7 +266,8 @@ impl WindowsUiaBridge {
 
     pub(crate) fn next_action_request(
         &mut self,
-    ) -> Result<Option<WindowsAccessibilityNativeActionRequest>, WindowsAccessibilityNativeError> {
+    ) -> Result<Option<WindowsAccessibilityNativeActionRequest>, WindowsAccessibilityNativeError>
+    {
         validate_window(self.hwnd)?;
         let mut state = self.shared.lock()?;
         if let Some(error) = state.callback_error.take() {
@@ -318,24 +323,33 @@ impl WindowsUiaBridge {
                 .as_ref()
                 .and_then(|previous| previous.nodes.get(&provider_serial))
                 .cloned();
-            if kind == WindowsAccessibilityNativeEventKind::FocusChanged {
-                state.focused_provider = Some(provider_serial);
-            }
             (current_node, previous_node)
         };
         let provider = simple_provider_from_arc(&self.shared, provider_serial)?;
-        raise_event(provider, kind, event_data.0.as_ref(), event_data.1.as_ref())
+        raise_event(provider, kind, event_data.0.as_ref(), event_data.1.as_ref())?;
+        if kind == WindowsAccessibilityNativeEventKind::FocusChanged {
+            let mut state = self.shared.lock()?;
+            let current = state.current.as_ref().ok_or_else(|| {
+                native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable)
+            })?;
+            if current.document_generation != document_generation
+                || current.geometry_revision != geometry_revision
+                || !current.nodes.contains_key(&provider_serial)
+            {
+                return Err(native_error(
+                    WindowsAccessibilityNativeErrorKind::ProviderUnavailable,
+                ));
+            }
+            state.focused_provider = Some(provider_serial);
+        }
+        Ok(())
     }
 }
 
 impl Drop for WindowsUiaBridge {
     fn drop(&mut self) {
         unsafe {
-            RemoveWindowSubclass(
-                raw_hwnd(self.hwnd),
-                Some(uia_subclass_proc),
-                SUBCLASS_ID,
-            );
+            RemoveWindowSubclass(raw_hwnd(self.hwnd), Some(uia_subclass_proc), SUBCLASS_ID);
             if self.com_uninitialize {
                 CoUninitialize();
             }
@@ -877,7 +891,7 @@ fn raise_event(
                     &VARIANT::from(BSTR::from(previous.name())),
                     &VARIANT::from(BSTR::from(current.name())),
                 ),
-                _ => UiaRaiseAutomationEvent(&provider, UIA_AutomationPropertyChangedEventId),
+                _ => Ok(()),
             },
             WindowsAccessibilityNativeEventKind::StateChanged => {
                 raise_state_changes(&provider, previous, current)
@@ -907,9 +921,8 @@ unsafe fn raise_state_changes(
     current: Option<&WindowsAccessibilityNativeNode>,
 ) -> WinResult<()> {
     let (Some(previous), Some(current)) = (previous, current) else {
-        return unsafe { UiaRaiseAutomationEvent(provider, UIA_AutomationPropertyChangedEventId) };
+        return Ok(());
     };
-    let mut raised = false;
     if previous.disabled() != current.disabled() {
         unsafe {
             UiaRaiseAutomationPropertyChangedEvent(
@@ -919,7 +932,6 @@ unsafe fn raise_state_changes(
                 &VARIANT::from(!current.disabled()),
             )?
         };
-        raised = true;
     }
     if previous.focusable() != current.focusable() {
         unsafe {
@@ -930,7 +942,6 @@ unsafe fn raise_state_changes(
                 &VARIANT::from(current.focusable()),
             )?
         };
-        raised = true;
     }
     if previous.checked() != current.checked() {
         if let (Some(previous), Some(current)) = (previous.checked(), current.checked()) {
@@ -942,7 +953,6 @@ unsafe fn raise_state_changes(
                     &VARIANT::from(toggle_state_value(current)),
                 )?
             };
-            raised = true;
         }
     }
     if previous.expanded() != current.expanded() {
@@ -955,11 +965,7 @@ unsafe fn raise_state_changes(
                     &VARIANT::from(expand_state_value(current)),
                 )?
             };
-            raised = true;
         }
-    }
-    if !raised {
-        unsafe { UiaRaiseAutomationEvent(provider, UIA_AutomationPropertyChangedEventId) }?;
     }
     Ok(())
 }
@@ -1011,19 +1017,11 @@ const fn control_type(role: WindowsAccessibilityNativeRole) -> i32 {
 }
 
 const fn toggle_state_value(checked: bool) -> i32 {
-    if checked {
-        1
-    } else {
-        0
-    }
+    if checked { 1 } else { 0 }
 }
 
 const fn expand_state_value(expanded: bool) -> i32 {
-    if expanded {
-        1
-    } else {
-        0
-    }
+    if expanded { 1 } else { 0 }
 }
 
 #[cfg(test)]
@@ -1041,10 +1039,7 @@ mod tests {
 
     #[test]
     fn control_types_are_stable_for_supported_roles() {
-        assert_eq!(
-            control_type(WindowsAccessibilityNativeRole::Button),
-            50_000
-        );
+        assert_eq!(control_type(WindowsAccessibilityNativeRole::Button), 50_000);
         assert_eq!(
             control_type(WindowsAccessibilityNativeRole::RootWebArea),
             50_030

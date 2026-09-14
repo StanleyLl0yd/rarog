@@ -361,12 +361,8 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
             return Err(native_platform_error(error));
         }
 
-        let pending_events = reconcile_pending_events(
-            &state.pending_events,
-            snapshot,
-            &nodes,
-            scope_changed,
-        );
+        let pending_events =
+            reconcile_pending_events(&state.pending_events, snapshot, &nodes, scope_changed);
         state.providers_by_node = providers_by_node;
         state.nodes_by_provider = nodes_by_provider;
         state.next_provider = next_provider;
@@ -452,8 +448,8 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
             {
                 continue;
             }
-            let Some(provider) = NonZeroU64::new(request.provider_serial())
-                .map(WindowsAccessibilityProviderId)
+            let Some(provider) =
+                NonZeroU64::new(request.provider_serial()).map(WindowsAccessibilityProviderId)
             else {
                 continue;
             };
@@ -830,8 +826,10 @@ mod tests {
 
         fn next_action_request(
             &mut self,
-        ) -> Result<Option<WindowsAccessibilityNativeActionRequest>, WindowsAccessibilityNativeErrorKind>
-        {
+        ) -> Result<
+            Option<WindowsAccessibilityNativeActionRequest>,
+            WindowsAccessibilityNativeErrorKind,
+        > {
             let mut state = self.0.lock().unwrap();
             if let Some(error) = state.action_failure {
                 return Err(error);
@@ -1059,7 +1057,10 @@ mod tests {
         assert_eq!(published.len(), 1);
         assert_eq!(published[0].1, 7);
         assert_eq!(published[0].2, 4);
-        assert_eq!(published[0].3, WindowsAccessibilityNativeEventKind::TreeChanged);
+        assert_eq!(
+            published[0].3,
+            WindowsAccessibilityNativeEventKind::TreeChanged
+        );
     }
 
     #[test]

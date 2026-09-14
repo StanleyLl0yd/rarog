@@ -32,7 +32,11 @@ impl WindowsAccessibilityNativeError {
 
 impl fmt::Display for WindowsAccessibilityNativeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "Windows accessibility native error: {:?}", self.kind)
+        write!(
+            formatter,
+            "Windows accessibility native error: {:?}",
+            self.kind
+        )
     }
 }
 
@@ -135,7 +139,9 @@ impl WindowsAccessibilityNativeRect {
             height,
         };
         if !rect.is_valid() {
-            return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+            ));
         }
         Ok(rect)
     }
@@ -268,8 +274,13 @@ impl WindowsAccessibilityNativeSnapshot {
         root_provider_serial: u64,
         nodes: Vec<WindowsAccessibilityNativeNode>,
     ) -> Result<Self, WindowsAccessibilityNativeError> {
-        if geometry_revision == 0 || nodes.is_empty() || !valid_provider_serial(root_provider_serial) {
-            return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+        if geometry_revision == 0
+            || nodes.is_empty()
+            || !valid_provider_serial(root_provider_serial)
+        {
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+            ));
         }
 
         let mut indices = BTreeMap::new();
@@ -278,37 +289,53 @@ impl WindowsAccessibilityNativeSnapshot {
                 || indices.insert(node.provider_serial(), index).is_some()
                 || node.bounds().is_some_and(|bounds| !bounds.is_valid())
             {
-                return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                return Err(native_error(
+                    WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                ));
             }
         }
         let Some(&root_index) = indices.get(&root_provider_serial) else {
-            return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+            ));
         };
         if nodes[root_index].parent().is_some() {
-            return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+            ));
         }
 
         for node in &nodes {
             let mut children = BTreeSet::new();
             for &child in node.children() {
                 if !children.insert(child) {
-                    return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                    return Err(native_error(
+                        WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                    ));
                 }
                 let Some(&child_index) = indices.get(&child) else {
-                    return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                    return Err(native_error(
+                        WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                    ));
                 };
                 if nodes[child_index].parent() != Some(node.provider_serial()) {
-                    return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                    return Err(native_error(
+                        WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                    ));
                 }
             }
 
             match node.parent() {
                 Some(parent) => {
                     if node.provider_serial() == root_provider_serial {
-                        return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                        return Err(native_error(
+                            WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                        ));
                     }
                     let Some(&parent_index) = indices.get(&parent) else {
-                        return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                        return Err(native_error(
+                            WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                        ));
                     };
                     if nodes[parent_index]
                         .children()
@@ -317,11 +344,15 @@ impl WindowsAccessibilityNativeSnapshot {
                         .count()
                         != 1
                     {
-                        return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                        return Err(native_error(
+                            WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                        ));
                     }
                 }
                 None if node.provider_serial() != root_provider_serial => {
-                    return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                    return Err(native_error(
+                        WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                    ));
                 }
                 None => {}
             }
@@ -331,15 +362,21 @@ impl WindowsAccessibilityNativeSnapshot {
         let mut pending = vec![root_provider_serial];
         while let Some(serial) = pending.pop() {
             if !visited.insert(serial) {
-                return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                return Err(native_error(
+                    WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                ));
             }
             let Some(&index) = indices.get(&serial) else {
-                return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+                return Err(native_error(
+                    WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+                ));
             };
             pending.extend(nodes[index].children().iter().rev().copied());
         }
         if visited.len() != nodes.len() {
-            return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidSnapshot));
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::InvalidSnapshot,
+            ));
         }
 
         Ok(Self {
@@ -402,7 +439,9 @@ impl WindowsAccessibilityNativeBridge {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (hwnd, max_pending_actions);
-            Err(native_error(WindowsAccessibilityNativeErrorKind::UnsupportedTarget))
+            Err(native_error(
+                WindowsAccessibilityNativeErrorKind::UnsupportedTarget,
+            ))
         }
     }
 
@@ -417,7 +456,9 @@ impl WindowsAccessibilityNativeBridge {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            Err(native_error(WindowsAccessibilityNativeErrorKind::UnsupportedTarget))
+            Err(native_error(
+                WindowsAccessibilityNativeErrorKind::UnsupportedTarget,
+            ))
         }
     }
 
@@ -432,7 +473,9 @@ impl WindowsAccessibilityNativeBridge {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = snapshot;
-            Err(native_error(WindowsAccessibilityNativeErrorKind::UnsupportedTarget))
+            Err(native_error(
+                WindowsAccessibilityNativeErrorKind::UnsupportedTarget,
+            ))
         }
     }
 
@@ -448,7 +491,9 @@ impl WindowsAccessibilityNativeBridge {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (provider_serial, kind);
-            Err(native_error(WindowsAccessibilityNativeErrorKind::UnsupportedTarget))
+            Err(native_error(
+                WindowsAccessibilityNativeErrorKind::UnsupportedTarget,
+            ))
         }
     }
 
@@ -476,7 +521,9 @@ impl WindowsAccessibilityNativeBridge {
                 geometry_revision,
                 kind,
             );
-            Err(native_error(WindowsAccessibilityNativeErrorKind::UnsupportedTarget))
+            Err(native_error(
+                WindowsAccessibilityNativeErrorKind::UnsupportedTarget,
+            ))
         }
     }
 
@@ -490,7 +537,9 @@ impl WindowsAccessibilityNativeBridge {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            Err(native_error(WindowsAccessibilityNativeErrorKind::UnsupportedTarget))
+            Err(native_error(
+                WindowsAccessibilityNativeErrorKind::UnsupportedTarget,
+            ))
         }
     }
 }
@@ -559,10 +608,16 @@ mod tests {
             1,
             1,
             1,
-            vec![node(1, None, vec![i32::MAX as u64 + 1]), node(i32::MAX as u64 + 1, Some(1), Vec::new())],
+            vec![
+                node(1, None, vec![i32::MAX as u64 + 1]),
+                node(i32::MAX as u64 + 1, Some(1), Vec::new()),
+            ],
         )
         .unwrap_err();
-        assert_eq!(error.kind(), WindowsAccessibilityNativeErrorKind::InvalidSnapshot);
+        assert_eq!(
+            error.kind(),
+            WindowsAccessibilityNativeErrorKind::InvalidSnapshot
+        );
     }
 
     #[test]
