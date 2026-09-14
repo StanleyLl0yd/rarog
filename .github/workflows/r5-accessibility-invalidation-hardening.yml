@@ -1,0 +1,253 @@
+name: R5 accessibility invalidation hardening
+
+on:
+  push:
+    branches:
+      - r5/accessibility-invalidation
+    paths:
+      - .github/workflows/r5-accessibility-invalidation-hardening.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+      - name: Apply authority hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str, expected: int = 1) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} matches, found {count}: {old!r}")
+              p.write_text(text.replace(old, new, expected))
+
+          replace_exact(
+              "crates/rarog-accessibility/src/invalidation.rs",
+              "    InvalidGeometryRevision,\n    Tree(AccessibilityError),",
+              "    InvalidGeometryRevision,\n    DocumentGenerationRegressed { current: u64, candidate: u64 },\n    GeometryRevisionRegressed { current: u64, candidate: u64 },\n    Tree(AccessibilityError),",
+          )
+          replace_exact(
+              "crates/rarog-accessibility/src/invalidation.rs",
+              "        let from_document_generation = self.snapshot.document_generation();\n        let from_geometry_revision = self.snapshot.geometry_revision();\n        if invalidation.is_empty()",
+              "        let from_document_generation = self.snapshot.document_generation();\n        let from_geometry_revision = self.snapshot.geometry_revision();\n        if document.generation() < from_document_generation {\n            return Err(AccessibilityRefreshError::DocumentGenerationRegressed {\n                current: from_document_generation,\n                candidate: document.generation(),\n            });\n        }\n        if geometry_revision < from_geometry_revision {\n            return Err(AccessibilityRefreshError::GeometryRevisionRegressed {\n                current: from_geometry_revision,\n                candidate: geometry_revision,\n            });\n        }\n        if invalidation.is_empty()",
+          )
+          replace_exact(
+              "crates/rarog-accessibility/src/invalidation.rs",
+              "    #[test]\n    fn full_rebuild_matches_direct_builder_for_covered_semantics() {",
+              "    #[test]\n    fn generation_regression_is_rejected_before_candidate_publication() {\n        let mut document = Document::new();\n        let body = document\n            .append_new(document.root(), element(\"body\"))\n            .unwrap();\n        document.append_new(body, element(\"button\")).unwrap();\n        let layout = layout_document(&document, viewport(320.0));\n        let mut runtime = AccessibilityRuntime::try_new(\n            &document,\n            &layout.fragments,\n            2,\n            AccessibilityLimits {\n                max_nodes: 32,\n                max_identities: 64,\n                max_dom_nodes_scanned: 128,\n                max_fragments: 128,\n                max_name_bytes_per_node: 128,\n                max_total_name_bytes: 1024,\n            },\n            8,\n        )\n        .unwrap();\n\n        let older = Document::new();\n        let older_layout = layout_document(&older, viewport(320.0));\n        assert!(matches!(\n            runtime.refresh(\n                &older,\n                &older_layout.fragments,\n                2,\n                AccessibilityInvalidation::full_rebuild(),\n            ),\n            Err(AccessibilityRefreshError::DocumentGenerationRegressed { .. })\n        ));\n        assert!(matches!(\n            runtime.refresh(\n                &document,\n                &layout.fragments,\n                1,\n                AccessibilityInvalidation::bounds(),\n            ),\n            Err(AccessibilityRefreshError::GeometryRevisionRegressed { .. })\n        ));\n        assert_eq!(runtime.snapshot().geometry_revision(), 2);\n        assert_eq!(runtime.snapshot().document_generation(), document.generation());\n    }\n\n    #[test]\n    fn full_rebuild_matches_direct_builder_for_covered_semantics() {",
+          )
+
+          path = Path("crates/rarog-engine/src/accessibility.rs")
+          text = path.read_text()
+          start = text.index("pub(super) struct EngineAccessibilityState")
+          end = text.index("\nimpl RenderSession {", start)
+          hardened = '''pub(super) struct EngineAccessibilityState {
+    runtime: Option<AccessibilityRuntime>,
+    geometry_revision: u64,
+    pending: AccessibilityInvalidation,
+    last_error: Option<AccessibilityRefreshError>,
+    geometry_exhausted: bool,
+}
+
+impl EngineAccessibilityState {
+    pub(super) fn new(document: &Document, fragments: &FragmentTree) -> Self {
+        match AccessibilityRuntime::try_default(document, fragments, 1) {
+            Ok(runtime) => Self {
+                runtime: Some(runtime),
+                geometry_revision: 1,
+                pending: AccessibilityInvalidation::default(),
+                last_error: None,
+                geometry_exhausted: false,
+            },
+            Err(error) => Self {
+                runtime: None,
+                geometry_revision: 1,
+                pending: AccessibilityInvalidation::full_rebuild(),
+                last_error: Some(error),
+                geometry_exhausted: false,
+            },
+        }
+    }
+
+    fn snapshot_if_current(&self, document: &Document) -> Option<&AccessibilitySnapshot> {
+        let snapshot = self.runtime.as_ref()?.snapshot();
+        (!self.geometry_exhausted
+            && snapshot.document_generation() == document.generation()
+            && snapshot.geometry_revision() == self.geometry_revision)
+            .then_some(snapshot)
+    }
+
+    fn note_geometry_change(&mut self) {
+        match self.geometry_revision.checked_add(1) {
+            Some(next) => self.geometry_revision = next,
+            None => {
+                self.geometry_exhausted = true;
+                self.pending = self
+                    .pending
+                    .union(AccessibilityInvalidation::full_rebuild());
+                self.last_error = Some(AccessibilityRefreshError::InvalidGeometryRevision);
+            }
+        }
+    }
+
+    fn refresh(
+        &mut self,
+        document: &Document,
+        fragments: &FragmentTree,
+        invalidation: AccessibilityInvalidation,
+    ) {
+        if self.geometry_exhausted {
+            return;
+        }
+
+        let mut combined = self.pending.union(invalidation);
+        if let Some(runtime) = self.runtime.as_ref() {
+            if runtime.snapshot().document_generation() != document.generation() {
+                combined = combined.union(AccessibilityInvalidation::semantic());
+            }
+            if runtime.snapshot().geometry_revision() != self.geometry_revision {
+                combined = combined.union(AccessibilityInvalidation::bounds());
+            }
+            if combined.is_empty() {
+                return;
+            }
+        } else {
+            combined = combined.union(AccessibilityInvalidation::full_rebuild());
+        }
+
+        if let Some(runtime) = self.runtime.as_mut() {
+            match runtime.refresh(document, fragments, self.geometry_revision, combined) {
+                Ok(_) => {
+                    self.pending = AccessibilityInvalidation::default();
+                    self.last_error = None;
+                }
+                Err(error) => {
+                    self.pending = combined;
+                    self.last_error = Some(error);
+                }
+            }
+            return;
+        }
+
+        match AccessibilityRuntime::try_default(document, fragments, self.geometry_revision) {
+            Ok(runtime) => {
+                self.runtime = Some(runtime);
+                self.pending = AccessibilityInvalidation::default();
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.pending = combined;
+                self.last_error = Some(error);
+            }
+        }
+    }
+
+    fn note_update(
+        &mut self,
+        document: &Document,
+        fragments: &FragmentTree,
+        report: IncrementalReport,
+        mut invalidation: AccessibilityInvalidation,
+    ) {
+        match report.mode {
+            IncrementalMode::SubtreeRelayout
+            | IncrementalMode::FlowRelayout
+            | IncrementalMode::GeometryRelayout => {
+                self.note_geometry_change();
+                invalidation = invalidation
+                    .union(AccessibilityInvalidation::tree())
+                    .union(AccessibilityInvalidation::bounds());
+            }
+            IncrementalMode::FullRebuild => {
+                self.note_geometry_change();
+                invalidation = invalidation.union(AccessibilityInvalidation::full_rebuild());
+            }
+            IncrementalMode::Unchanged | IncrementalMode::PaintOnlyReuse => {}
+        }
+        self.refresh(document, fragments, invalidation);
+    }
+
+    fn note_resize(&mut self, document: &Document, fragments: &FragmentTree) {
+        self.note_geometry_change();
+        self.refresh(document, fragments, AccessibilityInvalidation::bounds());
+    }
+
+    fn event_count(&self) -> usize {
+        self.runtime.as_ref().map_or(0, AccessibilityRuntime::event_count)
+    }
+
+    fn pop_event(&mut self) -> Option<AccessibilityEvent> {
+        self.runtime.as_mut().and_then(AccessibilityRuntime::pop_event)
+    }
+}
+'''
+          path.write_text(text[:start] + hardened + text[end:])
+
+          replace_exact(
+              "crates/rarog-engine/src/accessibility.rs",
+              "    pub fn accessibility_event_count(&self) -> usize {\n        self.accessibility.runtime.event_count()\n    }\n\n    pub fn next_accessibility_event(&mut self) -> Option<AccessibilityEvent> {\n        self.accessibility.runtime.pop_event()\n    }",
+              "    pub fn accessibility_event_count(&self) -> usize {\n        self.accessibility.event_count()\n    }\n\n    pub fn next_accessibility_event(&mut self) -> Option<AccessibilityEvent> {\n        self.accessibility.pop_event()\n    }",
+          )
+          replace_exact(
+              "crates/rarog-engine/src/accessibility.rs",
+              "    #[test]\n    fn render_update_refreshes_accessibility_from_committed_state() {",
+              "    #[test]\n    fn accessibility_budget_does_not_become_render_authority() {\n        let mut source = String::from(\"<main>\");\n        for _ in 0..4_100 {\n            source.push_str(\"<div>x</div>\");\n        }\n        source.push_str(\"</main>\");\n\n        let session = RenderSession::new(&source, RenderOptions::default()).unwrap();\n        assert!(!session.accessibility_is_current());\n        assert!(!session.accessibility_pending_invalidation().is_empty());\n        assert!(session.accessibility_last_error().is_some());\n    }\n\n    #[test]\n    fn render_update_refreshes_accessibility_from_committed_state() {",
+          )
+
+          replace_exact(
+              "crates/rarog-engine/src/lib.rs",
+              "    InvalidViewportTranslation,\n    Accessibility(rarog_accessibility::AccessibilityRefreshError),\n    ImageDecode(ImageDecodeQueueError),",
+              "    InvalidViewportTranslation,\n    ImageDecode(ImageDecodeQueueError),",
+          )
+          replace_exact(
+              "crates/rarog-engine/src/lib.rs",
+              "            Self::InvalidViewportTranslation => {\n                formatter.write_str(\"viewport translation must be finite\")\n            }\n            Self::Accessibility(error) => write!(formatter, \"{error}\"),\n            Self::ImageDecode(error) => write!(formatter, \"{error}\"),",
+              "            Self::InvalidViewportTranslation => {\n                formatter.write_str(\"viewport translation must be finite\")\n            }\n            Self::ImageDecode(error) => write!(formatter, \"{error}\"),",
+          )
+          replace_exact(
+              "crates/rarog-engine/src/lib.rs",
+              "        let accessibility = accessibility::EngineAccessibilityState::try_new(\n            &output.document,\n            &output.layout.fragments,\n        )\n        .map_err(RenderError::Accessibility)?;",
+              "        let accessibility = accessibility::EngineAccessibilityState::new(\n            &output.document,\n            &output.layout.fragments,\n        );",
+          )
+          PY
+
+      - name: Focused verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp Cargo.lock /tmp/Cargo.lock.before
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo check --locked -p rarog-accessibility -p rarog-engine --all-targets
+          cargo test --locked -p rarog-accessibility -p rarog-engine
+          cargo clippy --locked -p rarog-accessibility -p rarog-engine --all-targets -- -D warnings
+          cmp Cargo.lock /tmp/Cargo.lock.before
+
+      - name: Publish production-only verified tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/r5-accessibility-invalidation-hardening.yml
+          git add crates/rarog-accessibility/src/invalidation.rs \
+            crates/rarog-engine/src/accessibility.rs \
+            crates/rarog-engine/src/lib.rs
+          git commit -m "R5: harden accessibility invalidation authority"
+          git push origin HEAD:r5/accessibility-invalidation
