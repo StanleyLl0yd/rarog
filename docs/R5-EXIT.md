@@ -1,6 +1,6 @@
 # R5 — Web exit gate
 
-Status: **in progress**.
+Status: **in progress — implementation complete; exit verification pending**.
 
 Tracking issue: #260.
 
@@ -25,6 +25,16 @@ The final gate must prove at minimum:
 - Media and Canvas/WebGL resource loss/recovery do not turn derived/backend state into Web semantic authority.
 - Accessibility state is derived from engine-owned Web/DOM/render state and the Windows bridge remains an adapter rather than a source of semantics.
 - Existing R0–R4 exit gates remain green.
+
+## Implemented exit evidence
+
+The selected R5 implementation workstreams in `R5-BACKLOG.md` sections A–F are complete. The milestone-exit branch adds `crates/rarog-engine/tests/r5_exit.rs` as the cross-workstream architecture/correctness gate without adding production dependencies or changing the production dependency graph.
+
+The gate combines representative runtime checks with contract checks over the R5 semantic boundaries while detailed behavioral, fault-injection and platform evidence remains owned by each subsystem's existing tests. In particular it verifies the Storage/Site identity split and exact-origin distinction at runtime, accessibility freshness across document-generation/geometry revisions at runtime, bounded semantic contracts across the remaining R5 workstreams, and the absence of Windows-native authority dependencies from portable R5 semantic crates.
+
+`.github/workflows/ci.yml` invokes the R5 exit gate explicitly in both Windows-primary and Linux-portability lanes. The earlier R0/P1/R0.1/R1/R2/R3/R4 gates remain in those lanes, while MSRV 1.85, dedicated SpiderMonkey Windows/Linux jobs and the repository security/audit workflows remain separate required evidence.
+
+README and roadmap state are reconciled to describe the completed R5 implementation scope without claiming compatibility qualification. `ARCHITECTURE.md` already records the concrete R5 ownership, lifetime, resource and platform boundaries established by the implementation and its ADRs. The milestone remains **in progress** until the final exact-head matrix is green, the exit changes are merged, and the resulting `main` CI is confirmed green.
 
 ## Platform evidence
 

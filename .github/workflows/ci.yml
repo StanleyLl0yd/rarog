@@ -56,6 +56,8 @@ jobs:
         run: cargo test --locked -p rarog-engine --test r3_exit
       - name: R4 exit gate
         run: cargo test --locked -p rarog-engine --test r4_exit
+      - name: R5 exit gate
+        run: cargo test --locked -p rarog-engine --test r5_exit
       - name: Bootstrap render
         run: cargo run --locked -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -106,6 +108,8 @@ jobs:
         run: cargo test --locked -p rarog-engine --test r3_exit
       - name: R4 exit gate
         run: cargo test --locked -p rarog-engine --test r4_exit
+      - name: R5 exit gate
+        run: cargo test --locked -p rarog-engine --test r5_exit
       - name: Bootstrap render
         run: cargo run --locked -p rarog-shell -- examples/hello.html rarog.ppm
 
@@ -154,7 +158,6 @@ jobs:
         run: cargo clippy --locked -p rarog-script-spidermonkey --all-targets --features spidermonkey -- -D warnings
       - name: Test adapter
         run: cargo test --locked -p rarog-script-spidermonkey --features spidermonkey
-
 
   verify:
     name: Verify
