@@ -428,6 +428,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rarog-accessibility"
+version = "0.1.0"
+dependencies = [
+ "rarog-dom",
+ "rarog-layout",
+ "rarog-types",
+]
+
+[[package]]
 name = "rarog-compositor"
 version = "0.1.0"
 dependencies = [
@@ -453,6 +462,7 @@ version = "0.1.0"
 name = "rarog-engine"
 version = "0.1.0"
 dependencies = [
+ "rarog-accessibility",
  "rarog-compositor",
  "rarog-css",
  "rarog-dom",
