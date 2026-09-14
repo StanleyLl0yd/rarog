@@ -1,12 +1,19 @@
 from pathlib import Path
 
-cargo = Path("crates/rarog-platform-windows-native/Cargo.toml")
-text = cargo.read_text()
-needle = '''[target.'cfg(target_os = "windows")'.dependencies]\n'''
-if text.count(needle) != 1:
-    raise SystemExit("native Cargo target dependency section not unique")
-addition = '''[target.'cfg(target_os = "windows")'.dependencies]\nwindows = { version = "=0.58.0", features = [\n  "implement",\n  "Win32_UI_Accessibility",\n] }\nwindows-core = "=0.58.0"\n'''
-cargo.write_text(text.replace(needle, addition, 1))
+cargo = Path("crates/rarog-platform-windows-native/Cargo.toml").read_text()
+required = [
+    'windows = { version = "=0.58.0"',
+    '"implement"',
+    '"Win32_System_Com"',
+    '"Win32_UI_Accessibility"',
+    'windows-core = "=0.58.0"',
+    '"Win32_System_Ole"',
+    '"Win32_System_Variant"',
+    '"Win32_UI_Shell"',
+]
+for needle in required:
+    if needle not in cargo:
+        raise SystemExit(f"missing production UIA dependency marker: {needle}")
 
 lib = Path("crates/rarog-platform-windows-native/src/lib.rs")
 text = lib.read_text()
