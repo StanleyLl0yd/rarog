@@ -2,12 +2,15 @@ use rarog_platform::{
     PlatformAccessibilityAction, PlatformAccessibilityActionRequest, PlatformAccessibilityError,
     PlatformAccessibilityErrorKind, PlatformAccessibilityEvent,
     PlatformAccessibilityEventDisposition, PlatformAccessibilityEventKind,
-    PlatformAccessibilityNodeId, PlatformAccessibilityService, PlatformAccessibilitySnapshot,
-    PlatformAccessibilitySnapshotReport,
+    PlatformAccessibilityNodeId, PlatformAccessibilityRole, PlatformAccessibilityService,
+    PlatformAccessibilitySnapshot, PlatformAccessibilitySnapshotReport,
 };
 use rarog_platform_windows_native::{
+    WindowsAccessibilityNativeAction, WindowsAccessibilityNativeActionRequest,
     WindowsAccessibilityNativeBridge, WindowsAccessibilityNativeErrorKind,
-    WindowsAccessibilityNativeEventKind,
+    WindowsAccessibilityNativeEventKind, WindowsAccessibilityNativeNode,
+    WindowsAccessibilityNativeRect, WindowsAccessibilityNativeRole,
+    WindowsAccessibilityNativeSnapshot,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -103,22 +106,68 @@ struct SnapshotIdentity {
     nodes: BTreeSet<PlatformAccessibilityNodeId>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingNativeEvent {
+    event: PlatformAccessibilityEvent,
+    geometry_revision: u64,
+}
+
 trait NativeAccessibilityBackend: Send + fmt::Debug {
+    fn clear_snapshot(&mut self) -> Result<(), WindowsAccessibilityNativeErrorKind>;
+
+    fn replace_snapshot(
+        &mut self,
+        snapshot: &WindowsAccessibilityNativeSnapshot,
+    ) -> Result<(), WindowsAccessibilityNativeErrorKind>;
+
     fn publish_event(
         &mut self,
         provider_serial: u64,
+        document_generation: u64,
+        geometry_revision: u64,
         kind: WindowsAccessibilityNativeEventKind,
     ) -> Result<(), WindowsAccessibilityNativeErrorKind>;
+
+    fn next_action_request(
+        &mut self,
+    ) -> Result<Option<WindowsAccessibilityNativeActionRequest>, WindowsAccessibilityNativeErrorKind>;
 }
 
 impl NativeAccessibilityBackend for WindowsAccessibilityNativeBridge {
+    fn clear_snapshot(&mut self) -> Result<(), WindowsAccessibilityNativeErrorKind> {
+        WindowsAccessibilityNativeBridge::clear_snapshot(self).map_err(|error| error.kind())
+    }
+
+    fn replace_snapshot(
+        &mut self,
+        snapshot: &WindowsAccessibilityNativeSnapshot,
+    ) -> Result<(), WindowsAccessibilityNativeErrorKind> {
+        WindowsAccessibilityNativeBridge::replace_snapshot(self, snapshot)
+            .map_err(|error| error.kind())
+    }
+
     fn publish_event(
         &mut self,
         provider_serial: u64,
+        document_generation: u64,
+        geometry_revision: u64,
         kind: WindowsAccessibilityNativeEventKind,
     ) -> Result<(), WindowsAccessibilityNativeErrorKind> {
-        WindowsAccessibilityNativeBridge::publish_event(self, provider_serial, kind)
-            .map_err(|error| error.kind())
+        WindowsAccessibilityNativeBridge::publish_event_for_snapshot(
+            self,
+            provider_serial,
+            document_generation,
+            geometry_revision,
+            kind,
+        )
+        .map_err(|error| error.kind())
+    }
+
+    fn next_action_request(
+        &mut self,
+    ) -> Result<Option<WindowsAccessibilityNativeActionRequest>, WindowsAccessibilityNativeErrorKind>
+    {
+        WindowsAccessibilityNativeBridge::next_action_request(self).map_err(|error| error.kind())
     }
 }
 
@@ -129,8 +178,7 @@ struct WindowsAccessibilityState {
     providers_by_node: BTreeMap<PlatformAccessibilityNodeId, WindowsAccessibilityProviderId>,
     nodes_by_provider: BTreeMap<WindowsAccessibilityProviderId, PlatformAccessibilityNodeId>,
     next_provider: u64,
-    pending_events: VecDeque<PlatformAccessibilityEvent>,
-    action_requests: VecDeque<PlatformAccessibilityActionRequest>,
+    pending_events: VecDeque<PendingNativeEvent>,
     last_native_error: Option<WindowsAccessibilityNativeErrorKind>,
     native: Box<dyn NativeAccessibilityBackend>,
 }
@@ -148,8 +196,11 @@ impl WindowsAccessibilityService {
         if !Self::target_available() {
             return Err(WindowsAccessibilityBridgeError::UnsupportedTarget);
         }
-        let native = WindowsAccessibilityNativeBridge::try_for_window(hwnd)
-            .map_err(|error| WindowsAccessibilityBridgeError::Native(error.kind()))?;
+        let native = WindowsAccessibilityNativeBridge::try_for_window_with_action_limit(
+            hwnd,
+            limits.max_action_requests,
+        )
+        .map_err(|error| WindowsAccessibilityBridgeError::Native(error.kind()))?;
         Ok(Self::with_backend(limits, Box::new(native)))
     }
 
@@ -175,53 +226,10 @@ impl WindowsAccessibilityService {
         Ok(self.lock_state()?.pending_events.len())
     }
 
-    pub fn pending_action_count(&self) -> Result<usize, PlatformAccessibilityError> {
-        Ok(self.lock_state()?.action_requests.len())
-    }
-
     pub fn last_native_error(
         &self,
     ) -> Result<Option<WindowsAccessibilityNativeErrorKind>, PlatformAccessibilityError> {
         Ok(self.lock_state()?.last_native_error)
-    }
-
-    pub fn accept_native_action_callback(
-        &self,
-        provider_serial: u64,
-        document_generation: u64,
-        geometry_revision: u64,
-        action: PlatformAccessibilityAction,
-    ) -> Result<(), PlatformAccessibilityError> {
-        let mut state = self.lock_state()?;
-        let provider = WindowsAccessibilityProviderId(
-            NonZeroU64::new(provider_serial).ok_or_else(stale_correlation)?,
-        );
-        let target = state
-            .nodes_by_provider
-            .get(&provider)
-            .copied()
-            .ok_or_else(stale_correlation)?;
-        let current = state.current.as_ref().ok_or_else(stale_correlation)?;
-        if current.document_generation != document_generation
-            || current.geometry_revision != geometry_revision
-            || !current.nodes.contains(&target)
-        {
-            return Err(stale_correlation());
-        }
-        if state.action_requests.len() >= state.limits.max_action_requests() {
-            return Err(platform_error(
-                PlatformAccessibilityErrorKind::CapacityExceeded,
-            ));
-        }
-        state
-            .action_requests
-            .push_back(PlatformAccessibilityActionRequest::new(
-                target,
-                action,
-                document_generation,
-                geometry_revision,
-            ));
-        Ok(())
     }
 
     fn with_backend(
@@ -236,7 +244,6 @@ impl WindowsAccessibilityService {
                 nodes_by_provider: BTreeMap::new(),
                 next_provider: 1,
                 pending_events: VecDeque::new(),
-                action_requests: VecDeque::new(),
                 last_native_error: None,
                 native,
             }),
@@ -268,20 +275,32 @@ impl WindowsAccessibilityService {
     fn pending_front(
         &self,
     ) -> Result<Option<PlatformAccessibilityEvent>, PlatformAccessibilityError> {
-        Ok(self.lock_state()?.pending_events.front().copied())
+        Ok(self
+            .lock_state()?
+            .pending_events
+            .front()
+            .map(|pending| pending.event))
     }
 }
 
 impl PlatformAccessibilityService for WindowsAccessibilityService {
     fn clear_snapshot(&self) -> Result<(), PlatformAccessibilityError> {
         let mut state = self.lock_state()?;
+        let native_result = state.native.clear_snapshot();
         state.current = None;
         state.providers_by_node.clear();
         state.nodes_by_provider.clear();
         state.pending_events.clear();
-        state.action_requests.clear();
-        state.last_native_error = None;
-        Ok(())
+        match native_result {
+            Ok(()) => {
+                state.last_native_error = None;
+                Ok(())
+            }
+            Err(error) => {
+                state.last_native_error = Some(error);
+                Err(native_platform_error(error))
+            }
+        }
     }
 
     fn replace_snapshot(
@@ -289,7 +308,6 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
         snapshot: &PlatformAccessibilitySnapshot,
     ) -> Result<PlatformAccessibilitySnapshotReport, PlatformAccessibilityError> {
         let mut state = self.lock_state()?;
-        flush_pending(&mut state);
         if snapshot.node_count() > state.limits.max_providers() {
             return Err(platform_error(
                 PlatformAccessibilityErrorKind::CapacityExceeded,
@@ -337,38 +355,22 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
         let created_providers = providers_by_node.len() - retained_providers;
         let retired_providers = old_provider_count.saturating_sub(retained_providers);
 
-        if scope_changed {
-            state.pending_events.clear();
-            state.action_requests.clear();
-        } else {
-            let has_stale_pending = state.pending_events.iter().any(|event| {
-                event.document_generation() != snapshot.document_generation()
-                    || !nodes.contains(&event.target())
-            });
-            state.pending_events.retain(|event| {
-                event.document_generation() == snapshot.document_generation()
-                    && nodes.contains(&event.target())
-            });
-            if has_stale_pending {
-                state.pending_events.clear();
-                state
-                    .pending_events
-                    .push_back(PlatformAccessibilityEvent::new(
-                        snapshot.root(),
-                        PlatformAccessibilityEventKind::TreeChanged,
-                        snapshot.document_generation(),
-                    ));
-            }
-            state.action_requests.retain(|request| {
-                request.document_generation() == snapshot.document_generation()
-                    && request.geometry_revision() == snapshot.geometry_revision()
-                    && nodes.contains(&request.target())
-            });
+        let native_snapshot = project_native_snapshot(snapshot, &providers_by_node)?;
+        if let Err(error) = state.native.replace_snapshot(&native_snapshot) {
+            state.last_native_error = Some(error);
+            return Err(native_platform_error(error));
         }
 
+        let pending_events = reconcile_pending_events(
+            &state.pending_events,
+            snapshot,
+            &nodes,
+            scope_changed,
+        );
         state.providers_by_node = providers_by_node;
         state.nodes_by_provider = nodes_by_provider;
         state.next_provider = next_provider;
+        state.pending_events = pending_events;
         state.current = Some(SnapshotIdentity {
             scope: snapshot.scope(),
             document_generation: snapshot.document_generation(),
@@ -376,6 +378,8 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
             root: snapshot.root(),
             nodes,
         });
+        state.last_native_error = None;
+        flush_pending(&mut state);
         Ok(PlatformAccessibilitySnapshotReport {
             retained_providers,
             created_providers,
@@ -396,22 +400,29 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
         {
             return Err(stale_correlation());
         }
+        let geometry_revision = current.geometry_revision;
         let provider = state
             .providers_by_node
             .get(&event.target())
             .copied()
             .ok_or_else(stale_correlation)?;
-        match state
-            .native
-            .publish_event(provider.serial(), native_event_kind(event.kind()))
-        {
+        match state.native.publish_event(
+            provider.serial(),
+            event.document_generation(),
+            geometry_revision,
+            native_event_kind(event.kind()),
+        ) {
             Ok(()) => {
                 state.last_native_error = None;
                 Ok(PlatformAccessibilityEventDisposition::Delivered)
             }
+            Err(error) if permanent_native_error(error) => {
+                state.last_native_error = Some(error);
+                Err(native_platform_error(error))
+            }
             Err(error) => {
                 state.last_native_error = Some(error);
-                queue_event_conservatively(&mut state, event);
+                queue_event_conservatively(&mut state, event, geometry_revision);
                 Ok(PlatformAccessibilityEventDisposition::Queued)
             }
         }
@@ -420,8 +431,145 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
     fn next_action_request(
         &self,
     ) -> Result<Option<PlatformAccessibilityActionRequest>, PlatformAccessibilityError> {
-        Ok(self.lock_state()?.action_requests.pop_front())
+        let mut state = self.lock_state()?;
+        for _ in 0..state.limits.max_action_requests() {
+            let request = match state.native.next_action_request() {
+                Ok(Some(request)) => request,
+                Ok(None) => {
+                    state.last_native_error = None;
+                    return Ok(None);
+                }
+                Err(error) => {
+                    state.last_native_error = Some(error);
+                    return Err(native_platform_error(error));
+                }
+            };
+            let Some(current) = state.current.as_ref() else {
+                continue;
+            };
+            if request.document_generation() != current.document_generation
+                || request.geometry_revision() != current.geometry_revision
+            {
+                continue;
+            }
+            let Some(provider) = NonZeroU64::new(request.provider_serial())
+                .map(WindowsAccessibilityProviderId)
+            else {
+                continue;
+            };
+            let Some(target) = state.nodes_by_provider.get(&provider).copied() else {
+                continue;
+            };
+            if target.scope() != current.scope || !current.nodes.contains(&target) {
+                continue;
+            }
+            state.last_native_error = None;
+            return Ok(Some(PlatformAccessibilityActionRequest::new(
+                target,
+                platform_action(request.action()),
+                request.document_generation(),
+                request.geometry_revision(),
+            )));
+        }
+        Ok(None)
     }
+}
+
+fn project_native_snapshot(
+    snapshot: &PlatformAccessibilitySnapshot,
+    providers_by_node: &BTreeMap<PlatformAccessibilityNodeId, WindowsAccessibilityProviderId>,
+) -> Result<WindowsAccessibilityNativeSnapshot, PlatformAccessibilityError> {
+    let root_provider = providers_by_node
+        .get(&snapshot.root())
+        .copied()
+        .ok_or_else(stale_correlation)?;
+    let mut native_nodes = Vec::with_capacity(snapshot.node_count());
+    for node in snapshot.nodes() {
+        let provider = providers_by_node
+            .get(&node.id())
+            .copied()
+            .ok_or_else(stale_correlation)?;
+        let parent = match node.parent() {
+            Some(parent) => Some(
+                providers_by_node
+                    .get(&parent)
+                    .copied()
+                    .ok_or_else(stale_correlation)?
+                    .serial(),
+            ),
+            None => None,
+        };
+        let children = node
+            .children()
+            .iter()
+            .map(|child| {
+                providers_by_node
+                    .get(child)
+                    .copied()
+                    .map(WindowsAccessibilityProviderId::serial)
+                    .ok_or_else(stale_correlation)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let bounds = node
+            .bounds()
+            .map(|bounds| {
+                WindowsAccessibilityNativeRect::try_new(
+                    f64::from(bounds.x),
+                    f64::from(bounds.y),
+                    f64::from(bounds.width),
+                    f64::from(bounds.height),
+                )
+                .map_err(|error| native_platform_error(error.kind()))
+            })
+            .transpose()?;
+        let state = node.state();
+        native_nodes.push(WindowsAccessibilityNativeNode::new(
+            provider.serial(),
+            native_role(node.role()),
+            node.name().to_owned(),
+            state.disabled(),
+            state.checked(),
+            state.expanded(),
+            state.focusable(),
+            bounds,
+            parent,
+            children,
+        ));
+    }
+    WindowsAccessibilityNativeSnapshot::try_new(
+        snapshot.document_generation(),
+        snapshot.geometry_revision(),
+        root_provider.serial(),
+        native_nodes,
+    )
+    .map_err(|error| native_platform_error(error.kind()))
+}
+
+fn reconcile_pending_events(
+    pending: &VecDeque<PendingNativeEvent>,
+    snapshot: &PlatformAccessibilitySnapshot,
+    nodes: &BTreeSet<PlatformAccessibilityNodeId>,
+    scope_changed: bool,
+) -> VecDeque<PendingNativeEvent> {
+    if scope_changed || pending.is_empty() {
+        return VecDeque::new();
+    }
+    let stale = pending.iter().any(|pending| {
+        pending.event.document_generation() != snapshot.document_generation()
+            || pending.geometry_revision != snapshot.geometry_revision()
+            || !nodes.contains(&pending.event.target())
+    });
+    if stale {
+        return VecDeque::from([PendingNativeEvent {
+            event: PlatformAccessibilityEvent::new(
+                snapshot.root(),
+                PlatformAccessibilityEventKind::TreeChanged,
+                snapshot.document_generation(),
+            ),
+            geometry_revision: snapshot.geometry_revision(),
+        }]);
+    }
+    pending.clone()
 }
 
 fn allocate_provider(
@@ -444,14 +592,16 @@ fn allocate_provider(
 
 fn flush_pending(state: &mut WindowsAccessibilityState) {
     loop {
-        let Some(event) = state.pending_events.front().copied() else {
+        let Some(pending) = state.pending_events.front().copied() else {
             return;
         };
         let Some(current) = state.current.as_ref() else {
             state.pending_events.clear();
             return;
         };
+        let event = pending.event;
         if event.document_generation() != current.document_generation
+            || pending.geometry_revision != current.geometry_revision
             || !current.nodes.contains(&event.target())
         {
             state.pending_events.pop_front();
@@ -461,13 +611,19 @@ fn flush_pending(state: &mut WindowsAccessibilityState) {
             state.pending_events.pop_front();
             continue;
         };
-        match state
-            .native
-            .publish_event(provider.serial(), native_event_kind(event.kind()))
-        {
+        match state.native.publish_event(
+            provider.serial(),
+            event.document_generation(),
+            pending.geometry_revision,
+            native_event_kind(event.kind()),
+        ) {
             Ok(()) => {
                 state.pending_events.pop_front();
                 state.last_native_error = None;
+            }
+            Err(error) if permanent_native_error(error) => {
+                state.pending_events.pop_front();
+                state.last_native_error = Some(error);
             }
             Err(error) => {
                 state.last_native_error = Some(error);
@@ -480,9 +636,13 @@ fn flush_pending(state: &mut WindowsAccessibilityState) {
 fn queue_event_conservatively(
     state: &mut WindowsAccessibilityState,
     event: PlatformAccessibilityEvent,
+    geometry_revision: u64,
 ) {
     if state.pending_events.len() < state.limits.max_pending_events() {
-        state.pending_events.push_back(event);
+        state.pending_events.push_back(PendingNativeEvent {
+            event,
+            geometry_revision,
+        });
         return;
     }
     let Some(current) = state.current.as_ref() else {
@@ -490,13 +650,33 @@ fn queue_event_conservatively(
         return;
     };
     state.pending_events.clear();
-    state
-        .pending_events
-        .push_back(PlatformAccessibilityEvent::new(
+    state.pending_events.push_back(PendingNativeEvent {
+        event: PlatformAccessibilityEvent::new(
             current.root,
             PlatformAccessibilityEventKind::TreeChanged,
             current.document_generation,
-        ));
+        ),
+        geometry_revision: current.geometry_revision,
+    });
+}
+
+const fn native_role(role: PlatformAccessibilityRole) -> WindowsAccessibilityNativeRole {
+    match role {
+        PlatformAccessibilityRole::RootWebArea => WindowsAccessibilityNativeRole::RootWebArea,
+        PlatformAccessibilityRole::GenericContainer => {
+            WindowsAccessibilityNativeRole::GenericContainer
+        }
+        PlatformAccessibilityRole::StaticText => WindowsAccessibilityNativeRole::StaticText,
+        PlatformAccessibilityRole::Button => WindowsAccessibilityNativeRole::Button,
+        PlatformAccessibilityRole::Link => WindowsAccessibilityNativeRole::Link,
+        PlatformAccessibilityRole::Heading => WindowsAccessibilityNativeRole::Heading,
+        PlatformAccessibilityRole::TextField => WindowsAccessibilityNativeRole::TextField,
+        PlatformAccessibilityRole::CheckBox => WindowsAccessibilityNativeRole::CheckBox,
+        PlatformAccessibilityRole::RadioButton => WindowsAccessibilityNativeRole::RadioButton,
+        PlatformAccessibilityRole::Image => WindowsAccessibilityNativeRole::Image,
+        PlatformAccessibilityRole::List => WindowsAccessibilityNativeRole::List,
+        PlatformAccessibilityRole::ListItem => WindowsAccessibilityNativeRole::ListItem,
+    }
 }
 
 const fn native_event_kind(
@@ -525,6 +705,56 @@ const fn native_event_kind(
     }
 }
 
+const fn platform_action(action: WindowsAccessibilityNativeAction) -> PlatformAccessibilityAction {
+    match action {
+        WindowsAccessibilityNativeAction::Focus => PlatformAccessibilityAction::Focus,
+        WindowsAccessibilityNativeAction::Invoke => PlatformAccessibilityAction::Invoke,
+        WindowsAccessibilityNativeAction::Toggle => PlatformAccessibilityAction::Toggle,
+        WindowsAccessibilityNativeAction::SetExpanded(expanded) => {
+            PlatformAccessibilityAction::SetExpanded(expanded)
+        }
+    }
+}
+
+const fn permanent_native_error(error: WindowsAccessibilityNativeErrorKind) -> bool {
+    matches!(
+        error,
+        WindowsAccessibilityNativeErrorKind::UnsupportedPattern
+            | WindowsAccessibilityNativeErrorKind::InvalidSnapshot
+            | WindowsAccessibilityNativeErrorKind::CapacityExceeded
+            | WindowsAccessibilityNativeErrorKind::UnsupportedTarget
+            | WindowsAccessibilityNativeErrorKind::InvalidWindow
+    )
+}
+
+const fn native_platform_error(
+    error: WindowsAccessibilityNativeErrorKind,
+) -> PlatformAccessibilityError {
+    platform_error(match error {
+        WindowsAccessibilityNativeErrorKind::UnsupportedTarget => {
+            PlatformAccessibilityErrorKind::UnsupportedTarget
+        }
+        WindowsAccessibilityNativeErrorKind::InvalidWindow => {
+            PlatformAccessibilityErrorKind::NativeUnavailable
+        }
+        WindowsAccessibilityNativeErrorKind::InvalidSnapshot => {
+            PlatformAccessibilityErrorKind::InvalidSnapshot
+        }
+        WindowsAccessibilityNativeErrorKind::CapacityExceeded => {
+            PlatformAccessibilityErrorKind::CapacityExceeded
+        }
+        WindowsAccessibilityNativeErrorKind::ProviderUnavailable => {
+            PlatformAccessibilityErrorKind::StaleCorrelation
+        }
+        WindowsAccessibilityNativeErrorKind::ComFailure => {
+            PlatformAccessibilityErrorKind::NativeFailure
+        }
+        WindowsAccessibilityNativeErrorKind::UnsupportedPattern => {
+            PlatformAccessibilityErrorKind::UnsupportedPattern
+        }
+    })
+}
+
 const fn platform_error(kind: PlatformAccessibilityErrorKind) -> PlatformAccessibilityError {
     PlatformAccessibilityError::new(kind)
 }
@@ -537,31 +767,76 @@ const fn stale_correlation() -> PlatformAccessibilityError {
 mod tests {
     use super::*;
     use rarog_platform::{
-        PlatformAccessibilityNode, PlatformAccessibilityRole, PlatformAccessibilityState,
+        PlatformAccessibilityNode, PlatformAccessibilityRect, PlatformAccessibilityState,
     };
     use std::sync::Arc;
 
     #[derive(Debug, Default)]
     struct MockNativeState {
-        failure: Option<WindowsAccessibilityNativeErrorKind>,
-        published: Vec<(u64, WindowsAccessibilityNativeEventKind)>,
+        replace_failure: Option<WindowsAccessibilityNativeErrorKind>,
+        event_failure: Option<WindowsAccessibilityNativeErrorKind>,
+        action_failure: Option<WindowsAccessibilityNativeErrorKind>,
+        clear_failure: Option<WindowsAccessibilityNativeErrorKind>,
+        clear_count: usize,
+        snapshots: Vec<WindowsAccessibilityNativeSnapshot>,
+        published: Vec<(u64, u64, u64, WindowsAccessibilityNativeEventKind)>,
+        actions: VecDeque<WindowsAccessibilityNativeActionRequest>,
     }
 
     #[derive(Debug, Clone)]
     struct MockNative(Arc<Mutex<MockNativeState>>);
 
     impl NativeAccessibilityBackend for MockNative {
+        fn clear_snapshot(&mut self) -> Result<(), WindowsAccessibilityNativeErrorKind> {
+            let mut state = self.0.lock().unwrap();
+            state.clear_count += 1;
+            if let Some(error) = state.clear_failure {
+                return Err(error);
+            }
+            Ok(())
+        }
+
+        fn replace_snapshot(
+            &mut self,
+            snapshot: &WindowsAccessibilityNativeSnapshot,
+        ) -> Result<(), WindowsAccessibilityNativeErrorKind> {
+            let mut state = self.0.lock().unwrap();
+            if let Some(error) = state.replace_failure {
+                return Err(error);
+            }
+            state.snapshots.push(snapshot.clone());
+            Ok(())
+        }
+
         fn publish_event(
             &mut self,
             provider_serial: u64,
+            document_generation: u64,
+            geometry_revision: u64,
             kind: WindowsAccessibilityNativeEventKind,
         ) -> Result<(), WindowsAccessibilityNativeErrorKind> {
             let mut state = self.0.lock().unwrap();
-            if let Some(error) = state.failure {
+            if let Some(error) = state.event_failure {
                 return Err(error);
             }
-            state.published.push((provider_serial, kind));
+            state.published.push((
+                provider_serial,
+                document_generation,
+                geometry_revision,
+                kind,
+            ));
             Ok(())
+        }
+
+        fn next_action_request(
+            &mut self,
+        ) -> Result<Option<WindowsAccessibilityNativeActionRequest>, WindowsAccessibilityNativeErrorKind>
+        {
+            let mut state = self.0.lock().unwrap();
+            if let Some(error) = state.action_failure {
+                return Err(error);
+            }
+            Ok(state.actions.pop_front())
         }
     }
 
@@ -581,7 +856,7 @@ mod tests {
             PlatformAccessibilityRole::RootWebArea,
             "root".into(),
             PlatformAccessibilityState::default(),
-            None,
+            Some(PlatformAccessibilityRect::new(0.0, 0.0, 640.0, 480.0)),
             None,
             include_child.then_some(child).into_iter().collect(),
         )];
@@ -591,7 +866,7 @@ mod tests {
                 PlatformAccessibilityRole::Button,
                 "save".into(),
                 PlatformAccessibilityState::new(false, None, None, true),
-                None,
+                Some(PlatformAccessibilityRect::new(10.0, 20.0, 100.0, 30.0)),
                 Some(root),
                 Vec::new(),
             ));
@@ -616,14 +891,12 @@ mod tests {
     #[test]
     fn provider_correlations_are_stable_and_absent_nodes_retire() {
         let (service, _) = service(WindowsAccessibilityLimits::default());
-        let first = snapshot(1, 1, true);
-        service.replace_snapshot(&first).unwrap();
+        service.replace_snapshot(&snapshot(1, 1, true)).unwrap();
         let root_provider = service.provider_serial_for_node(id(1)).unwrap().unwrap();
         let child_provider = service.provider_serial_for_node(id(2)).unwrap().unwrap();
         assert_ne!(root_provider, child_provider);
 
-        let second = snapshot(2, 2, false);
-        let report = service.replace_snapshot(&second).unwrap();
+        let report = service.replace_snapshot(&snapshot(2, 2, false)).unwrap();
         assert_eq!(report.retained_providers, 1);
         assert_eq!(report.retired_providers, 1);
         assert_eq!(service.provider_count().unwrap(), 1);
@@ -635,33 +908,95 @@ mod tests {
     }
 
     #[test]
-    fn stale_native_action_callback_is_rejected_before_engine_queueing() {
-        let (service, _) = service(WindowsAccessibilityLimits::default());
-        service.replace_snapshot(&snapshot(1, 1, true)).unwrap();
-        let provider = service.provider_serial_for_node(id(2)).unwrap().unwrap();
-        service.replace_snapshot(&snapshot(2, 2, true)).unwrap();
-
-        assert_eq!(
-            service
-                .accept_native_action_callback(provider, 1, 1, PlatformAccessibilityAction::Invoke,)
-                .unwrap_err()
-                .kind(),
-            PlatformAccessibilityErrorKind::StaleCorrelation
-        );
-        assert_eq!(service.pending_action_count().unwrap(), 0);
+    fn snapshot_projection_reaches_native_with_exact_identity_and_geometry() {
+        let (service, native) = service(WindowsAccessibilityLimits::default());
+        service.replace_snapshot(&snapshot(3, 4, true)).unwrap();
+        let state = native.lock().unwrap();
+        let projected = state.snapshots.last().unwrap();
+        assert_eq!(projected.document_generation(), 3);
+        assert_eq!(projected.geometry_revision(), 4);
+        assert_eq!(projected.nodes().len(), 2);
+        let child = projected
+            .nodes()
+            .iter()
+            .find(|node| node.name() == "save")
+            .unwrap();
+        assert_eq!(child.role(), WindowsAccessibilityNativeRole::Button);
+        assert!(child.focusable());
+        assert_eq!(child.bounds().unwrap().x(), 10.0);
     }
 
     #[test]
-    fn current_native_action_callback_enters_bounded_portable_queue() {
+    fn failed_native_replacement_preserves_wrapper_correlations_atomically() {
+        let (service, native) = service(WindowsAccessibilityLimits::default());
+        service.replace_snapshot(&snapshot(1, 1, true)).unwrap();
+        let child_provider = service.provider_serial_for_node(id(2)).unwrap().unwrap();
+        native.lock().unwrap().replace_failure =
+            Some(WindowsAccessibilityNativeErrorKind::ComFailure);
+
+        assert_eq!(
+            service
+                .replace_snapshot(&snapshot(2, 2, false))
+                .unwrap_err()
+                .kind(),
+            PlatformAccessibilityErrorKind::NativeFailure
+        );
+        assert_eq!(service.provider_count().unwrap(), 2);
+        assert_eq!(
+            service.provider_serial_for_node(id(2)).unwrap(),
+            Some(child_provider)
+        );
+    }
+
+    #[test]
+    fn clear_snapshot_retires_correlations_and_clears_native_snapshot() {
+        let (service, native) = service(WindowsAccessibilityLimits::default());
+        service.replace_snapshot(&snapshot(1, 1, true)).unwrap();
+        service.clear_snapshot().unwrap();
+        assert_eq!(service.provider_count().unwrap(), 0);
+        assert_eq!(service.pending_event_count().unwrap(), 0);
+        assert_eq!(native.lock().unwrap().clear_count, 1);
+    }
+
+    #[test]
+    fn stale_native_actions_are_dropped_before_engine_queueing() {
+        let (service, native) = service(WindowsAccessibilityLimits::default());
+        service.replace_snapshot(&snapshot(1, 1, true)).unwrap();
+        let provider = service.provider_serial_for_node(id(2)).unwrap().unwrap();
+        service.replace_snapshot(&snapshot(2, 2, true)).unwrap();
+        native
+            .lock()
+            .unwrap()
+            .actions
+            .push_back(WindowsAccessibilityNativeActionRequest::new(
+                provider,
+                1,
+                1,
+                WindowsAccessibilityNativeAction::Invoke,
+            ));
+
+        assert_eq!(service.next_action_request().unwrap(), None);
+    }
+
+    #[test]
+    fn current_native_action_is_projected_to_portable_request() {
         let limits = WindowsAccessibilityLimits::try_new(8, 8, 1).unwrap();
-        let (service, _) = service(limits);
+        let (service, native) = service(limits);
         service.replace_snapshot(&snapshot(3, 4, true)).unwrap();
         let provider = service.provider_serial_for_node(id(2)).unwrap().unwrap();
-        service
-            .accept_native_action_callback(provider, 3, 4, PlatformAccessibilityAction::Invoke)
-            .unwrap();
+        native
+            .lock()
+            .unwrap()
+            .actions
+            .push_back(WindowsAccessibilityNativeActionRequest::new(
+                provider,
+                3,
+                4,
+                WindowsAccessibilityNativeAction::Invoke,
+            ));
         let request = service.next_action_request().unwrap().unwrap();
         assert_eq!(request.target(), id(2));
+        assert_eq!(request.action(), PlatformAccessibilityAction::Invoke);
         assert_eq!(request.document_generation(), 3);
         assert_eq!(request.geometry_revision(), 4);
     }
@@ -669,7 +1004,7 @@ mod tests {
     #[test]
     fn provider_capacity_failure_is_atomic() {
         let limits = WindowsAccessibilityLimits::try_new(1, 8, 8).unwrap();
-        let (service, _) = service(limits);
+        let (service, native) = service(limits);
         assert_eq!(
             service
                 .replace_snapshot(&snapshot(1, 1, true))
@@ -678,14 +1013,15 @@ mod tests {
             PlatformAccessibilityErrorKind::CapacityExceeded
         );
         assert_eq!(service.provider_count().unwrap(), 0);
+        assert!(native.lock().unwrap().snapshots.is_empty());
     }
 
     #[test]
-    fn failed_native_delivery_is_retained_and_retried_without_state_rollback() {
+    fn failed_native_delivery_is_retained_and_retried_with_exact_snapshot_identity() {
         let (service, native) = service(WindowsAccessibilityLimits::default());
-        let snapshot = snapshot(5, 2, true);
-        service.replace_snapshot(&snapshot).unwrap();
-        native.lock().unwrap().failure =
+        let current = snapshot(5, 2, true);
+        service.replace_snapshot(&current).unwrap();
+        native.lock().unwrap().event_failure =
             Some(WindowsAccessibilityNativeErrorKind::ProviderUnavailable);
         let event =
             PlatformAccessibilityEvent::new(id(2), PlatformAccessibilityEventKind::NameChanged, 5);
@@ -694,12 +1030,36 @@ mod tests {
             PlatformAccessibilityEventDisposition::Queued
         );
         assert_eq!(service.pending_event_count().unwrap(), 1);
-        assert_eq!(service.provider_count().unwrap(), 2);
 
-        native.lock().unwrap().failure = None;
-        service.replace_snapshot(&snapshot).unwrap();
+        native.lock().unwrap().event_failure = None;
+        service.replace_snapshot(&current).unwrap();
         assert_eq!(service.pending_event_count().unwrap(), 0);
-        assert_eq!(native.lock().unwrap().published.len(), 1);
+        let published = native.lock().unwrap().published.clone();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].1, 5);
+        assert_eq!(published[0].2, 2);
+    }
+
+    #[test]
+    fn geometry_change_coalesces_stale_retry_to_current_root_tree_change() {
+        let (service, native) = service(WindowsAccessibilityLimits::default());
+        service.replace_snapshot(&snapshot(7, 3, true)).unwrap();
+        native.lock().unwrap().event_failure =
+            Some(WindowsAccessibilityNativeErrorKind::ProviderUnavailable);
+        service
+            .publish_event(PlatformAccessibilityEvent::new(
+                id(2),
+                PlatformAccessibilityEventKind::BoundsChanged,
+                7,
+            ))
+            .unwrap();
+        native.lock().unwrap().event_failure = None;
+        service.replace_snapshot(&snapshot(7, 4, true)).unwrap();
+        let published = native.lock().unwrap().published.clone();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].1, 7);
+        assert_eq!(published[0].2, 4);
+        assert_eq!(published[0].3, WindowsAccessibilityNativeEventKind::TreeChanged);
     }
 
     #[test]
@@ -707,7 +1067,7 @@ mod tests {
         let limits = WindowsAccessibilityLimits::try_new(8, 1, 8).unwrap();
         let (service, native) = service(limits);
         service.replace_snapshot(&snapshot(7, 3, true)).unwrap();
-        native.lock().unwrap().failure =
+        native.lock().unwrap().event_failure =
             Some(WindowsAccessibilityNativeErrorKind::ProviderUnavailable);
         for kind in [
             PlatformAccessibilityEventKind::NameChanged,
