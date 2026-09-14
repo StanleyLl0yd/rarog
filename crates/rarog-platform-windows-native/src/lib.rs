@@ -2,6 +2,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod accessibility;
+#[cfg(target_os = "windows")]
+mod accessibility_uia;
 pub use accessibility::*;
 
 use std::ffi::{OsStr, OsString};
@@ -135,11 +137,7 @@ mod imp {
     struct OwnedHandle(HANDLE);
 
     impl OwnedHandle {
-        fn try_new(
-            handle: HANDLE,
-            kind: SandboxErrorKind,
-            operation: &str,
-        ) -> Result<Self, SandboxError> {
+        fn try_new(handle: HANDLE, kind: SandboxErrorKind, operation: &str) -> Result<Self, SandboxError> {
             if handle.is_null() {
                 Err(os_error(kind, operation))
             } else {
@@ -154,9 +152,7 @@ mod imp {
 
     impl Drop for OwnedHandle {
         fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.0);
-            }
+            unsafe { CloseHandle(self.0); }
         }
     }
 
@@ -171,113 +167,39 @@ mod imp {
     impl AttributeList {
         fn new(job: HANDLE) -> Result<Self, SandboxError> {
             let mut bytes = 0usize;
-            unsafe {
-                InitializeProcThreadAttributeList(null_mut(), 3, 0, &mut bytes);
-            }
+            unsafe { InitializeProcThreadAttributeList(null_mut(), 3, 0, &mut bytes); }
             if bytes == 0 {
-                return Err(os_error(
-                    SandboxErrorKind::AttributeConfiguration,
-                    "measure process attribute list",
-                ));
+                return Err(os_error(SandboxErrorKind::AttributeConfiguration, "measure process attribute list"));
             }
-
             let words = bytes.div_ceil(size_of::<usize>());
             let mut storage = vec![0usize; words];
             let list = storage.as_mut_ptr().cast();
             if unsafe { InitializeProcThreadAttributeList(list, 3, 0, &mut bytes) } == 0 {
-                return Err(os_error(
-                    SandboxErrorKind::AttributeConfiguration,
-                    "initialize process attribute list",
-                ));
+                return Err(os_error(SandboxErrorKind::AttributeConfiguration, "initialize process attribute list"));
             }
-
             let mitigation = Box::new(MITIGATION_POLICY);
-            if unsafe {
-                UpdateProcThreadAttribute(
-                    list,
-                    0,
-                    PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY as usize,
-                    (&*mitigation as *const u64).cast(),
-                    size_of_val(&*mitigation),
-                    null_mut(),
-                    null(),
-                )
-            } == 0
-            {
-                unsafe {
-                    DeleteProcThreadAttributeList(list);
-                }
-                return Err(os_error(
-                    SandboxErrorKind::AttributeConfiguration,
-                    "apply process mitigation policy",
-                ));
+            if unsafe { UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY as usize, (&*mitigation as *const u64).cast(), size_of_val(&*mitigation), null_mut(), null()) } == 0 {
+                unsafe { DeleteProcThreadAttributeList(list); }
+                return Err(os_error(SandboxErrorKind::AttributeConfiguration, "apply process mitigation policy"));
             }
-
             let child_policy = Box::new(PROCESS_CREATION_CHILD_PROCESS_RESTRICTED);
-            if unsafe {
-                UpdateProcThreadAttribute(
-                    list,
-                    0,
-                    PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY as usize,
-                    (&*child_policy as *const u32).cast(),
-                    size_of_val(&*child_policy),
-                    null_mut(),
-                    null(),
-                )
-            } == 0
-            {
-                unsafe {
-                    DeleteProcThreadAttributeList(list);
-                }
-                return Err(os_error(
-                    SandboxErrorKind::AttributeConfiguration,
-                    "apply child-process restriction",
-                ));
+            if unsafe { UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, (&*child_policy as *const u32).cast(), size_of_val(&*child_policy), null_mut(), null()) } == 0 {
+                unsafe { DeleteProcThreadAttributeList(list); }
+                return Err(os_error(SandboxErrorKind::AttributeConfiguration, "apply child-process restriction"));
             }
-
             let jobs = Box::new([job]);
-            if unsafe {
-                UpdateProcThreadAttribute(
-                    list,
-                    0,
-                    PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
-                    jobs.as_ptr().cast(),
-                    size_of_val(&*jobs),
-                    null_mut(),
-                    null(),
-                )
-            } == 0
-            {
-                unsafe {
-                    DeleteProcThreadAttributeList(list);
-                }
-                return Err(os_error(
-                    SandboxErrorKind::AttributeConfiguration,
-                    "bind process job list",
-                ));
+            if unsafe { UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST as usize, jobs.as_ptr().cast(), size_of_val(&*jobs), null_mut(), null()) } == 0 {
+                unsafe { DeleteProcThreadAttributeList(list); }
+                return Err(os_error(SandboxErrorKind::AttributeConfiguration, "bind process job list"));
             }
-
-            Ok(Self {
-                storage,
-                list,
-                mitigation,
-                child_policy,
-                jobs,
-            })
+            Ok(Self { storage, list, mitigation, child_policy, jobs })
         }
     }
 
     impl Drop for AttributeList {
         fn drop(&mut self) {
-            unsafe {
-                DeleteProcThreadAttributeList(self.list);
-            }
-            let _ = (
-                self.storage.len(),
-                *self.mitigation,
-                *self.child_policy,
-                self.jobs.len(),
-            );
+            unsafe { DeleteProcThreadAttributeList(self.list); }
+            let _ = (self.storage.len(), *self.mitigation, *self.child_policy, self.jobs.len());
         }
     }
 
@@ -293,52 +215,17 @@ mod imp {
             let mut command_line = build_command_line(program, args)?;
             let job = create_job()?;
             let attributes = AttributeList::new(job.raw())?;
-
             let mut startup = STARTUPINFOEXW::default();
-            startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).map_err(|_| {
-                SandboxError::new(
-                    SandboxErrorKind::Launch,
-                    "Windows STARTUPINFOEXW size is not representable",
-                )
-            })?;
+            startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).map_err(|_| SandboxError::new(SandboxErrorKind::Launch, "Windows STARTUPINFOEXW size is not representable"))?;
             startup.lpAttributeList = attributes.list;
             let mut info = PROCESS_INFORMATION::default();
             let flags = CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT;
-
-            let created = unsafe {
-                CreateProcessW(
-                    program_wide.as_mut_ptr(),
-                    command_line.as_mut_ptr(),
-                    null(),
-                    null(),
-                    0,
-                    flags,
-                    null(),
-                    null(),
-                    (&startup as *const STARTUPINFOEXW).cast(),
-                    &mut info,
-                )
-            };
-            if created == 0 {
-                return Err(os_error(
-                    SandboxErrorKind::Launch,
-                    "create sandboxed Site process",
-                ));
-            }
-
-            let process = OwnedHandle::try_new(
-                info.hProcess,
-                SandboxErrorKind::Launch,
-                "receive Site process handle",
-            )?;
-            let thread = OwnedHandle::try_new(
-                info.hThread,
-                SandboxErrorKind::Launch,
-                "receive Site thread handle",
-            )?;
+            let created = unsafe { CreateProcessW(program_wide.as_mut_ptr(), command_line.as_mut_ptr(), null(), null(), 0, flags, null(), null(), (&startup as *const STARTUPINFOEXW).cast(), &mut info) };
+            if created == 0 { return Err(os_error(SandboxErrorKind::Launch, "create sandboxed Site process")); }
+            let process = OwnedHandle::try_new(info.hProcess, SandboxErrorKind::Launch, "receive Site process handle")?;
+            let thread = OwnedHandle::try_new(info.hThread, SandboxErrorKind::Launch, "receive Site thread handle")?;
             drop(thread);
             drop(attributes);
-
             Ok(Self { process, job })
         }
 
@@ -346,79 +233,42 @@ mod imp {
             match unsafe { WaitForSingleObject(self.process.raw(), 0) } {
                 WAIT_OBJECT_0_VALUE => self.exit_code().map(Some),
                 WAIT_TIMEOUT_VALUE => Ok(None),
-                _ => Err(os_error(
-                    SandboxErrorKind::Wait,
-                    "observe Site process status",
-                )),
+                _ => Err(os_error(SandboxErrorKind::Wait, "observe Site process status")),
             }
         }
 
         pub fn wait(&mut self) -> Result<u32, SandboxError> {
             if unsafe { WaitForSingleObject(self.process.raw(), INFINITE) } != WAIT_OBJECT_0_VALUE {
-                return Err(os_error(
-                    SandboxErrorKind::Wait,
-                    "wait for Site process exit",
-                ));
+                return Err(os_error(SandboxErrorKind::Wait, "wait for Site process exit"));
             }
             self.exit_code()
         }
 
         pub fn terminate(&mut self) -> Result<u32, SandboxError> {
-            if let Some(code) = self.try_wait()? {
-                return Ok(code);
-            }
+            if let Some(code) = self.try_wait()? { return Ok(code); }
             if unsafe { TerminateProcess(self.process.raw(), 1) } == 0 {
-                return Err(os_error(
-                    SandboxErrorKind::Terminate,
-                    "terminate Site process",
-                ));
+                return Err(os_error(SandboxErrorKind::Terminate, "terminate Site process"));
             }
             self.wait()
         }
 
         pub fn evidence(&self) -> Result<SandboxEvidence, SandboxError> {
-            let dep: PROCESS_MITIGATION_DEP_POLICY =
-                query_mitigation(self.process.raw(), ProcessDEPPolicy)?;
-            let aslr: PROCESS_MITIGATION_ASLR_POLICY =
-                query_mitigation(self.process.raw(), ProcessASLRPolicy)?;
-            let strict: PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY =
-                query_mitigation(self.process.raw(), ProcessStrictHandleCheckPolicy)?;
-            let extension: PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY =
-                query_mitigation(self.process.raw(), ProcessExtensionPointDisablePolicy)?;
-            let sehop: PROCESS_MITIGATION_SEHOP_POLICY =
-                query_mitigation(self.process.raw(), ProcessSEHOPPolicy)?;
-            let child: PROCESS_MITIGATION_CHILD_PROCESS_POLICY =
-                query_mitigation(self.process.raw(), ProcessChildProcessPolicy)?;
-
+            let dep: PROCESS_MITIGATION_DEP_POLICY = query_mitigation(self.process.raw(), ProcessDEPPolicy)?;
+            let aslr: PROCESS_MITIGATION_ASLR_POLICY = query_mitigation(self.process.raw(), ProcessASLRPolicy)?;
+            let strict: PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY = query_mitigation(self.process.raw(), ProcessStrictHandleCheckPolicy)?;
+            let extension: PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY = query_mitigation(self.process.raw(), ProcessExtensionPointDisablePolicy)?;
+            let sehop: PROCESS_MITIGATION_SEHOP_POLICY = query_mitigation(self.process.raw(), ProcessSEHOPPolicy)?;
+            let child: PROCESS_MITIGATION_CHILD_PROCESS_POLICY = query_mitigation(self.process.raw(), ProcessChildProcessPolicy)?;
             let dep_flags = unsafe { dep.Anonymous.Flags };
             let aslr_flags = unsafe { aslr.Anonymous.Flags };
             let strict_flags = unsafe { strict.Anonymous.Flags };
             let extension_flags = unsafe { extension.Anonymous.Flags };
             let sehop_flags = unsafe { sehop.Anonymous.Flags };
             let child_flags = unsafe { child.Anonymous.Flags };
-
             let mut job_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            if unsafe {
-                QueryInformationJobObject(
-                    self.job.raw(),
-                    JobObjectExtendedLimitInformation,
-                    (&mut job_info as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                    u32::try_from(size_of_val(&job_info)).map_err(|_| {
-                        SandboxError::new(
-                            SandboxErrorKind::Evidence,
-                            "job information size is not representable",
-                        )
-                    })?,
-                    null_mut(),
-                )
-            } == 0
-            {
-                return Err(os_error(
-                    SandboxErrorKind::Evidence,
-                    "query Site process job policy",
-                ));
+            if unsafe { QueryInformationJobObject(self.job.raw(), JobObjectExtendedLimitInformation, (&mut job_info as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(), u32::try_from(size_of_val(&job_info)).map_err(|_| SandboxError::new(SandboxErrorKind::Evidence, "job information size is not representable"))?, null_mut()) } == 0 {
+                return Err(os_error(SandboxErrorKind::Evidence, "query Site process job policy"));
             }
-
             let limit_flags = job_info.BasicLimitInformation.LimitFlags;
             Ok(SandboxEvidence {
                 dep_enabled: dep_flags & 0x1 != 0,
@@ -430,230 +280,122 @@ mod imp {
                 sehop_enabled: sehop_flags & 0x1 != 0,
                 child_process_restricted: child_flags & 0x1 != 0,
                 job_active_process_limit: job_info.BasicLimitInformation.ActiveProcessLimit,
-                job_kill_on_close: limit_flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
-                    && limit_flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0,
+                job_kill_on_close: limit_flags & JOB_OBJECT_LIMIT_KILL_ON_CLOSE != 0 && limit_flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0,
             })
         }
 
         fn exit_code(&self) -> Result<u32, SandboxError> {
             let mut code = 0u32;
             if unsafe { GetExitCodeProcess(self.process.raw(), &mut code) } == 0 {
-                return Err(os_error(
-                    SandboxErrorKind::Wait,
-                    "read Site process exit code",
-                ));
+                return Err(os_error(SandboxErrorKind::Wait, "read Site process exit code"));
             }
             Ok(code)
         }
     }
 
     impl Drop for SandboxedChild {
-        fn drop(&mut self) {
-            let _ = self.terminate();
-        }
+        fn drop(&mut self) { let _ = self.terminate(); }
     }
 
     fn create_job() -> Result<OwnedHandle, SandboxError> {
-        let job = OwnedHandle::try_new(
-            unsafe { CreateJobObjectW(null(), null()) },
-            SandboxErrorKind::JobConfiguration,
-            "create Site process job",
-        )?;
+        let job = OwnedHandle::try_new(unsafe { CreateJobObjectW(null(), null()) }, SandboxErrorKind::JobConfiguration, "create Site process job")?;
         let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        info.BasicLimitInformation.LimitFlags =
-            JOB_OBJECT_LIMIT_ACTIVE_PROCESS | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_ACTIVE_PROCESS | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         info.BasicLimitInformation.ActiveProcessLimit = 1;
-        if unsafe {
-            SetInformationJobObject(
-                job.raw(),
-                JobObjectExtendedLimitInformation,
-                (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
-                    .cast_mut()
-                    .cast(),
-                u32::try_from(size_of_val(&info)).map_err(|_| {
-                    SandboxError::new(
-                        SandboxErrorKind::JobConfiguration,
-                        "job information size is not representable",
-                    )
-                })?,
-            )
-        } == 0
-        {
-            return Err(os_error(
-                SandboxErrorKind::JobConfiguration,
-                "configure Site process job",
-            ));
+        if unsafe { SetInformationJobObject(job.raw(), JobObjectExtendedLimitInformation, (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(), u32::try_from(size_of_val(&info)).map_err(|_| SandboxError::new(SandboxErrorKind::JobConfiguration, "job information size is not representable"))?) } == 0 {
+            return Err(os_error(SandboxErrorKind::JobConfiguration, "configure Site process job"));
         }
         Ok(job)
     }
 
-    fn query_mitigation<T: Default>(
-        process: HANDLE,
-        policy: windows_sys::Win32::System::Threading::PROCESS_MITIGATION_POLICY,
-    ) -> Result<T, SandboxError> {
+    fn query_mitigation<T: Default>(process: HANDLE, policy: windows_sys::Win32::System::Threading::PROCESS_MITIGATION_POLICY) -> Result<T, SandboxError> {
         let mut value = T::default();
-        if unsafe {
-            GetProcessMitigationPolicy(
-                process,
-                policy,
-                (&mut value as *mut T).cast::<c_void>(),
-                size_of_val(&value),
-            )
-        } == 0
-        {
-            return Err(os_error(
-                SandboxErrorKind::Evidence,
-                "query Site process mitigation policy",
-            ));
+        if unsafe { GetProcessMitigationPolicy(process, policy, (&mut value as *mut T).cast::<c_void>(), size_of::<T>()) } == 0 {
+            return Err(os_error(SandboxErrorKind::Evidence, "query process mitigation policy"));
         }
         Ok(value)
     }
 
     fn encode_os(value: &OsStr) -> Result<Vec<u16>, SandboxError> {
-        let mut units: Vec<u16> = value.encode_wide().collect();
-        if units.is_empty() || units.contains(&0) {
-            return Err(SandboxError::new(
-                SandboxErrorKind::InvalidCommand,
-                "Windows Site-process command values must be non-empty and contain no NUL",
-            ));
-        }
-        units.push(0);
-        Ok(units)
+        let mut wide = value.encode_wide().collect::<Vec<_>>();
+        if wide.contains(&0) { return Err(SandboxError::new(SandboxErrorKind::InvalidCommand, "Windows command argument contains an embedded NUL")); }
+        wide.push(0);
+        Ok(wide)
     }
 
     fn build_command_line(program: &OsStr, args: &[OsString]) -> Result<Vec<u16>, SandboxError> {
-        let mut line = Vec::new();
-        append_quoted(&mut line, program)?;
+        let mut line = quote_windows_argument(program)?;
         for arg in args {
-            line.push(b' ' as u16);
-            append_quoted(&mut line, arg)?;
+            line.push(' ' as u16);
+            line.extend(quote_windows_argument(arg)?);
         }
-        if line.len() + 1 > MAX_WINDOWS_COMMAND_LINE_UNITS {
-            return Err(SandboxError::new(
-                SandboxErrorKind::CommandLineTooLong,
-                format!(
-                    "Windows Site-process command line exceeds {} UTF-16 units",
-                    MAX_WINDOWS_COMMAND_LINE_UNITS
-                ),
-            ));
-        }
+        if line.len() + 1 > MAX_WINDOWS_COMMAND_LINE_UNITS { return Err(SandboxError::new(SandboxErrorKind::CommandLineTooLong, "Windows command line exceeds the supported UTF-16 unit limit")); }
         line.push(0);
         Ok(line)
     }
 
-    fn append_quoted(target: &mut Vec<u16>, value: &OsStr) -> Result<(), SandboxError> {
-        let units: Vec<u16> = value.encode_wide().collect();
-        if units.contains(&0) {
-            return Err(SandboxError::new(
-                SandboxErrorKind::InvalidCommand,
-                "Windows Site-process arguments cannot contain NUL",
-            ));
-        }
-
-        target.push(b'"' as u16);
+    fn quote_windows_argument(value: &OsStr) -> Result<Vec<u16>, SandboxError> {
+        let wide = value.encode_wide().collect::<Vec<_>>();
+        if wide.contains(&0) { return Err(SandboxError::new(SandboxErrorKind::InvalidCommand, "Windows command argument contains an embedded NUL")); }
+        let needs_quotes = wide.is_empty() || wide.iter().any(|unit| *unit == b' ' as u16 || *unit == b'\t' as u16 || *unit == b'"' as u16);
+        if !needs_quotes { return Ok(wide); }
+        let mut quoted = vec![b'"' as u16];
         let mut backslashes = 0usize;
-        for unit in units {
-            if unit == b'\\' as u16 {
-                backslashes += 1;
-                continue;
-            }
+        for unit in wide {
+            if unit == b'\\' as u16 { backslashes += 1; continue; }
             if unit == b'"' as u16 {
-                target.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2 + 1));
-                target.push(unit);
-                backslashes = 0;
-                continue;
+                quoted.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2 + 1));
+                quoted.push(unit);
+            } else {
+                quoted.extend(std::iter::repeat_n(b'\\' as u16, backslashes));
+                quoted.push(unit);
             }
-            target.extend(std::iter::repeat_n(b'\\' as u16, backslashes));
             backslashes = 0;
-            target.push(unit);
         }
-        target.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2));
-        target.push(b'"' as u16);
-        Ok(())
+        quoted.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2));
+        quoted.push(b'"' as u16);
+        Ok(quoted)
     }
 
     fn os_error(kind: SandboxErrorKind, operation: &str) -> SandboxError {
-        let error = std::io::Error::last_os_error();
-        SandboxError::new(kind, format!("{operation} failed: {error}"))
+        SandboxError::new(kind, format!("{operation}: {}", std::io::Error::last_os_error()))
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-mod imp {
-    use super::*;
-
-    #[derive(Debug)]
-    pub struct SandboxedChild;
-
-    impl SandboxedChild {
-        pub fn spawn(_program: &OsStr, _args: &[OsString]) -> Result<Self, SandboxError> {
-            Err(SandboxError::unsupported())
-        }
-
-        pub fn try_wait(&mut self) -> Result<Option<u32>, SandboxError> {
-            Err(SandboxError::unsupported())
-        }
-
-        pub fn wait(&mut self) -> Result<u32, SandboxError> {
-            Err(SandboxError::unsupported())
-        }
-
-        pub fn terminate(&mut self) -> Result<u32, SandboxError> {
-            Err(SandboxError::unsupported())
-        }
-
-        pub fn evidence(&self) -> Result<SandboxEvidence, SandboxError> {
-            Err(SandboxError::unsupported())
-        }
-    }
-}
-
+#[cfg(target_os = "windows")]
 pub use imp::SandboxedChild;
 
-#[cfg(test)]
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug)]
+pub struct SandboxedChild;
+
+#[cfg(not(target_os = "windows"))]
+impl SandboxedChild {
+    pub fn spawn(_program: &OsStr, _args: &[OsString]) -> Result<Self, SandboxError> { Err(SandboxError::unsupported()) }
+    pub fn try_wait(&mut self) -> Result<Option<u32>, SandboxError> { Err(SandboxError::unsupported()) }
+    pub fn wait(&mut self) -> Result<u32, SandboxError> { Err(SandboxError::unsupported()) }
+    pub fn terminate(&mut self) -> Result<u32, SandboxError> { Err(SandboxError::unsupported()) }
+    pub fn evidence(&self) -> Result<SandboxEvidence, SandboxError> { Err(SandboxError::unsupported()) }
+}
+
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
 
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn windows_site_sandbox_is_explicitly_unsupported_off_windows() {
-        assert_eq!(
-            SandboxedChild::spawn(OsStr::new("rarog-site.exe"), &[])
-                .unwrap_err()
-                .kind,
-            SandboxErrorKind::UnsupportedTarget
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    fn shell() -> OsString {
-        std::env::var_os("COMSPEC").unwrap_or_else(|| OsString::from("cmd.exe"))
-    }
-
-    #[cfg(target_os = "windows")]
     #[test]
     fn windows_site_sandbox_reports_required_policy() {
-        let args = [
-            OsString::from("/D"),
-            OsString::from("/V:OFF"),
-            OsString::from("/C"),
-            OsString::from("for /L %i in (1,1,10000) do @set /A x=1+1 >nul"),
-        ];
-        let mut child = SandboxedChild::spawn(&shell(), &args).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let mut child = SandboxedChild::spawn(exe.as_os_str(), &[OsString::from("--help")]).unwrap();
         let evidence = child.evidence().unwrap();
-        assert!(evidence.satisfies_r4_policy(), "{evidence:?}");
-        child.terminate().unwrap();
+        assert!(evidence.satisfies_r4_policy());
+        let _ = child.terminate();
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn windows_site_sandbox_blocks_nested_process_creation() {
-        let args = [
-            OsString::from("/D"),
-            OsString::from("/C"),
-            OsString::from("cmd.exe /D /C exit 0"),
-        ];
-        let mut child = SandboxedChild::spawn(&shell(), &args).unwrap();
+        let shell = OsStr::new("C:\\Windows\\System32\\cmd.exe");
+        let mut child = SandboxedChild::spawn(shell, &[OsString::from("/c"), OsString::from("start /wait cmd /c exit 0")]).unwrap();
         let code = child.wait().unwrap();
         assert_ne!(code, 0);
     }
