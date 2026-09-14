@@ -25,7 +25,11 @@ impl WindowsAccessibilityNativeError {
 
 impl fmt::Display for WindowsAccessibilityNativeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "Windows accessibility native error: {:?}", self.kind)
+        write!(
+            formatter,
+            "Windows accessibility native error: {:?}",
+            self.kind
+        )
     }
 }
 

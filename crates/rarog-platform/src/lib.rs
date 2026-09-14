@@ -1,6 +1,8 @@
+pub mod accessibility;
 pub mod clipboard;
 pub mod input;
 
+pub use accessibility::*;
 pub use clipboard::{
     ClipboardError, ClipboardLimits, ClipboardText, DEFAULT_MAX_CLIPBOARD_TEXT_BYTES,
     PlatformClipboardService,
@@ -224,6 +226,10 @@ pub trait PlatformHost: Send + Sync {
     fn clipboard_service(&self) -> Option<&dyn PlatformClipboardService> {
         None
     }
+
+    fn accessibility_service(&self) -> Option<&dyn PlatformAccessibilityService> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -252,6 +258,7 @@ mod tests {
         assert!(host.input_service().is_none());
         assert!(host.text_input_service().is_none());
         assert!(host.clipboard_service().is_none());
+        assert!(host.accessibility_service().is_none());
         for service in [
             PlatformService::WindowEvents,
             PlatformService::FontText,

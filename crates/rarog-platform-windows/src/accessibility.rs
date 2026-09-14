@@ -59,10 +59,8 @@ impl Default for WindowsAccessibilityLimits {
         Self {
             max_providers: NonZeroUsize::new(DEFAULT_MAX_WINDOWS_ACCESSIBILITY_PROVIDERS)
                 .expect("non-zero Windows accessibility provider limit"),
-            max_pending_events: NonZeroUsize::new(
-                DEFAULT_MAX_WINDOWS_ACCESSIBILITY_PENDING_EVENTS,
-            )
-            .expect("non-zero Windows accessibility event limit"),
+            max_pending_events: NonZeroUsize::new(DEFAULT_MAX_WINDOWS_ACCESSIBILITY_PENDING_EVENTS)
+                .expect("non-zero Windows accessibility event limit"),
             max_action_requests: NonZeroUsize::new(
                 DEFAULT_MAX_WINDOWS_ACCESSIBILITY_ACTION_REQUESTS,
             )
@@ -349,11 +347,13 @@ impl PlatformAccessibilityService for WindowsAccessibilityService {
             });
             if has_stale_pending {
                 state.pending_events.clear();
-                state.pending_events.push_back(PlatformAccessibilityEvent::new(
-                    snapshot.root(),
-                    PlatformAccessibilityEventKind::TreeChanged,
-                    snapshot.document_generation(),
-                ));
+                state
+                    .pending_events
+                    .push_back(PlatformAccessibilityEvent::new(
+                        snapshot.root(),
+                        PlatformAccessibilityEventKind::TreeChanged,
+                        snapshot.document_generation(),
+                    ));
             }
             state.action_requests.retain(|request| {
                 request.document_generation() == snapshot.document_generation()
@@ -429,13 +429,12 @@ fn allocate_provider(
         ));
     }
     let provider = WindowsAccessibilityProviderId(
-        NonZeroU64::new(*next_provider).ok_or_else(|| {
-            platform_error(PlatformAccessibilityErrorKind::CapacityExceeded)
-        })?,
+        NonZeroU64::new(*next_provider)
+            .ok_or_else(|| platform_error(PlatformAccessibilityErrorKind::CapacityExceeded))?,
     );
-    *next_provider = next_provider.checked_add(1).ok_or_else(|| {
-        platform_error(PlatformAccessibilityErrorKind::CapacityExceeded)
-    })?;
+    *next_provider = next_provider
+        .checked_add(1)
+        .ok_or_else(|| platform_error(PlatformAccessibilityErrorKind::CapacityExceeded))?;
     Ok(provider)
 }
 
@@ -487,11 +486,13 @@ fn queue_event_conservatively(
         return;
     };
     state.pending_events.clear();
-    state.pending_events.push_back(PlatformAccessibilityEvent::new(
-        current.root,
-        PlatformAccessibilityEventKind::TreeChanged,
-        current.document_generation,
-    ));
+    state
+        .pending_events
+        .push_back(PlatformAccessibilityEvent::new(
+            current.root,
+            PlatformAccessibilityEventKind::TreeChanged,
+            current.document_generation,
+        ));
 }
 
 const fn native_event_kind(
@@ -591,13 +592,8 @@ mod tests {
                 Vec::new(),
             ));
         }
-        PlatformAccessibilitySnapshot::try_new(
-            document_generation,
-            geometry_revision,
-            root,
-            nodes,
-        )
-        .unwrap()
+        PlatformAccessibilitySnapshot::try_new(document_generation, geometry_revision, root, nodes)
+            .unwrap()
     }
 
     fn service(
@@ -643,12 +639,7 @@ mod tests {
 
         assert_eq!(
             service
-                .accept_native_action_callback(
-                    provider,
-                    1,
-                    1,
-                    PlatformAccessibilityAction::Invoke,
-                )
+                .accept_native_action_callback(provider, 1, 1, PlatformAccessibilityAction::Invoke,)
                 .unwrap_err()
                 .kind(),
             PlatformAccessibilityErrorKind::StaleCorrelation
@@ -663,12 +654,7 @@ mod tests {
         service.replace_snapshot(&snapshot(3, 4, true)).unwrap();
         let provider = service.provider_serial_for_node(id(2)).unwrap().unwrap();
         service
-            .accept_native_action_callback(
-                provider,
-                3,
-                4,
-                PlatformAccessibilityAction::Invoke,
-            )
+            .accept_native_action_callback(provider, 3, 4, PlatformAccessibilityAction::Invoke)
             .unwrap();
         let request = service.next_action_request().unwrap().unwrap();
         assert_eq!(request.target(), id(2));
@@ -695,12 +681,10 @@ mod tests {
         let (service, native) = service(WindowsAccessibilityLimits::default());
         let snapshot = snapshot(5, 2, true);
         service.replace_snapshot(&snapshot).unwrap();
-        native.lock().unwrap().failure = Some(WindowsAccessibilityNativeErrorKind::ProviderUnavailable);
-        let event = PlatformAccessibilityEvent::new(
-            id(2),
-            PlatformAccessibilityEventKind::NameChanged,
-            5,
-        );
+        native.lock().unwrap().failure =
+            Some(WindowsAccessibilityNativeErrorKind::ProviderUnavailable);
+        let event =
+            PlatformAccessibilityEvent::new(id(2), PlatformAccessibilityEventKind::NameChanged, 5);
         assert_eq!(
             service.publish_event(event).unwrap(),
             PlatformAccessibilityEventDisposition::Queued
@@ -719,7 +703,8 @@ mod tests {
         let limits = WindowsAccessibilityLimits::try_new(8, 1, 8).unwrap();
         let (service, native) = service(limits);
         service.replace_snapshot(&snapshot(7, 3, true)).unwrap();
-        native.lock().unwrap().failure = Some(WindowsAccessibilityNativeErrorKind::ProviderUnavailable);
+        native.lock().unwrap().failure =
+            Some(WindowsAccessibilityNativeErrorKind::ProviderUnavailable);
         for kind in [
             PlatformAccessibilityEventKind::NameChanged,
             PlatformAccessibilityEventKind::BoundsChanged,

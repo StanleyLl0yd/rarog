@@ -1,6 +1,8 @@
 mod accessibility;
+mod accessibility_platform;
 mod embedder;
 mod event_loop;
+pub use accessibility_platform::*;
 pub use embedder::*;
 pub use event_loop::*;
 

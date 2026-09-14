@@ -1,6 +1,9 @@
 #![allow(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod accessibility;
+pub use accessibility::*;
+
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 

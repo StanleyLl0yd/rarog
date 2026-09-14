@@ -248,9 +248,7 @@ mod tests {
     use rarog_accessibility::{
         AccessibilityActionCommand, AccessibilityActionTarget, AccessibilityExecutorErrorKind,
     };
-    use rarog_platform::{
-        PlatformAccessibilityActionRequest, PlatformAccessibilitySnapshotReport,
-    };
+    use rarog_platform::{PlatformAccessibilityActionRequest, PlatformAccessibilitySnapshotReport};
     use std::sync::Mutex;
 
     #[derive(Debug, Default)]
@@ -284,7 +282,8 @@ mod tests {
 
         fn next_action_request(
             &self,
-        ) -> Result<Option<PlatformAccessibilityActionRequest>, PlatformAccessibilityError> {
+        ) -> Result<Option<PlatformAccessibilityActionRequest>, PlatformAccessibilityError>
+        {
             Ok(self.actions.lock().unwrap().pop())
         }
     }
@@ -307,16 +306,21 @@ mod tests {
 
     #[test]
     fn sync_projects_current_snapshot_and_committed_events() {
-        let mut session =
-            RenderSession::new("<button aria-label='Save'>Save</button>", RenderOptions::default())
-                .unwrap();
+        let mut session = RenderSession::new(
+            "<button aria-label='Save'>Save</button>",
+            RenderOptions::default(),
+        )
+        .unwrap();
         let service = RecordingService::default();
         let first = session.sync_platform_accessibility(&service).unwrap();
         assert!(first.snapshot_current);
         let projected = service.snapshot.lock().unwrap().clone().unwrap();
         assert_eq!(
             projected.document_generation(),
-            session.accessibility_snapshot().unwrap().document_generation()
+            session
+                .accessibility_snapshot()
+                .unwrap()
+                .document_generation()
         );
         assert!(projected.node_count() >= 2);
 
@@ -333,9 +337,7 @@ mod tests {
             .node_count();
         assert!(source >= 2);
 
-        let dom_button = session
-            .document()
-            .root();
+        let dom_button = session.document().root();
         assert!(session.document().node(dom_button).is_some());
         let _ = button;
     }
