@@ -109,11 +109,7 @@ impl EngineAccessibilityState {
 
     fn note_resize(&mut self, document: &Document, fragments: &FragmentTree) {
         self.note_geometry_change();
-        self.refresh(
-            document,
-            fragments,
-            AccessibilityInvalidation::bounds(),
-        );
+        self.refresh(document, fragments, AccessibilityInvalidation::bounds());
     }
 }
 
@@ -154,10 +150,8 @@ impl RenderSession {
     }
 
     pub fn update(&mut self) -> Result<IncrementalReport, RenderError> {
-        let invalidation = accessibility_invalidation_since(
-            &self.document,
-            self.dirty.through_generation(),
-        );
+        let invalidation =
+            accessibility_invalidation_since(&self.document, self.dirty.through_generation());
         let report = self.update_render_state()?;
         self.accessibility.note_update(
             &self.document,
@@ -189,8 +183,9 @@ fn invalidation_for_mutation(mutation: &MutationKind) -> AccessibilityInvalidati
         | MutationKind::Reparented { .. } => AccessibilityInvalidation::tree()
             .union(AccessibilityInvalidation::semantic())
             .union(AccessibilityInvalidation::bounds()),
-        MutationKind::CharacterData { .. } => AccessibilityInvalidation::semantic()
-            .union(AccessibilityInvalidation::bounds()),
+        MutationKind::CharacterData { .. } => {
+            AccessibilityInvalidation::semantic().union(AccessibilityInvalidation::bounds())
+        }
         MutationKind::Attribute { name, .. } => {
             let mut invalidation = AccessibilityInvalidation::semantic();
             if matches!(
@@ -220,7 +215,8 @@ mod tests {
             visited += 1;
             assert!(visited <= document.node_count());
             let node = document.node(source).unwrap();
-            if matches!(&node.kind, NodeKind::Element(element) if element.tag_name.eq_ignore_ascii_case(tag)) {
+            if matches!(&node.kind, NodeKind::Element(element) if element.tag_name.eq_ignore_ascii_case(tag))
+            {
                 return source;
             }
             stack.extend(node.children.iter().rev().copied());
@@ -230,11 +226,9 @@ mod tests {
 
     #[test]
     fn render_update_refreshes_accessibility_from_committed_state() {
-        let mut session = RenderSession::new(
-            "<button id='save'>Save</button>",
-            RenderOptions::default(),
-        )
-        .unwrap();
+        let mut session =
+            RenderSession::new("<button id='save'>Save</button>", RenderOptions::default())
+                .unwrap();
         let button = find_tag(session.document(), "button");
         let before = session
             .accessibility_snapshot()
@@ -261,11 +255,9 @@ mod tests {
 
     #[test]
     fn detach_and_reattach_restore_accessibility_identity() {
-        let mut session = RenderSession::new(
-            "<div><button>Save</button></div>",
-            RenderOptions::default(),
-        )
-        .unwrap();
+        let mut session =
+            RenderSession::new("<div><button>Save</button></div>", RenderOptions::default())
+                .unwrap();
         let button = find_tag(session.document(), "button");
         let parent = session.document().node(button).unwrap().parent.unwrap();
         let identity = session
@@ -277,12 +269,14 @@ mod tests {
 
         session.document_mut().detach(button).unwrap();
         session.update().unwrap();
-        assert!(session
-            .accessibility_snapshot()
-            .unwrap()
-            .tree()
-            .id_for_source(button)
-            .is_none());
+        assert!(
+            session
+                .accessibility_snapshot()
+                .unwrap()
+                .tree()
+                .id_for_source(button)
+                .is_none()
+        );
         assert_eq!(
             session.next_accessibility_event().unwrap().kind(),
             AccessibilityEventKind::TreeChanged
@@ -302,11 +296,8 @@ mod tests {
 
     #[test]
     fn resize_advances_geometry_revision_without_changing_semantic_identity() {
-        let mut session = RenderSession::new(
-            "<button>Save</button>",
-            RenderOptions::default(),
-        )
-        .unwrap();
+        let mut session =
+            RenderSession::new("<button>Save</button>", RenderOptions::default()).unwrap();
         let root = session.accessibility_snapshot().unwrap().tree().root();
         let revision = session.accessibility_geometry_revision();
 
@@ -318,16 +309,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(session.accessibility_geometry_revision(), revision + 1);
-        assert_eq!(session.accessibility_snapshot().unwrap().tree().root(), root);
+        assert_eq!(
+            session.accessibility_snapshot().unwrap().tree().root(),
+            root
+        );
     }
 
     #[test]
     fn native_role_change_is_derived_after_render_update() {
-        let mut session = RenderSession::new(
-            "<input type='text'>",
-            RenderOptions::default(),
-        )
-        .unwrap();
+        let mut session =
+            RenderSession::new("<input type='text'>", RenderOptions::default()).unwrap();
         let input = find_tag(session.document(), "input");
         assert_eq!(
             session

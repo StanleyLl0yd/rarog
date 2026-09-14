@@ -38,6 +38,7 @@ pub enum AccessibilityEventKind {
     StateChanged,
     NameChanged,
     ValueChanged,
+    BoundsChanged,
     TreeChanged,
 }
 
@@ -128,7 +129,10 @@ impl AccessibilityEventQueue {
         self.events.pop_front()
     }
 
-    fn ensure_capacity(&self, additional: usize) -> Result<(), AccessibilityEventQueueError> {
+    pub(crate) fn ensure_capacity(
+        &self,
+        additional: usize,
+    ) -> Result<(), AccessibilityEventQueueError> {
         let events = self.events.len().checked_add(additional).ok_or(
             AccessibilityEventQueueError::CapacityExceeded {
                 events: usize::MAX,
@@ -144,7 +148,7 @@ impl AccessibilityEventQueue {
         Ok(())
     }
 
-    fn push_reserved(&mut self, event: AccessibilityEvent) {
+    pub(crate) fn push_reserved(&mut self, event: AccessibilityEvent) {
         debug_assert!(self.events.len() < self.max_events);
         self.events.push_back(event);
     }

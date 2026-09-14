@@ -1,3 +1,4 @@
+mod accessibility;
 mod embedder;
 mod event_loop;
 pub use embedder::*;
@@ -89,6 +90,7 @@ pub enum RenderError {
     DisplayCommandLimitExceeded { commands: usize, limit: usize },
     DisplayListRevisionExhausted,
     InvalidViewportTranslation,
+    Accessibility(rarog_accessibility::AccessibilityRefreshError),
     ImageDecode(ImageDecodeQueueError),
     DisplayList(DisplayListError),
     Framebuffer(FramebufferError),
@@ -134,6 +136,7 @@ impl std::fmt::Display for RenderError {
             Self::InvalidViewportTranslation => {
                 formatter.write_str("viewport translation must be finite")
             }
+            Self::Accessibility(error) => write!(formatter, "{error}"),
             Self::ImageDecode(error) => write!(formatter, "{error}"),
             Self::DisplayList(error) => write!(formatter, "{error}"),
             Self::Framebuffer(error) => write!(formatter, "{error}"),
@@ -346,6 +349,7 @@ impl DocumentEditor<'_> {
 pub struct RenderSession {
     options: RenderOptions,
     limits: RenderLimits,
+    accessibility: accessibility::EngineAccessibilityState,
     document: Document,
     styles: StyleSet,
     layout: LayoutOutput,
@@ -374,9 +378,15 @@ impl RenderSession {
         let mut output = render_html_with_limits(source, options, limits)?;
         let generation = output.document.generation();
         output.document.prune_mutations_through(generation);
+        let accessibility = accessibility::EngineAccessibilityState::try_new(
+            &output.document,
+            &output.layout.fragments,
+        )
+        .map_err(RenderError::Accessibility)?;
         Ok(Self {
             options,
             limits,
+            accessibility,
             document: output.document,
             styles: output.styles,
             layout: output.layout,
@@ -527,7 +537,7 @@ impl RenderSession {
         self.observability
     }
 
-    pub fn resize(&mut self, viewport: Size) -> Result<(), RenderError> {
+    pub(crate) fn resize_render_state(&mut self, viewport: Size) -> Result<(), RenderError> {
         validate_viewport_size(viewport)?;
         validate_document_limits(&self.document, self.limits)?;
         let total_started = Instant::now();
@@ -599,7 +609,7 @@ impl RenderSession {
         Ok(())
     }
 
-    pub fn update(&mut self) -> Result<IncrementalReport, RenderError> {
+    pub(crate) fn update_render_state(&mut self) -> Result<IncrementalReport, RenderError> {
         validate_document_limits(&self.document, self.limits)?;
         let update_started = Instant::now();
         let from_generation = self.dirty.through_generation();
