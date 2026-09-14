@@ -100,12 +100,32 @@ jobs:
           )
           PY
 
-      - name: Generate local lock update
+      - name: Patch only local lock dependency
         shell: bash
         run: |
           set -euo pipefail
           cp Cargo.lock /tmp/Cargo.lock.before
-          cargo generate-lockfile
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('Cargo.lock')
+          text = path.read_text()
+          marker = '[[package]]\nname = "rarog-engine"\n'
+          start = text.find(marker)
+          if start < 0:
+              raise SystemExit('rarog-engine lock entry not found')
+          end = text.find('\n[[package]]', start + len(marker))
+          if end < 0:
+              end = len(text)
+          block = text[start:end]
+          if ' "rarog-accessibility",\n' in block:
+              raise SystemExit('rarog-accessibility already present in rarog-engine lock entry')
+          deps = 'dependencies = [\n'
+          if deps not in block:
+              raise SystemExit('rarog-engine dependencies list not found')
+          block = block.replace(deps, deps + ' "rarog-accessibility",\n', 1)
+          path.write_text(text[:start] + block + text[end:])
+          PY
           python3 - <<'PY'
           import tomllib
           from pathlib import Path
@@ -161,7 +181,6 @@ jobs:
               'crates/rarog-engine/src/lib.rs',
           }
           changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'HEAD']).decode().splitlines())
-          changed.add('.github/workflows/r5-accessibility-invalidation-bootstrap.yml')
           unexpected = changed - allowed - {'.github/workflows/r5-accessibility-invalidation-bootstrap.yml'}
           if unexpected:
               raise SystemExit(f'unexpected changed files: {sorted(unexpected)}')
