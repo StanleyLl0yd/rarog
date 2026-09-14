@@ -38,6 +38,11 @@ jobs:
               p.write_text(text.replace(old, new, expected))
 
           replace_exact(
+              "crates/rarog-accessibility/src/invalidation.rs",
+              "        assert!(runtime\n            .events\n            .events\n            .iter()\n            .any(|event| event.kind() == AccessibilityEventKind::BoundsChanged));",
+              "        let mut saw_bounds = false;\n        while let Some(event) = runtime.pop_event() {\n            saw_bounds |= event.kind() == AccessibilityEventKind::BoundsChanged;\n        }\n        assert!(saw_bounds);",
+          )
+          replace_exact(
               "crates/rarog-accessibility/src/lib.rs",
               "mod actions;\npub use actions::*;",
               "mod actions;\nmod invalidation;\npub use actions::*;\npub use invalidation::*;",
@@ -62,7 +67,6 @@ jobs:
               "    fn push_reserved(&mut self, event: AccessibilityEvent)",
               "    pub(crate) fn push_reserved(&mut self, event: AccessibilityEvent)",
           )
-
           replace_exact(
               "crates/rarog-engine/src/lib.rs",
               "mod embedder;\nmod event_loop;",
@@ -107,7 +111,6 @@ jobs:
           cp Cargo.lock /tmp/Cargo.lock.before
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path('Cargo.lock')
           text = path.read_text()
           marker = '[[package]]\nname = "rarog-engine"\n'
@@ -129,7 +132,6 @@ jobs:
           python3 - <<'PY'
           import tomllib
           from pathlib import Path
-
           before = tomllib.loads(Path('/tmp/Cargo.lock.before').read_text())
           after = tomllib.loads(Path('Cargo.lock').read_text())
           def keyed(doc):
@@ -147,9 +149,7 @@ jobs:
           before_deps = set(b[engine_key].get('dependencies', []))
           after_deps = set(a[engine_key].get('dependencies', []))
           if after_deps - before_deps != {'rarog-accessibility'} or before_deps - after_deps:
-              raise SystemExit(
-                  f"unexpected rarog-engine lock dependency drift: before={sorted(before_deps)} after={sorted(after_deps)}"
-              )
+              raise SystemExit(f"unexpected rarog-engine lock dependency drift: before={sorted(before_deps)} after={sorted(after_deps)}")
           PY
 
       - name: Focused verification
