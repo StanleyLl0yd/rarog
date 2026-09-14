@@ -7,6 +7,8 @@ on:
     paths:
       - .github/r5_uia_compile_probe.py
       - .github/workflows/r5-uia-compile-probe.yml
+      - crates/rarog-platform-windows-native/Cargo.toml
+      - crates/rarog-platform-windows-native/src/**
 
 permissions:
   contents: read
@@ -24,44 +26,13 @@ jobs:
         with:
           toolchain: 1.85.0
           components: rustfmt, clippy
-      - name: Apply compile probe
+      - name: Apply probe-only COM sanity module
         run: python .github/r5_uia_compile_probe.py
-      - name: Fetch exact dependency sources
-        run: cargo fetch
-      - name: Show remaining exact UIA provider ABI
-        shell: pwsh
-        run: |
-          $uia = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-0.58.0\src\Windows\Win32\UI\Accessibility\mod.rs" | Select-Object -First 1
-          $shell = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-sys-0.61.2\src\Windows\Win32\UI\Shell\mod.rs" | Select-Object -First 1
-          $ole = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-sys-0.61.2\src\Windows\Win32\System\Ole\mod.rs" | Select-Object -First 1
-          if (-not $uia -or -not $shell -or -not $ole) { throw "required generated Windows source not found" }
-          foreach ($pattern in @(
-            'pub unsafe fn UiaHostProviderFromHwnd',
-            'pub unsafe fn UiaRaiseAutomationEvent',
-            'pub unsafe fn UiaRaiseAutomationPropertyChangedEvent',
-            'pub unsafe fn UiaRaiseStructureChangedEvent',
-            'UiaAppendRuntimeId',
-            'UIA_E_ELEMENTNOTAVAILABLE',
-            'UIA_AutomationFocusChangedEventId',
-            'UIA_NamePropertyId',
-            'UIA_ControlTypePropertyId',
-            'UIA_IsEnabledPropertyId',
-            'UIA_IsKeyboardFocusablePropertyId'
-          )) {
-            Write-Host "===== $pattern ====="
-            Select-String -Path $uia.FullName -Pattern $pattern -SimpleMatch -Context 0,10 | Select-Object -First 2
-          }
-          foreach ($pattern in @('SetWindowSubclass', 'RemoveWindowSubclass', 'DefSubclassProc', 'SUBCLASSPROC')) {
-            Write-Host "===== Shell::$pattern ====="
-            Select-String -Path $shell.FullName -Pattern $pattern -SimpleMatch -Context 0,6 | Select-Object -First 3
-          }
-          foreach ($pattern in @('SafeArrayCreateVector', 'SafeArrayPutElement', 'VT_I4')) {
-            Write-Host "===== Ole::$pattern ====="
-            Select-String -Path $ole.FullName -Pattern $pattern -SimpleMatch -Context 0,6 | Select-Object -First 3
-          }
-      - name: Check probe
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check native UIA bridge
         run: cargo check -p rarog-platform-windows-native --all-targets
-      - name: Clippy probe
+      - name: Clippy native UIA bridge
         run: cargo clippy -p rarog-platform-windows-native --all-targets -- -D warnings
-      - name: Test probe
+      - name: Test native UIA bridge
         run: cargo test -p rarog-platform-windows-native
