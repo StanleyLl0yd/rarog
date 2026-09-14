@@ -1,3 +1,4 @@
+mod accessibility;
 mod clipboard;
 mod gpu;
 mod input;
@@ -6,6 +7,11 @@ mod media;
 mod process;
 mod storage_process;
 
+pub use accessibility::{
+    DEFAULT_MAX_WINDOWS_ACCESSIBILITY_ACTION_REQUESTS,
+    DEFAULT_MAX_WINDOWS_ACCESSIBILITY_PENDING_EVENTS, DEFAULT_MAX_WINDOWS_ACCESSIBILITY_PROVIDERS,
+    WindowsAccessibilityBridgeError, WindowsAccessibilityLimits, WindowsAccessibilityService,
+};
 pub use clipboard::WindowsClipboardService;
 #[cfg(target_os = "windows")]
 pub use gpu::WindowsPresentingCompositor;
@@ -30,16 +36,19 @@ pub use storage_process::{
 };
 
 use rarog_platform::{
-    ClipboardError, PlatformCapabilities, PlatformClipboardService, PlatformFontError,
-    PlatformFontRequest, PlatformFontService, PlatformHost, PlatformInputService,
-    PlatformTextInputService, ResolvedPlatformFont,
+    ClipboardError, PlatformAccessibilityService, PlatformCapabilities, PlatformClipboardService,
+    PlatformFontError, PlatformFontRequest, PlatformFontService, PlatformHost,
+    PlatformInputService, PlatformTextInputService, ResolvedPlatformFont,
 };
 use std::fmt;
+use std::num::NonZeroIsize;
+use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowsPlatformError {
     UnsupportedTarget,
     Clipboard(ClipboardError),
+    Accessibility(WindowsAccessibilityBridgeError),
 }
 
 impl fmt::Display for WindowsPlatformError {
@@ -52,6 +61,10 @@ impl fmt::Display for WindowsPlatformError {
                 formatter,
                 "Windows clipboard initialization failed: {error}"
             ),
+            Self::Accessibility(error) => write!(
+                formatter,
+                "Windows accessibility initialization failed: {error}"
+            ),
         }
     }
 }
@@ -61,6 +74,12 @@ impl std::error::Error for WindowsPlatformError {}
 impl From<ClipboardError> for WindowsPlatformError {
     fn from(error: ClipboardError) -> Self {
         Self::Clipboard(error)
+    }
+}
+
+impl From<WindowsAccessibilityBridgeError> for WindowsPlatformError {
+    fn from(error: WindowsAccessibilityBridgeError) -> Self {
+        Self::Accessibility(error)
     }
 }
 
@@ -88,6 +107,7 @@ pub struct WindowsPlatformHost {
     fonts: WindowsFontService,
     input: WindowsInputService,
     clipboard: WindowsClipboardService,
+    accessibility: OnceLock<WindowsAccessibilityService>,
 }
 
 impl WindowsPlatformHost {
@@ -97,6 +117,7 @@ impl WindowsPlatformHost {
                 fonts: WindowsFontService::new(),
                 input: WindowsInputService::try_new()?,
                 clipboard: WindowsClipboardService::with_default_limits()?,
+                accessibility: OnceLock::new(),
             })
         } else {
             Err(WindowsPlatformError::UnsupportedTarget)
@@ -119,6 +140,26 @@ impl WindowsPlatformHost {
         &self.clipboard
     }
 
+    pub fn accessibility(&self) -> Option<&WindowsAccessibilityService> {
+        self.accessibility.get()
+    }
+
+    pub fn attach_accessibility_window(
+        &self,
+        hwnd: NonZeroIsize,
+    ) -> Result<&WindowsAccessibilityService, WindowsAccessibilityBridgeError> {
+        if self.accessibility.get().is_some() {
+            return Err(WindowsAccessibilityBridgeError::AlreadyAttached);
+        }
+        let service = WindowsAccessibilityService::with_default_limits_for_window(hwnd)?;
+        self.accessibility
+            .set(service)
+            .map_err(|_| WindowsAccessibilityBridgeError::AlreadyAttached)?;
+        self.accessibility
+            .get()
+            .ok_or(WindowsAccessibilityBridgeError::AlreadyAttached)
+    }
+
     pub async fn request_gpu(&self) -> Result<WindowsGpuDevice, WindowsGpuError> {
         WindowsGpuDevice::request().await
     }
@@ -135,6 +176,7 @@ impl PlatformHost for WindowsPlatformHost {
             input: true,
             input_ime: true,
             clipboard: true,
+            accessibility: self.accessibility.get().is_some(),
             sandbox_process: true,
             ..PlatformCapabilities::NONE
         }
@@ -154,6 +196,12 @@ impl PlatformHost for WindowsPlatformHost {
 
     fn clipboard_service(&self) -> Option<&dyn PlatformClipboardService> {
         Some(&self.clipboard)
+    }
+
+    fn accessibility_service(&self) -> Option<&dyn PlatformAccessibilityService> {
+        self.accessibility
+            .get()
+            .map(|service| service as &dyn PlatformAccessibilityService)
     }
 }
 
@@ -297,6 +345,7 @@ mod tests {
             assert!(host.capabilities().supports(PlatformService::Input));
             assert!(host.capabilities().supports(PlatformService::InputIme));
             assert!(host.capabilities().supports(PlatformService::Clipboard));
+            assert!(!host.capabilities().supports(PlatformService::Accessibility));
             assert!(
                 host.capabilities()
                     .supports(PlatformService::SandboxProcess)
@@ -305,6 +354,7 @@ mod tests {
             assert!(host.input_service().is_some());
             assert!(host.text_input_service().is_some());
             assert!(host.clipboard_service().is_some());
+            assert!(host.accessibility_service().is_none());
         } else {
             assert!(matches!(
                 result,

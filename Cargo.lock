@@ -2220,6 +2220,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
 
 [[package]]
+name = "rarog-accessibility"
+version = "0.1.0"
+dependencies = [
+ "rarog-dom",
+ "rarog-layout",
+ "rarog-types",
+]
+
+[[package]]
 name = "rarog-broker"
 version = "0.1.0"
 dependencies = [
@@ -2312,6 +2321,14 @@ name = "rarog-fetch"
 version = "0.1.0"
 dependencies = [
  "rarog-url",
+]
+
+[[package]]
+name = "rarog-graphics-adapter"
+version = "0.1.0"
+dependencies = [
+ "rarog-canvas",
+ "rarog-webgl",
 ]
 
 [[package]]
@@ -2412,6 +2429,8 @@ dependencies = [
 name = "rarog-platform-windows-native"
 version = "0.1.0"
 dependencies = [
+ "windows",
+ "windows-core",
  "windows-sys 0.61.2",
 ]
 
@@ -2491,6 +2510,13 @@ version = "0.1.0"
 dependencies = [
  "psl",
  "url",
+]
+
+[[package]]
+name = "rarog-webgl"
+version = "0.1.0"
+dependencies = [
+ "rarog-canvas",
 ]
 
 [[package]]
@@ -3757,27 +3783,3 @@ name = "zlib-rs"
 version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
-
-[[package]]
-name = "rarog-webgl"
-version = "0.1.0"
-dependencies = [
- "rarog-canvas",
-]
-
-[[package]]
-name = "rarog-graphics-adapter"
-version = "0.1.0"
-dependencies = [
- "rarog-canvas",
- "rarog-webgl",
-]
-
-[[package]]
-name = "rarog-accessibility"
-version = "0.1.0"
-dependencies = [
- "rarog-dom",
- "rarog-layout",
- "rarog-types",
-]

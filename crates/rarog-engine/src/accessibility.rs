@@ -1,7 +1,8 @@
 use super::{IncrementalMode, IncrementalReport, RenderError, RenderSession};
 use rarog_accessibility::{
-    AccessibilityEvent, AccessibilityInvalidation, AccessibilityRefreshError, AccessibilityRuntime,
-    AccessibilitySnapshot,
+    AccessibilityAction, AccessibilityActionError, AccessibilityActionExecutor,
+    AccessibilityActionResult, AccessibilityEvent, AccessibilityInvalidation, AccessibilityNodeId,
+    AccessibilityRefreshError, AccessibilityRuntime, AccessibilitySnapshot,
 };
 use rarog_dom::{Document, MutationKind};
 use rarog_layout::FragmentTree;
@@ -176,6 +177,20 @@ impl RenderSession {
 
     pub fn accessibility_geometry_revision(&self) -> u64 {
         self.accessibility.geometry_revision
+    }
+
+    pub fn perform_accessibility_action<E: AccessibilityActionExecutor>(
+        &mut self,
+        executor: &mut E,
+        target: AccessibilityNodeId,
+        action: AccessibilityAction,
+    ) -> Result<AccessibilityActionResult, AccessibilityActionError> {
+        let runtime = self
+            .accessibility
+            .runtime
+            .as_mut()
+            .ok_or(AccessibilityActionError::InconsistentAuthority)?;
+        runtime.perform_action(&mut self.document, executor, target, action)
     }
 
     pub fn resize(&mut self, viewport: Size) -> Result<(), RenderError> {
