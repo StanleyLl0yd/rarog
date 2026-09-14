@@ -50,7 +50,7 @@ pub struct AccessibilityEvent {
 }
 
 impl AccessibilityEvent {
-    pub const fn new(
+    pub(crate) const fn new(
         target: AccessibilityNodeId,
         source: NodeId,
         kind: AccessibilityEventKind,
@@ -126,15 +126,6 @@ impl AccessibilityEventQueue {
 
     pub fn pop_front(&mut self) -> Option<AccessibilityEvent> {
         self.events.pop_front()
-    }
-
-    pub fn try_push(
-        &mut self,
-        event: AccessibilityEvent,
-    ) -> Result<(), AccessibilityEventQueueError> {
-        self.ensure_capacity(1)?;
-        self.events.push_back(event);
-        Ok(())
     }
 
     fn ensure_capacity(&self, additional: usize) -> Result<(), AccessibilityEventQueueError> {
@@ -571,37 +562,11 @@ mod tests {
     }
 
     #[test]
-    fn event_queue_rejects_zero_limit_and_preserves_fifo() {
+    fn event_queue_rejects_zero_limit() {
         assert_eq!(
             AccessibilityEventQueue::try_with_max_events(0).unwrap_err(),
             AccessibilityEventQueueError::InvalidLimit
         );
-
-        let mut document = Document::new();
-        let button = document
-            .append_new(document.root(), element("button"))
-            .unwrap();
-        let mut state = AccessibilityTreeState::try_new(AccessibilityLimits::default()).unwrap();
-        let tree = build_tree(&mut state, &document);
-        let target = tree.id_for_source(button).unwrap();
-        let first = AccessibilityEvent::new(
-            target,
-            button,
-            AccessibilityEventKind::Invoked,
-            document.generation(),
-        );
-        let second = AccessibilityEvent::new(
-            target,
-            button,
-            AccessibilityEventKind::FocusChanged,
-            document.generation(),
-        );
-        let mut queue = AccessibilityEventQueue::try_with_max_events(2).unwrap();
-        queue.try_push(first).unwrap();
-        queue.try_push(second).unwrap();
-        assert_eq!(queue.pop_front(), Some(first));
-        assert_eq!(queue.pop_front(), Some(second));
-        assert!(queue.is_empty());
     }
 
     #[test]
