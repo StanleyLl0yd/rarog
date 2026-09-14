@@ -23,10 +23,16 @@ rarog-url = { path = "../rarog-url" }
 
 [dev-dependencies]
 rarog-broker = { path = "../rarog-broker" }
+rarog-canvas = { path = "../rarog-canvas" }
 rarog-host = { path = "../rarog-host" }
 rarog-ipc = { path = "../rarog-ipc" }
+rarog-media = { path = "../rarog-media" }
 rarog-platform-windows = { path = "../rarog-platform-windows" }
 rarog-process = { path = "../rarog-process" }
+rarog-storage = { path = "../rarog-storage" }
+rarog-webgl = { path = "../rarog-webgl" }
+rarog-websocket = { path = "../rarog-websocket" }
+rarog-workers = { path = "../rarog-workers" }
 
 [lints]
 workspace = true
