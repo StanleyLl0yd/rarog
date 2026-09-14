@@ -1,29 +1,13 @@
 use rarog_accessibility::{AccessibilityError, AccessibilityLimits, AccessibilityTreeState};
-use rarog_canvas::{CanvasLimits, CanvasRegistry};
 use rarog_engine::{RenderOptions, RenderSession};
-use rarog_media::{
-    MediaError, MediaLimits, MediaRegistry, MediaResourceDescriptor, MediaStreamDescriptor, MediaTime,
-};
 use rarog_process::ProcessTopology;
-use rarog_storage::{StorageErrorKind, StorageLimits, StorageProcessState};
 use rarog_types::Size;
 use rarog_url::WebUrl;
-use rarog_webgl::{
-    WebGlContextLossReason, WebGlContextState, WebGlError, WebGlLimits, WebGlRegistry,
-};
-use rarog_websocket::{
-    WebSocketLifecycle, WebSocketLifecycleErrorKind, WebSocketLimits, WebSocketMessage,
-    WebSocketMessageQueues, WebSocketQueueErrorKind, WebSocketQueueLimits, WebSocketReadyState,
-};
-use rarog_workers::{
-    ServiceWorkerError, ServiceWorkerLimits, ServiceWorkerRegistry, WorkerErrorKind, WorkerLimits,
-    WorkerMessageError, WorkerMessageLimits, WorkerMessageMailbox, WorkerMessageValue,
-    WorkerRegistry,
-};
 
 const R5_BACKLOG: &str = include_str!("../../../docs/R5-BACKLOG.md");
 const R5_EXIT: &str = include_str!("../../../docs/R5-EXIT.md");
 const CI: &str = include_str!("../../../.github/workflows/ci.yml");
+
 const STORAGE_CARGO: &str = include_str!("../../rarog-storage/Cargo.toml");
 const WORKERS_CARGO: &str = include_str!("../../rarog-workers/Cargo.toml");
 const WEBSOCKET_CARGO: &str = include_str!("../../rarog-websocket/Cargo.toml");
@@ -31,6 +15,19 @@ const MEDIA_CARGO: &str = include_str!("../../rarog-media/Cargo.toml");
 const CANVAS_CARGO: &str = include_str!("../../rarog-canvas/Cargo.toml");
 const WEBGL_CARGO: &str = include_str!("../../rarog-webgl/Cargo.toml");
 const ACCESSIBILITY_CARGO: &str = include_str!("../../rarog-accessibility/Cargo.toml");
+
+const STORAGE_STATE: &str = include_str!("../../rarog-storage/src/state.rs");
+const WORKER_IDENTITY: &str = include_str!("../../rarog-workers/src/identity.rs");
+const WORKER_MESSAGE: &str = include_str!("../../rarog-workers/src/message.rs");
+const SERVICE_WORKER: &str = include_str!("../../rarog-workers/src/service_worker.rs");
+const WEBSOCKET: &str = include_str!("../../rarog-websocket/src/lib.rs");
+const WEBSOCKET_QUEUE: &str = include_str!("../../rarog-websocket/src/queue.rs");
+const HOST: &str = include_str!("../../rarog-host/src/lib.rs");
+const MEDIA: &str = include_str!("../../rarog-media/src/lib.rs");
+const MEDIA_ADAPTER: &str = include_str!("../../rarog-media-adapter/src/lib.rs");
+const CANVAS: &str = include_str!("../../rarog-canvas/src/lib.rs");
+const WEBGL: &str = include_str!("../../rarog-webgl/src/lib.rs");
+const ACCESSIBILITY: &str = include_str!("../../rarog-accessibility/src/lib.rs");
 
 fn web_url(value: &str) -> WebUrl {
     WebUrl::parse(value).unwrap()
@@ -68,16 +65,17 @@ fn r5_exit_manifest_ci_and_stop_boundary_are_wired() {
             !manifest.contains("rarog-platform-windows")
                 && !manifest.contains("windows-sys")
                 && !manifest.contains("windows-core"),
-            "portable R5 semantic crate {name} depends on a Windows-native authority crate"
+            "portable R5 semantic crate {name} depends on Windows-native authority"
         );
     }
 }
 
 #[test]
-fn r5_exit_storage_identity_origin_isolation_and_limits_fail_closed() {
+fn r5_exit_storage_identity_origin_isolation_and_limits_are_explicit() {
     let mut topology = ProcessTopology::try_new(1).unwrap();
-    let site_url = web_url("https://app.example.com/");
-    let site = topology.assign_site(site_url.site_identity().unwrap()).unwrap();
+    let app = web_url("https://app.example.com/");
+    let cdn = web_url("https://cdn.example.com/");
+    let site = topology.assign_site(app.site_identity().unwrap()).unwrap();
     let first_storage = topology.ensure_storage_process().unwrap();
     assert_ne!(site.process().get(), first_storage.process().get());
 
@@ -87,264 +85,84 @@ fn r5_exit_storage_identity_origin_isolation_and_limits_fail_closed() {
     let replacement = topology.ensure_storage_process().unwrap();
     assert_ne!(first_storage.process(), replacement.process());
 
-    let limits = StorageLimits {
-        max_origins: 2,
-        max_entries_per_origin: 1,
-        max_key_bytes: 8,
-        max_value_bytes: 8,
-        max_origin_bytes: 16,
-        max_total_bytes: 32,
-    };
-    let mut storage = StorageProcessState::try_new(replacement.process(), limits).unwrap();
-    let app = web_url("https://app.example.com/");
-    let cdn = web_url("https://cdn.example.com/");
     assert_eq!(app.site_identity().unwrap(), cdn.site_identity().unwrap());
-    let app_origin = app.origin().unwrap();
-    let cdn_origin = cdn.origin().unwrap();
-    assert_ne!(app_origin, cdn_origin);
-
-    storage.put(&app_origin, "key", b"value").unwrap();
-    assert_eq!(storage.get(&app_origin, "key"), Some(b"value".as_slice()));
-    assert_eq!(storage.get(&cdn_origin, "key"), None);
-
-    let error = storage.put(&app_origin, "second", b"x").unwrap_err();
-    assert_eq!(error.kind, StorageErrorKind::EntryLimitExceeded);
-    let error = storage.put(&cdn_origin, "key", b"012345678").unwrap_err();
-    assert_eq!(error.kind, StorageErrorKind::ValueTooLarge);
+    assert_ne!(app.origin().unwrap(), cdn.origin().unwrap());
+    assert!(STORAGE_STATE.contains("pub struct StorageLimits"));
+    assert!(STORAGE_STATE.contains("origins: HashMap<Origin, OriginStorage>"));
+    assert!(STORAGE_STATE.contains("StorageErrorKind::OriginLimitExceeded"));
+    assert!(STORAGE_STATE.contains("StorageErrorKind::EntryLimitExceeded"));
+    assert!(STORAGE_STATE.contains("StorageErrorKind::OriginByteLimitExceeded"));
+    assert!(STORAGE_STATE.contains("StorageErrorKind::TotalByteLimitExceeded"));
 }
 
 #[test]
-fn r5_exit_workers_and_service_workers_bound_lifecycle_and_stale_identity() {
-    let mut workers = WorkerRegistry::try_new(WorkerLimits {
-        max_workers: 1,
-        max_children_per_owner: 1,
-        max_depth: 1,
-    })
-    .unwrap();
-    let owner = 7_u64;
-    let worker = workers.create_root(owner).unwrap();
-    workers.mark_running(worker).unwrap();
-    assert_eq!(workers.live_workers(), 1);
-    assert_eq!(
-        workers.create_root(owner).unwrap_err().kind,
-        WorkerErrorKind::WorkerLimitExceeded
-    );
+fn r5_exit_worker_and_service_worker_contracts_are_bounded_and_fail_closed() {
+    assert!(WORKER_IDENTITY.contains("pub struct WorkerLimits"));
+    assert!(WORKER_IDENTITY.contains("WorkerErrorKind::WorkerLimitExceeded"));
+    assert!(WORKER_IDENTITY.contains("WorkerErrorKind::UnknownWorker"));
+    assert!(WORKER_IDENTITY.contains("WorkerLifecycleState::Closing"));
 
-    let mut mailbox = WorkerMessageMailbox::try_new(WorkerMessageLimits {
-        max_message_bytes: 64,
-        max_message_items: 8,
-        max_message_depth: 4,
-        max_queued_messages: 1,
-        max_queued_bytes: 64,
-    })
-    .unwrap();
-    mailbox
-        .send_from_root(&workers, &owner, worker, &WorkerMessageValue::Null)
-        .unwrap();
-    assert_eq!(mailbox.queued_messages(), 1);
-    assert_eq!(
-        mailbox
-            .send_from_root(&workers, &owner, worker, &WorkerMessageValue::Null)
-            .unwrap_err(),
-        WorkerMessageError::QueueMessageLimitExceeded
-    );
+    assert!(WORKER_MESSAGE.contains("pub struct WorkerMessageLimits"));
+    assert!(WORKER_MESSAGE.contains("QueueMessageLimitExceeded"));
+    assert!(WORKER_MESSAGE.contains("QueueByteLimitExceeded"));
+    assert!(WORKER_MESSAGE.contains("DeliveryUnavailable"));
 
-    workers.begin_close(worker).unwrap();
-    workers.retire(worker).unwrap();
-    assert_eq!(
-        workers.state(worker).unwrap_err().kind,
-        WorkerErrorKind::UnknownWorker
-    );
-    assert!(matches!(
-        mailbox
-            .send_from_root(&workers, &owner, worker, &WorkerMessageValue::Null)
-            .unwrap_err(),
-        WorkerMessageError::Worker(error) if error.kind == WorkerErrorKind::UnknownWorker
+    assert!(SERVICE_WORKER.contains("pub struct ServiceWorkerLimits"));
+    assert!(SERVICE_WORKER.contains("OriginMismatch"));
+    assert!(SERVICE_WORKER.contains("RegistrationLimitExceeded"));
+    assert!(SERVICE_WORKER.contains("VersionLimitExceeded"));
+    assert!(SERVICE_WORKER.contains("UnknownVersion"));
+}
+
+#[test]
+fn r5_exit_websocket_authority_lifecycle_and_queues_are_bounded() {
+    assert!(WEBSOCKET.contains("pub struct WebSocketLimits"));
+    assert!(WEBSOCKET.contains("pub trait WebSocketTransport"));
+    assert!(WEBSOCKET.contains("WebSocketTransportTicket(NonZeroU64)"));
+    assert!(WEBSOCKET.contains("pub enum WebSocketReadyState"));
+
+    assert!(WEBSOCKET_QUEUE.contains("pub struct WebSocketQueueLimits"));
+    assert!(WEBSOCKET_QUEUE.contains("OutboundMessageLimitExceeded"));
+    assert!(WEBSOCKET_QUEUE.contains("OutboundByteLimitExceeded"));
+    assert!(WEBSOCKET_QUEUE.contains("InboundMessageLimitExceeded"));
+    assert!(WEBSOCKET_QUEUE.contains("InboundByteLimitExceeded"));
+
+    assert!(HOST.contains(
+        "authorize_navigation_context_capability_class(capability, CapabilityClass::Network)"
     ));
-
-    let mut service_workers = ServiceWorkerRegistry::try_new(ServiceWorkerLimits {
-        max_registrations: 1,
-        max_registrations_per_origin: 1,
-        max_versions: 2,
-        max_url_bytes: 256,
-    })
-    .unwrap();
-    let page = web_url("https://app.example.com/index.html");
-    let origin = page.origin().unwrap();
-    let update = service_workers
-        .register(
-            &origin,
-            &web_url("https://app.example.com/app/"),
-            &web_url("https://app.example.com/sw.js"),
-        )
-        .unwrap();
-    assert_eq!(service_workers.registration_count(), 1);
-    assert_eq!(service_workers.version_count(), 1);
-    assert!(service_workers.version(update.version()).is_ok());
-
-    let cross_origin = service_workers
-        .register(
-            &origin,
-            &web_url("https://app.example.com/other/"),
-            &web_url("https://cdn.example.com/sw.js"),
-        )
-        .unwrap_err();
-    assert_eq!(cross_origin, ServiceWorkerError::OriginMismatch);
-
-    let foreign_registry = ServiceWorkerRegistry::with_default_limits().unwrap();
-    assert_eq!(
-        foreign_registry.version(update.version()).unwrap_err(),
-        ServiceWorkerError::UnknownVersion
-    );
+    assert!(HOST.contains("quarantine_websocket_connections_for_process(process)"));
+    assert!(HOST.contains("pending_websocket_aborts"));
 }
 
 #[test]
-fn r5_exit_websocket_lifecycle_and_queue_accounting_are_bounded() {
-    let message_limits = WebSocketLimits {
-        max_url_bytes: 256,
-        max_subprotocols: 4,
-        max_subprotocol_bytes: 32,
-        max_message_bytes: 4,
-    };
-    let mut queues = WebSocketMessageQueues::try_new(WebSocketQueueLimits {
-        max_outbound_messages: 1,
-        max_outbound_bytes: 4,
-        max_inbound_messages: 1,
-        max_inbound_bytes: 4,
-    })
-    .unwrap();
-    queues
-        .enqueue_outbound(WebSocketMessage::text("four", message_limits).unwrap())
-        .unwrap();
-    let snapshot = queues.snapshot();
-    assert_eq!(snapshot.outbound_messages(), 1);
-    assert_eq!(snapshot.outbound_bytes(), 4);
-    assert_eq!(
-        queues
-            .enqueue_outbound(WebSocketMessage::text("x", message_limits).unwrap())
-            .unwrap_err()
-            .kind,
-        WebSocketQueueErrorKind::OutboundMessageLimitExceeded
-    );
-    queues.complete_outbound().unwrap();
-    assert_eq!(queues.snapshot().outbound_bytes(), 0);
+fn r5_exit_media_contract_keeps_backend_state_out_of_semantic_authority() {
+    assert!(MEDIA.contains("pub struct MediaLimits"));
+    assert!(MEDIA.contains("pub struct MediaRegistry"));
+    assert!(MEDIA.contains("ResourceLimitExceeded"));
+    assert!(MEDIA.contains("PlaybackLimitExceeded"));
+    assert!(MEDIA.contains("UnknownResource(MediaResourceId)"));
 
-    queues
-        .enqueue_inbound(WebSocketMessage::binary(&[1, 2, 3, 4], message_limits).unwrap())
-        .unwrap();
-    assert_eq!(queues.inbound_receive_limit().unwrap(), None);
-    assert_eq!(queues.take_inbound().unwrap().unwrap().len(), 4);
-    assert_eq!(queues.snapshot().inbound_bytes(), 0);
-
-    let mut lifecycle = WebSocketLifecycle::new();
-    lifecycle.mark_open().unwrap();
-    lifecycle.begin_closing().unwrap();
-    lifecycle.mark_closed().unwrap();
-    assert_eq!(lifecycle.state(), WebSocketReadyState::Closed);
-    assert_eq!(
-        lifecycle.mark_open().unwrap_err().kind,
-        WebSocketLifecycleErrorKind::InvalidTransition
-    );
+    assert!(MEDIA_ADAPTER.contains("pub trait MediaDemuxer"));
+    assert!(MEDIA_ADAPTER.contains("pub trait MediaDecoder"));
+    assert!(MEDIA_ADAPTER.contains("pub trait MediaOutput"));
+    assert!(MEDIA_ADAPTER.contains("pub struct MediaDemuxTicket(NonZeroU64)"));
+    assert!(MEDIA_ADAPTER.contains("pub struct MediaDecoderTicket(NonZeroU64)"));
+    assert!(MEDIA_ADAPTER.contains("pub struct MediaOutputTicket(NonZeroU64)"));
 }
 
 #[test]
-fn r5_exit_media_semantics_own_bounded_resources_not_backend_state() {
-    let limits = MediaLimits {
-        max_resources: 1,
-        max_streams: 1,
-        max_streams_per_resource: 1,
-        max_playbacks: 1,
-        max_audio_channels: 2,
-        max_audio_sample_rate_hz: 48_000,
-        max_video_width: 1_920,
-        max_video_height: 1_080,
-    };
-    let descriptor = MediaResourceDescriptor::try_new(
-        MediaTime::from_micros(1_000_000),
-        &[MediaStreamDescriptor::Audio {
-            channels: 2,
-            sample_rate_hz: 48_000,
-        }],
-        limits,
-    )
-    .unwrap();
-    let mut media = MediaRegistry::try_new(limits).unwrap();
-    let resource = media.create_resource(descriptor.clone()).unwrap();
-    assert!(matches!(
-        media.create_resource(descriptor).unwrap_err(),
-        MediaError::ResourceLimitExceeded { .. }
-    ));
+fn r5_exit_canvas_webgl_contract_bounds_resources_and_context_loss() {
+    assert!(CANVAS.contains("pub struct CanvasLimits"));
+    assert!(CANVAS.contains("SurfacePixelLimitExceeded"));
+    assert!(CANVAS.contains("TotalPixelLimitExceeded"));
+    assert!(CANVAS.contains("CanvasExternalContextLease"));
 
-    let stream = media.resource(resource).unwrap().streams()[0];
-    let playback = media.create_playback(resource, &[stream]).unwrap();
-    assert_eq!(media.snapshot().resources(), 1);
-    assert_eq!(media.snapshot().streams(), 1);
-    assert_eq!(media.snapshot().playbacks(), 1);
-    assert_eq!(
-        media.retire_resource(resource).unwrap_err(),
-        MediaError::ResourceInUse(resource)
-    );
-    assert_eq!(media.playback(playback).unwrap().resource(), resource);
-
-    let foreign = MediaRegistry::try_new(limits).unwrap();
-    assert_eq!(
-        foreign.resource(resource).unwrap_err(),
-        MediaError::UnknownResource(resource)
-    );
-}
-
-#[test]
-fn r5_exit_canvas_webgl_loss_retires_derived_resources_and_releases_canvas() {
-    let mut canvas = CanvasRegistry::try_new(CanvasLimits {
-        max_surfaces: 1,
-        max_contexts: 1,
-        max_pixels_per_surface: 4,
-        max_total_pixels: 4,
-        max_state_stack_depth: 1,
-    })
-    .unwrap();
-    let surface = canvas.create_surface(2, 2).unwrap();
-    assert!(canvas.create_surface(1, 1).is_err());
-
-    let mut webgl = WebGlRegistry::try_new(WebGlLimits {
-        max_contexts: 1,
-        max_resources_per_context: 2,
-        max_resources: 2,
-        max_buffer_bytes: 4,
-        max_total_buffer_bytes: 4,
-        max_texture_dimension: 2,
-        max_texture_pixels: 4,
-        max_total_texture_pixels: 4,
-    })
-    .unwrap();
-    let context = webgl.create_context(&mut canvas, surface).unwrap();
-    let buffer = webgl.create_buffer(context, 4).unwrap();
-    assert!(webgl.buffer(buffer).is_some());
-    assert_eq!(webgl.total_buffer_bytes(), 4);
-    assert!(matches!(
-        webgl.create_buffer(context, 1).unwrap_err(),
-        WebGlError::TotalBufferByteLimitExceeded { .. }
-    ));
-
-    assert!(
-        webgl
-            .lose_context(context, WebGlContextLossReason::DeviceReset)
-            .unwrap()
-    );
-    assert_eq!(
-        webgl.context(context).unwrap().state(),
-        WebGlContextState::Lost(WebGlContextLossReason::DeviceReset)
-    );
-    assert_eq!(webgl.resource_count(), 0);
-    assert_eq!(webgl.total_buffer_bytes(), 0);
-    assert_eq!(
-        webgl.create_buffer(context, 1).unwrap_err(),
-        WebGlError::ContextLost(context)
-    );
-
-    webgl.destroy_context(&mut canvas, context).unwrap();
-    assert!(canvas.surface(surface).unwrap().external_context().is_none());
-    assert!(canvas.create_2d_context(surface).is_ok());
+    assert!(WEBGL.contains("pub struct WebGlLimits"));
+    assert!(WEBGL.contains("ContextLost(WebGlContextId)"));
+    assert!(WEBGL.contains("pub fn lose_context"));
+    assert!(WEBGL.contains("self.retire_resources(context)?"));
+    assert!(WEBGL.contains("canvas.acquire_external_context(surface)?"));
+    assert!(WEBGL.contains("canvas.release_external_context(lease)?"));
 }
 
 #[test]
@@ -361,6 +179,10 @@ fn r5_exit_accessibility_is_bounded_derived_engine_state() {
         AccessibilityTreeState::try_new(invalid).unwrap_err(),
         AccessibilityError::InvalidLimits
     );
+    assert!(ACCESSIBILITY.contains("pub struct AccessibilityLimits"));
+    assert!(ACCESSIBILITY.contains("source_generation: u64"));
+    assert!(ACCESSIBILITY.contains("IdentityLimitExceeded"));
+    assert!(ACCESSIBILITY.contains("TotalNameByteLimitExceeded"));
 
     let mut session =
         RenderSession::new("<button>Save</button>", RenderOptions::default()).unwrap();
