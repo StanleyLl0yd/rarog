@@ -1,0 +1,64 @@
+name: R5 accessibility invalidation docs
+
+on:
+  push:
+    branches:
+      - r5/accessibility-invalidation
+    paths:
+      - .github/workflows/r5-accessibility-invalidation-docs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Add Architecture evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('docs/ARCHITECTURE.md')
+          text = path.read_text()
+          needle = "No Windows UIA/MSAA/COM object, platform accessibility handle/ID, automatic DOM/layout invalidation, DOM/WebIDL accessibility surface, broad ARIA action completeness, WPT qualification or R6 work is introduced by this boundary.\n\n## Platform host boundary"
+          replacement = """No Windows UIA/MSAA/COM object, platform accessibility handle/ID, automatic DOM/layout invalidation, DOM/WebIDL accessibility surface, broad ARIA action completeness, WPT qualification or R6 work is introduced by this boundary.
+
+## R5 deterministic accessibility invalidation
+
+The third Accessibility slice makes accessibility refresh part of `RenderSession` orchestration without giving accessibility authority over DOM, layout or rendering. An `AccessibilitySnapshot` is current only for the exact DOM generation from which it was built and an engine-owned non-zero geometry revision. The geometry revision advances only after committed relayout/full-rebuild or viewport-resize geometry changes; Fragment and Layout identities remain disposable derived implementation details.
+
+`RenderSession` consumes the same generation-ordered DOM mutation journal used by render invalidation before the ordinary update prunes that journal. Structural changes conservatively request tree, semantic and bounds refresh; CharacterData changes request semantic and bounds refresh; attributes request semantic refresh and membership/geometry-sensitive attributes add tree/bounds invalidation. Accessibility refresh occurs only after render update/resize has successfully committed the new DOM, Layout Tree and Fragment Tree state. A consumer receives a snapshot only when its DOM generation and geometry revision exactly match those committed engine values.
+
+`AccessibilityRuntime::refresh` is transactional. It clones the lifecycle identity state, builds a complete bounded candidate tree, rejects DOM/geometry generation regression, validates scope and stable source-to-`AccessibilityNodeId` correlation, computes a deterministic semantic diff, reserves bounded event capacity and only then publishes the candidate identity state and snapshot. Membership/role/parent/child-order changes imply `TreeChanged`; retained-node name, state and bounds changes produce fixed `NameChanged`, `StateChanged` and `BoundsChanged` events carrying the candidate DOM generation.
+
+Notification pressure remains bounded without making large updates permanently stale. A detailed event batch is retained when it fits. If it cannot fit but one queue slot remains, the refresh notification is conservatively coalesced to a single root `TreeChanged`. If no slot remains, candidate publication fails atomically and the engine retains a coalesced pending invalidation for a later retry. Initial tree-build or later refresh failure likewise does not fail rendering: accessibility is derived state, so the current snapshot becomes unavailable, the fixed Rarog error/pending state remains observable and later committed updates can reconstruct it. Geometry-revision exhaustion fails closed rather than wrapping.
+
+This boundary contains no Windows UIA/MSAA/COM/provider object and no platform accessibility identifier becomes Web authority. The portable semantic event queue is the handoff consumed by the next Windows accessibility bridge slice. No broad ARIA completeness, assistive-technology compatibility, WPT/WebDriver/BiDi/real-Web qualification or R6 work is claimed. See ADR-0137.
+
+## Platform host boundary"""
+          count = text.count(needle)
+          if count != 1:
+              raise SystemExit(f'expected one Architecture insertion point, found {count}')
+          path.write_text(text.replace(needle, replacement, 1))
+          PY
+          grep -F "## R5 deterministic accessibility invalidation" docs/ARCHITECTURE.md
+          grep -F "See ADR-0137." docs/ARCHITECTURE.md
+      - name: Publish production-only docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/r5-accessibility-invalidation-docs.yml
+          changed="$(git diff --name-only HEAD | sort)"
+          expected="$(printf '%s\n' '.github/workflows/r5-accessibility-invalidation-docs.yml' 'docs/ARCHITECTURE.md' | sort)"
+          test "$changed" = "$expected"
+          git add docs/ARCHITECTURE.md
+          git commit -m "docs: document accessibility invalidation boundary"
+          git push origin HEAD:r5/accessibility-invalidation
