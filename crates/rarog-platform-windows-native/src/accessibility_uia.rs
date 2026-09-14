@@ -1,9 +1,8 @@
 use crate::accessibility::{
-    native_error, valid_provider_serial, WindowsAccessibilityNativeAction,
-    WindowsAccessibilityNativeActionRequest, WindowsAccessibilityNativeError,
-    WindowsAccessibilityNativeErrorKind, WindowsAccessibilityNativeEventKind,
-    WindowsAccessibilityNativeNode, WindowsAccessibilityNativeRole,
-    WindowsAccessibilityNativeSnapshot,
+    native_error, WindowsAccessibilityNativeAction, WindowsAccessibilityNativeActionRequest,
+    WindowsAccessibilityNativeError, WindowsAccessibilityNativeErrorKind,
+    WindowsAccessibilityNativeEventKind, WindowsAccessibilityNativeNode,
+    WindowsAccessibilityNativeRole, WindowsAccessibilityNativeSnapshot,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -25,27 +24,28 @@ use windows::{
             NavigateDirection_PreviousSibling, ProviderOptions, ProviderOptions_ServerSideProvider,
             StructureChangeType_ChildrenInvalidated, ToggleState, ToggleState_Off, ToggleState_On,
             UIA_AutomationFocusChangedEventId, UIA_AutomationPropertyChangedEventId,
-            UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
-            UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_ExpandCollapsePatternId,
-            UIA_InvokePatternId, UIA_Invoke_InvokedEventId, UIA_IsEnabledPropertyId,
-            UIA_IsKeyboardFocusablePropertyId, UIA_LayoutInvalidatedEventId, UIA_NamePropertyId,
-            UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_TogglePatternId,
-            UIA_ToggleToggleStatePropertyId, UiaAppendRuntimeId, UiaHostProviderFromHwnd,
-            UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent,
-            UiaRaiseStructureChangedEvent, UiaRect, UiaReturnRawElementProvider, UiaRootObjectId,
+            UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+            UIA_ExpandCollapsePatternId, UIA_InvokePatternId, UIA_Invoke_InvokedEventId,
+            UIA_IsEnabledPropertyId, UIA_IsKeyboardFocusablePropertyId,
+            UIA_LayoutInvalidatedEventId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+            UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UiaAppendRuntimeId,
+            UiaHostProviderFromHwnd, UiaRaiseAutomationEvent,
+            UiaRaiseAutomationPropertyChangedEvent, UiaRaiseStructureChangedEvent, UiaRect,
+            UiaReturnRawElementProvider, UiaRootObjectId,
         },
     },
 };
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Graphics::Gdi::ClientToScreen,
     System::{
-        Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, SAFEARRAY as RawSafeArray},
+        Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED},
         Ole::{SafeArrayCreateVector, SafeArrayDestroy, SafeArrayPutElement},
         Variant::VT_I4,
     },
     UI::{
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-        WindowsAndMessaging::{ClientToScreen, IsWindow, ScreenToClient, WM_GETOBJECT},
+        WindowsAndMessaging::{IsWindow, WM_GETOBJECT},
     },
 };
 
@@ -107,7 +107,10 @@ impl UiaShared {
         self.state.lock().map_err(|_| Error::from(E_NOTIMPL))
     }
 
-    fn current_node_win(&self, serial: u64) -> WinResult<(SnapshotState, WindowsAccessibilityNativeNode)> {
+    fn current_node_win(
+        &self,
+        serial: u64,
+    ) -> WinResult<(SnapshotState, WindowsAccessibilityNativeNode)> {
         let state = self.lock_win()?;
         let current = state
             .current
@@ -121,51 +124,34 @@ impl UiaShared {
         Ok((current.clone(), node))
     }
 
-    fn enqueue_action(&self, serial: u64, action: WindowsAccessibilityNativeAction) -> WinResult<()> {
+    fn enqueue_action(
+        &self,
+        serial: u64,
+        action: WindowsAccessibilityNativeAction,
+    ) -> WinResult<()> {
         let mut state = self.lock_win()?;
-        let Some(current) = state.current.as_ref() else {
-            return Err(element_unavailable_error());
+        let (document_generation, geometry_revision) = {
+            let Some(current) = state.current.as_ref() else {
+                return Err(element_unavailable_error());
+            };
+            if !current.nodes.contains_key(&serial) {
+                return Err(element_unavailable_error());
+            }
+            (current.document_generation, current.geometry_revision)
         };
-        if !current.nodes.contains_key(&serial) {
-            return Err(element_unavailable_error());
-        }
         if state.pending_actions.len() >= self.max_pending_actions.get() {
             state.callback_error = Some(WindowsAccessibilityNativeErrorKind::CapacityExceeded);
             return Err(Error::from(E_OUTOFMEMORY));
         }
-        state.pending_actions.push_back(WindowsAccessibilityNativeActionRequest::new(
-            serial,
-            current.document_generation,
-            current.geometry_revision,
-            action,
-        ));
+        state
+            .pending_actions
+            .push_back(WindowsAccessibilityNativeActionRequest::new(
+                serial,
+                document_generation,
+                geometry_revision,
+                action,
+            ));
         Ok(())
-    }
-
-    fn root_serial_win(&self) -> WinResult<u64> {
-        self.lock_win()?
-            .current
-            .as_ref()
-            .map(|current| current.root_provider_serial)
-            .ok_or_else(element_unavailable_error)
-    }
-
-    fn provider_fragment(&self, serial: u64) -> WinResult<IRawElementProviderFragment> {
-        let current = self.lock_win()?.current.clone().ok_or_else(element_unavailable_error)?;
-        if !current.nodes.contains_key(&serial) {
-            return Err(element_unavailable_error());
-        }
-        if serial == current.root_provider_serial {
-            Ok(RootProvider::new(Arc::new(self.clone_for_provider()), serial).into())
-        } else {
-            Ok(FragmentProvider::new(Arc::new(self.clone_for_provider()), serial).into())
-        }
-    }
-
-    fn clone_for_provider(&self) -> Self {
-        // Providers must share the exact state, never a copied authority. This function is only
-        // called through an Arc-owned shared object and is replaced by `provider_*_from_arc` below.
-        unreachable!("provider construction must preserve the shared Arc")
     }
 }
 
@@ -243,18 +229,32 @@ impl WindowsUiaBridge {
         let mut state = self.shared.lock()?;
         let old = state.current.replace(candidate);
         state.previous = old;
+        let (document_generation, geometry_revision, provider_serials) = {
+            let Some(current) = state.current.as_ref() else {
+                return Err(native_error(
+                    WindowsAccessibilityNativeErrorKind::ProviderUnavailable,
+                ));
+            };
+            (
+                current.document_generation,
+                current.geometry_revision,
+                current
+                    .nodes
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>(),
+            )
+        };
         if state
             .focused_provider
-            .is_some_and(|serial| state.current.as_ref().is_none_or(|current| !current.nodes.contains_key(&serial)))
+            .is_some_and(|serial| !provider_serials.contains(&serial))
         {
             state.focused_provider = None;
         }
         state.pending_actions.retain(|request| {
-            state.current.as_ref().is_some_and(|current| {
-                request.document_generation() == current.document_generation
-                    && request.geometry_revision() == current.geometry_revision
-                    && current.nodes.contains_key(&request.provider_serial())
-            })
+            request.document_generation() == document_generation
+                && request.geometry_revision() == geometry_revision
+                && provider_serials.contains(&request.provider_serial())
         });
         state.callback_error = None;
         Ok(())
@@ -278,13 +278,17 @@ impl WindowsUiaBridge {
     ) -> Result<(), WindowsAccessibilityNativeError> {
         let (document_generation, geometry_revision) = {
             let state = self.shared.lock()?;
-            let current = state
-                .current
-                .as_ref()
-                .ok_or_else(|| native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable))?;
+            let current = state.current.as_ref().ok_or_else(|| {
+                native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable)
+            })?;
             (current.document_generation, current.geometry_revision)
         };
-        self.publish_event(provider_serial, document_generation, geometry_revision, kind)
+        self.publish_event(
+            provider_serial,
+            document_generation,
+            geometry_revision,
+            kind,
+        )
     }
 
     pub(crate) fn publish_event(
@@ -297,18 +301,16 @@ impl WindowsUiaBridge {
         validate_window(self.hwnd)?;
         let event_data = {
             let mut state = self.shared.lock()?;
-            let current = state
-                .current
-                .as_ref()
-                .ok_or_else(|| native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable))?;
+            let current = state.current.as_ref().ok_or_else(|| {
+                native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable)
+            })?;
             if current.document_generation != document_generation
                 || current.geometry_revision != geometry_revision
                 || !current.nodes.contains_key(&provider_serial)
             {
-                return Err(native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable));
-            }
-            if kind == WindowsAccessibilityNativeEventKind::FocusChanged {
-                state.focused_provider = Some(provider_serial);
+                return Err(native_error(
+                    WindowsAccessibilityNativeErrorKind::ProviderUnavailable,
+                ));
             }
             let current_node = current.nodes.get(&provider_serial).cloned();
             let previous_node = state
@@ -316,6 +318,9 @@ impl WindowsUiaBridge {
                 .as_ref()
                 .and_then(|previous| previous.nodes.get(&provider_serial))
                 .cloned();
+            if kind == WindowsAccessibilityNativeEventKind::FocusChanged {
+                state.focused_provider = Some(provider_serial);
+            }
             (current_node, previous_node)
         };
         let provider = simple_provider_from_arc(&self.shared, provider_serial)?;
@@ -326,7 +331,11 @@ impl WindowsUiaBridge {
 impl Drop for WindowsUiaBridge {
     fn drop(&mut self) {
         unsafe {
-            RemoveWindowSubclass(raw_hwnd(self.hwnd), Some(uia_subclass_proc), SUBCLASS_ID);
+            RemoveWindowSubclass(
+                raw_hwnd(self.hwnd),
+                Some(uia_subclass_proc),
+                SUBCLASS_ID,
+            );
             if self.com_uninitialize {
                 CoUninitialize();
             }
@@ -351,7 +360,10 @@ unsafe extern "system" fn uia_subclass_proc(
                 Ok(state) => state,
                 Err(_) => return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) },
             };
-            state.current.as_ref().map(|current| current.root_provider_serial)
+            state
+                .current
+                .as_ref()
+                .map(|current| current.root_provider_serial)
         };
         if let Some(root) = root {
             if let Ok(provider) = simple_provider_from_arc(&shared, root) {
@@ -378,18 +390,27 @@ struct ProviderCore {
 
 impl fmt::Debug for ProviderCore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("ProviderCore").field("serial", &self.serial).finish()
+        formatter
+            .debug_struct("ProviderCore")
+            .field("serial", &self.serial)
+            .finish()
     }
 }
 
-#[implement(IRawElementProviderSimple, IRawElementProviderFragment, IRawElementProviderFragmentRoot)]
+#[implement(
+    IRawElementProviderSimple,
+    IRawElementProviderFragment,
+    IRawElementProviderFragmentRoot
+)]
 struct RootProvider {
     core: ProviderCore,
 }
 
 impl RootProvider {
     fn new(shared: Arc<UiaShared>, serial: u64) -> Self {
-        Self { core: ProviderCore { shared, serial } }
+        Self {
+            core: ProviderCore { shared, serial },
+        }
     }
 }
 
@@ -400,7 +421,9 @@ struct FragmentProvider {
 
 impl FragmentProvider {
     fn new(shared: Arc<UiaShared>, serial: u64) -> Self {
-        Self { core: ProviderCore { shared, serial } }
+        Self {
+            core: ProviderCore { shared, serial },
+        }
     }
 }
 
@@ -436,7 +459,7 @@ impl IRawElementProviderSimple_Impl for FragmentProvider_Impl {
     }
 
     fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
-        Ok(IRawElementProviderSimple::default())
+        Err(Error::empty())
     }
 }
 
@@ -497,7 +520,7 @@ impl IRawElementProviderFragmentRoot_Impl for RootProvider_Impl {
         let serial = hit_test(&self.core.shared, x, y)?;
         match serial {
             Some(serial) => fragment_provider_from_arc(&self.core.shared, serial),
-            None => Ok(IRawElementProviderFragment::default()),
+            None => Err(Error::empty()),
         }
     }
 
@@ -505,7 +528,7 @@ impl IRawElementProviderFragmentRoot_Impl for RootProvider_Impl {
         let serial = self.core.shared.lock_win()?.focused_provider;
         match serial {
             Some(serial) => fragment_provider_from_arc(&self.core.shared, serial),
-            None => Ok(IRawElementProviderFragment::default()),
+            None => Err(Error::empty()),
         }
     }
 }
@@ -585,10 +608,13 @@ fn simple_provider_from_arc(
         .as_ref()
         .ok_or_else(|| native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable))?;
     if !current.nodes.contains_key(&serial) {
-        return Err(native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable));
+        return Err(native_error(
+            WindowsAccessibilityNativeErrorKind::ProviderUnavailable,
+        ));
     }
     let provider = if serial == current.root_provider_serial {
-        let provider: IRawElementProviderSimple = RootProvider::new(Arc::clone(shared), serial).into();
+        let provider: IRawElementProviderSimple =
+            RootProvider::new(Arc::clone(shared), serial).into();
         provider
     } else {
         let provider: IRawElementProviderSimple =
@@ -603,15 +629,20 @@ fn fragment_provider_from_arc(
     serial: u64,
 ) -> WinResult<IRawElementProviderFragment> {
     let state = shared.lock_win()?;
-    let current = state.current.as_ref().ok_or_else(element_unavailable_error)?;
+    let current = state
+        .current
+        .as_ref()
+        .ok_or_else(element_unavailable_error)?;
     if !current.nodes.contains_key(&serial) {
         return Err(element_unavailable_error());
     }
     if serial == current.root_provider_serial {
-        let provider: IRawElementProviderFragment = RootProvider::new(Arc::clone(shared), serial).into();
+        let provider: IRawElementProviderFragment =
+            RootProvider::new(Arc::clone(shared), serial).into();
         Ok(provider)
     } else {
-        let provider: IRawElementProviderFragment = FragmentProvider::new(Arc::clone(shared), serial).into();
+        let provider: IRawElementProviderFragment =
+            FragmentProvider::new(Arc::clone(shared), serial).into();
         Ok(provider)
     }
 }
@@ -625,11 +656,16 @@ fn root_provider_from_arc(shared: &Arc<UiaShared>) -> WinResult<IRawElementProvi
             .map(|current| current.root_provider_serial)
             .ok_or_else(element_unavailable_error)?
     };
-    let provider: IRawElementProviderFragmentRoot = RootProvider::new(Arc::clone(shared), serial).into();
+    let provider: IRawElementProviderFragmentRoot =
+        RootProvider::new(Arc::clone(shared), serial).into();
     Ok(provider)
 }
 
-fn property_value(shared: &Arc<UiaShared>, serial: u64, property: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
+fn property_value(
+    shared: &Arc<UiaShared>,
+    serial: u64,
+    property: UIA_PROPERTY_ID,
+) -> WinResult<VARIANT> {
     let (_, node) = shared.current_node_win(serial)?;
     if property == UIA_NamePropertyId {
         return Ok(VARIANT::from(BSTR::from(node.name())));
@@ -658,14 +694,21 @@ fn property_value(shared: &Arc<UiaShared>, serial: u64, property: UIA_PROPERTY_I
     Ok(VARIANT::default())
 }
 
-fn pattern_provider(shared: &Arc<UiaShared>, serial: u64, pattern: UIA_PATTERN_ID) -> WinResult<IUnknown> {
+fn pattern_provider(
+    shared: &Arc<UiaShared>,
+    serial: u64,
+    pattern: UIA_PATTERN_ID,
+) -> WinResult<IUnknown> {
     let (_, node) = shared.current_node_win(serial)?;
     let core = ProviderCore {
         shared: Arc::clone(shared),
         serial,
     };
     if pattern == UIA_InvokePatternId
-        && matches!(node.role(), WindowsAccessibilityNativeRole::Button | WindowsAccessibilityNativeRole::Link)
+        && matches!(
+            node.role(),
+            WindowsAccessibilityNativeRole::Button | WindowsAccessibilityNativeRole::Link
+        )
     {
         let provider: IInvokeProvider = InvokePattern { core }.into();
         return provider.cast();
@@ -678,30 +721,49 @@ fn pattern_provider(shared: &Arc<UiaShared>, serial: u64, pattern: UIA_PATTERN_I
         let provider: IExpandCollapseProvider = ExpandCollapsePattern { core }.into();
         return provider.cast();
     }
-    Ok(IUnknown::default())
+    Err(Error::empty())
 }
 
-fn navigate(shared: &Arc<UiaShared>, serial: u64, direction: NavigateDirection) -> WinResult<IRawElementProviderFragment> {
+fn navigate(
+    shared: &Arc<UiaShared>,
+    serial: u64,
+    direction: NavigateDirection,
+) -> WinResult<IRawElementProviderFragment> {
     let target = {
         let state = shared.lock_win()?;
-        let current = state.current.as_ref().ok_or_else(element_unavailable_error)?;
-        let node = current.nodes.get(&serial).ok_or_else(element_unavailable_error)?;
+        let current = state
+            .current
+            .as_ref()
+            .ok_or_else(element_unavailable_error)?;
+        let node = current
+            .nodes
+            .get(&serial)
+            .ok_or_else(element_unavailable_error)?;
         if direction == NavigateDirection_Parent {
             node.parent()
         } else if direction == NavigateDirection_FirstChild {
             node.children().first().copied()
         } else if direction == NavigateDirection_LastChild {
             node.children().last().copied()
-        } else if direction == NavigateDirection_NextSibling || direction == NavigateDirection_PreviousSibling {
-            let Some(parent) = node.parent() else { return Ok(IRawElementProviderFragment::default()); };
-            let parent = current.nodes.get(&parent).ok_or_else(element_unavailable_error)?;
+        } else if direction == NavigateDirection_NextSibling
+            || direction == NavigateDirection_PreviousSibling
+        {
+            let Some(parent) = node.parent() else {
+                return Err(Error::empty());
+            };
+            let parent = current
+                .nodes
+                .get(&parent)
+                .ok_or_else(element_unavailable_error)?;
             let Some(index) = parent.children().iter().position(|&child| child == serial) else {
                 return Err(element_unavailable_error());
             };
             if direction == NavigateDirection_NextSibling {
                 parent.children().get(index + 1).copied()
             } else {
-                index.checked_sub(1).and_then(|previous| parent.children().get(previous).copied())
+                index
+                    .checked_sub(1)
+                    .and_then(|previous| parent.children().get(previous).copied())
             }
         } else {
             None
@@ -709,13 +771,15 @@ fn navigate(shared: &Arc<UiaShared>, serial: u64, direction: NavigateDirection) 
     };
     match target {
         Some(serial) => fragment_provider_from_arc(shared, serial),
-        None => Ok(IRawElementProviderFragment::default()),
+        None => Err(Error::empty()),
     }
 }
 
 fn bounding_rectangle(shared: &Arc<UiaShared>, serial: u64) -> WinResult<UiaRect> {
     let (_, node) = shared.current_node_win(serial)?;
-    let Some(bounds) = node.bounds() else { return Ok(UiaRect::default()); };
+    let Some(bounds) = node.bounds() else {
+        return Ok(UiaRect::default());
+    };
     let origin = client_origin_screen(shared.hwnd)?;
     Ok(UiaRect {
         left: f64::from(origin.x) + bounds.x(),
@@ -741,16 +805,29 @@ fn hit_test(shared: &Arc<UiaShared>, screen_x: f64, screen_y: f64) -> WinResult<
     let client_x = screen_x - f64::from(origin.x);
     let client_y = screen_y - f64::from(origin.y);
     let state = shared.lock_win()?;
-    let current = state.current.as_ref().ok_or_else(element_unavailable_error)?;
+    let current = state
+        .current
+        .as_ref()
+        .ok_or_else(element_unavailable_error)?;
     let mut best = None;
     let mut pending = vec![(current.root_provider_serial, 0usize)];
     while let Some((serial, depth)) = pending.pop() {
-        let Some(node) = current.nodes.get(&serial) else { return Err(element_unavailable_error()); };
-        if node.bounds().is_some_and(|bounds| bounds.contains(client_x, client_y)) {
+        let Some(node) = current.nodes.get(&serial) else {
+            return Err(element_unavailable_error());
+        };
+        if node
+            .bounds()
+            .is_some_and(|bounds| bounds.contains(client_x, client_y))
+        {
             if best.is_none_or(|(_, best_depth)| depth >= best_depth) {
                 best = Some((serial, depth));
             }
-            pending.extend(node.children().iter().rev().map(|&child| (child, depth + 1)));
+            pending.extend(
+                node.children()
+                    .iter()
+                    .rev()
+                    .map(|&child| (child, depth + 1)),
+            );
         }
     }
     Ok(best.map(|(serial, _)| serial))
@@ -815,7 +892,9 @@ fn raise_event(
                 0,
             ),
             WindowsAccessibilityNativeEventKind::ValueChanged => {
-                return Err(native_error(WindowsAccessibilityNativeErrorKind::UnsupportedPattern));
+                return Err(native_error(
+                    WindowsAccessibilityNativeErrorKind::UnsupportedPattern,
+                ));
             }
         }
     };
@@ -887,7 +966,9 @@ unsafe fn raise_state_changes(
 
 fn validate_window(hwnd: NonZeroIsize) -> Result<(), WindowsAccessibilityNativeError> {
     if unsafe { IsWindow(raw_hwnd(hwnd)) } == 0 {
-        return Err(native_error(WindowsAccessibilityNativeErrorKind::InvalidWindow));
+        return Err(native_error(
+            WindowsAccessibilityNativeErrorKind::InvalidWindow,
+        ));
     }
     Ok(())
 }
@@ -900,21 +981,12 @@ fn client_origin_screen(hwnd: NonZeroIsize) -> WinResult<POINT> {
     Ok(point)
 }
 
-#[allow(dead_code)]
-fn screen_to_client(hwnd: NonZeroIsize, x: i32, y: i32) -> WinResult<POINT> {
-    let mut point = POINT { x, y };
-    if unsafe { ScreenToClient(raw_hwnd(hwnd), &mut point) } == 0 {
-        return Err(element_unavailable_error());
-    }
-    Ok(point)
-}
-
 fn raw_hwnd(hwnd: NonZeroIsize) -> HWND {
     hwnd.get() as HWND
 }
 
 fn typed_hwnd(hwnd: HWND) -> TypedHwnd {
-    TypedHwnd(hwnd as isize)
+    TypedHwnd(hwnd)
 }
 
 fn element_unavailable_error() -> Error {
@@ -939,11 +1011,19 @@ const fn control_type(role: WindowsAccessibilityNativeRole) -> i32 {
 }
 
 const fn toggle_state_value(checked: bool) -> i32 {
-    if checked { 1 } else { 0 }
+    if checked {
+        1
+    } else {
+        0
+    }
 }
 
 const fn expand_state_value(expanded: bool) -> i32 {
-    if expanded { 1 } else { 0 }
+    if expanded {
+        1
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -952,14 +1032,22 @@ mod tests {
 
     #[test]
     fn private_runtime_serial_stays_in_i32_domain() {
-        assert!(valid_provider_serial(1));
-        assert!(valid_provider_serial(i32::MAX as u64));
-        assert!(!valid_provider_serial(i32::MAX as u64 + 1));
+        assert!(crate::accessibility::valid_provider_serial(1));
+        assert!(crate::accessibility::valid_provider_serial(i32::MAX as u64));
+        assert!(!crate::accessibility::valid_provider_serial(
+            i32::MAX as u64 + 1
+        ));
     }
 
     #[test]
     fn control_types_are_stable_for_supported_roles() {
-        assert_eq!(control_type(WindowsAccessibilityNativeRole::Button), 50_000);
-        assert_eq!(control_type(WindowsAccessibilityNativeRole::RootWebArea), 50_030);
+        assert_eq!(
+            control_type(WindowsAccessibilityNativeRole::Button),
+            50_000
+        );
+        assert_eq!(
+            control_type(WindowsAccessibilityNativeRole::RootWebArea),
+            50_030
+        );
     }
 }
