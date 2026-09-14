@@ -59,7 +59,10 @@ impl RenderSession {
             return Ok(PlatformAccessibilitySyncReport::default());
         };
         let projection = project_snapshot(snapshot)?;
-        service.replace_snapshot(&projection)?;
+        if let Err(error) = service.replace_snapshot(&projection) {
+            let _ = service.clear_snapshot();
+            return Err(error.into());
+        }
 
         let mut report = PlatformAccessibilitySyncReport {
             snapshot_current: true,

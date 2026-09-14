@@ -1,9 +1,10 @@
 use std::fmt;
+use std::num::NonZeroIsize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowsAccessibilityNativeErrorKind {
     UnsupportedTarget,
-    ComUnavailable,
+    InvalidWindow,
     ProviderUnavailable,
     UnsupportedPattern,
 }
@@ -46,13 +47,15 @@ pub enum WindowsAccessibilityNativeEventKind {
     TreeChanged,
 }
 
-#[derive(Debug, Default)]
-pub struct WindowsAccessibilityNativeBridge;
+#[derive(Debug)]
+pub struct WindowsAccessibilityNativeBridge {
+    hwnd: NonZeroIsize,
+}
 
 impl WindowsAccessibilityNativeBridge {
-    pub fn try_new() -> Result<Self, WindowsAccessibilityNativeError> {
-        try_probe_com()?;
-        Ok(Self)
+    pub fn try_for_window(hwnd: NonZeroIsize) -> Result<Self, WindowsAccessibilityNativeError> {
+        validate_window(hwnd)?;
+        Ok(Self { hwnd })
     }
 
     pub const fn target_available() -> bool {
@@ -64,33 +67,26 @@ impl WindowsAccessibilityNativeBridge {
         provider_serial: u64,
         kind: WindowsAccessibilityNativeEventKind,
     ) -> Result<(), WindowsAccessibilityNativeError> {
-        publish_win_event(provider_serial, kind)
+        publish_win_event(self.hwnd, provider_serial, kind)
     }
 }
 
 #[cfg(target_os = "windows")]
-fn try_probe_com() -> Result<(), WindowsAccessibilityNativeError> {
-    use std::ptr::null;
-    use windows_sys::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
+fn validate_window(hwnd: NonZeroIsize) -> Result<(), WindowsAccessibilityNativeError> {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
 
-    const RPC_E_CHANGED_MODE: i32 = 0x8001_0106u32 as i32;
-    let result = unsafe { CoInitializeEx(null(), COINIT_MULTITHREADED) };
-    if result >= 0 {
-        unsafe {
-            CoUninitialize();
-        }
-        return Ok(());
+    let hwnd = hwnd.get() as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return Err(WindowsAccessibilityNativeError::new(
+            WindowsAccessibilityNativeErrorKind::InvalidWindow,
+        ));
     }
-    if result == RPC_E_CHANGED_MODE {
-        return Ok(());
-    }
-    Err(WindowsAccessibilityNativeError::new(
-        WindowsAccessibilityNativeErrorKind::ComUnavailable,
-    ))
+    Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
-fn try_probe_com() -> Result<(), WindowsAccessibilityNativeError> {
+fn validate_window(_hwnd: NonZeroIsize) -> Result<(), WindowsAccessibilityNativeError> {
     Err(WindowsAccessibilityNativeError::new(
         WindowsAccessibilityNativeErrorKind::UnsupportedTarget,
     ))
@@ -98,10 +94,11 @@ fn try_probe_com() -> Result<(), WindowsAccessibilityNativeError> {
 
 #[cfg(target_os = "windows")]
 fn publish_win_event(
+    hwnd: NonZeroIsize,
     provider_serial: u64,
     kind: WindowsAccessibilityNativeEventKind,
 ) -> Result<(), WindowsAccessibilityNativeError> {
-    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::Accessibility::NotifyWinEvent;
 
     const OBJID_CLIENT: i32 = -4;
@@ -127,14 +124,16 @@ fn publish_win_event(
         WindowsAccessibilityNativeEventKind::BoundsChanged => EVENT_OBJECT_LOCATIONCHANGE,
         WindowsAccessibilityNativeEventKind::TreeChanged => EVENT_OBJECT_REORDER,
     };
+    let hwnd = hwnd.get() as HWND;
     unsafe {
-        NotifyWinEvent(event, null_mut(), OBJID_CLIENT, provider_serial as i32);
+        NotifyWinEvent(event, hwnd, OBJID_CLIENT, provider_serial as i32);
     }
     Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
 fn publish_win_event(
+    _hwnd: NonZeroIsize,
     _provider_serial: u64,
     _kind: WindowsAccessibilityNativeEventKind,
 ) -> Result<(), WindowsAccessibilityNativeError> {
@@ -148,28 +147,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn construction_matches_target() {
-        let result = WindowsAccessibilityNativeBridge::try_new();
+    fn construction_fails_closed_without_a_supported_live_window() {
+        let fake = NonZeroIsize::new(1).expect("non-zero test handle");
+        let result = WindowsAccessibilityNativeBridge::try_for_window(fake);
         if cfg!(target_os = "windows") {
-            assert!(result.is_ok());
+            assert_eq!(
+                result.unwrap_err().kind(),
+                WindowsAccessibilityNativeErrorKind::InvalidWindow
+            );
         } else {
             assert_eq!(
                 result.unwrap_err().kind(),
                 WindowsAccessibilityNativeErrorKind::UnsupportedTarget
             );
         }
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn win_event_publication_rejects_invalid_provider_serial() {
-        let mut bridge = WindowsAccessibilityNativeBridge::try_new().unwrap();
-        assert_eq!(
-            bridge
-                .publish_event(0, WindowsAccessibilityNativeEventKind::TreeChanged)
-                .unwrap_err()
-                .kind(),
-            WindowsAccessibilityNativeErrorKind::ProviderUnavailable
-        );
     }
 }

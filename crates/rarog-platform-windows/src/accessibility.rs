@@ -11,7 +11,7 @@ use rarog_platform_windows_native::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroIsize, NonZeroU64, NonZeroUsize};
 use std::sync::Mutex;
 
 pub const DEFAULT_MAX_WINDOWS_ACCESSIBILITY_PROVIDERS: usize = 4096;
@@ -73,6 +73,7 @@ impl Default for WindowsAccessibilityLimits {
 pub enum WindowsAccessibilityBridgeError {
     UnsupportedTarget,
     InvalidLimits,
+    AlreadyAttached,
     Native(WindowsAccessibilityNativeErrorKind),
 }
 
@@ -140,19 +141,22 @@ pub struct WindowsAccessibilityService {
 }
 
 impl WindowsAccessibilityService {
-    pub fn try_new(
+    pub fn try_for_window(
         limits: WindowsAccessibilityLimits,
+        hwnd: NonZeroIsize,
     ) -> Result<Self, WindowsAccessibilityBridgeError> {
         if !Self::target_available() {
             return Err(WindowsAccessibilityBridgeError::UnsupportedTarget);
         }
-        let native = WindowsAccessibilityNativeBridge::try_new()
+        let native = WindowsAccessibilityNativeBridge::try_for_window(hwnd)
             .map_err(|error| WindowsAccessibilityBridgeError::Native(error.kind()))?;
         Ok(Self::with_backend(limits, Box::new(native)))
     }
 
-    pub fn with_default_limits() -> Result<Self, WindowsAccessibilityBridgeError> {
-        Self::try_new(WindowsAccessibilityLimits::default())
+    pub fn with_default_limits_for_window(
+        hwnd: NonZeroIsize,
+    ) -> Result<Self, WindowsAccessibilityBridgeError> {
+        Self::try_for_window(WindowsAccessibilityLimits::default(), hwnd)
     }
 
     pub const fn target_available() -> bool {

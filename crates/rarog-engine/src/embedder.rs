@@ -487,6 +487,11 @@ impl EngineBuilder {
         self
     }
 
+    pub fn platform_host_arc(mut self, host: Arc<dyn PlatformHost>) -> Self {
+        self.platform_host = host;
+        self
+    }
+
     pub fn build(self) -> Result<Engine, EngineError> {
         if self.budget.max_document_source_bytes == 0
             || self.budget.max_viewport_pixels == 0
@@ -565,6 +570,7 @@ impl Engine {
             scroll_tree: None,
             pending_scroll_damage: DamageRegion::default(),
             frame_scheduler: FrameScheduler::new(),
+            platform_accessibility_error: None,
         })
     }
 }
@@ -607,6 +613,7 @@ pub struct View {
     scroll_tree: Option<ScrollTree>,
     pending_scroll_damage: DamageRegion,
     frame_scheduler: FrameScheduler,
+    platform_accessibility_error: Option<super::PlatformAccessibilityBridgeError>,
 }
 
 impl View {
@@ -626,6 +633,12 @@ impl View {
 
     pub fn pending_navigation(&self) -> Option<NavigationId> {
         self.pending_navigation.as_ref().map(|pending| pending.id)
+    }
+
+    pub const fn platform_accessibility_error(
+        &self,
+    ) -> Option<super::PlatformAccessibilityBridgeError> {
+        self.platform_accessibility_error
     }
 
     pub fn request_frame(&mut self, cause: FrameCause) {
@@ -1105,6 +1118,12 @@ impl View {
         self.pending_scroll_damage = DamageRegion::default();
         self.frame_scheduler = FrameScheduler::new();
         self.frame_scheduler.request(FrameCause::Initial);
+        self.platform_accessibility_error = self
+            .shared
+            .platform_host
+            .accessibility_service()
+            .and_then(|service| service.clear_snapshot().err())
+            .map(super::PlatformAccessibilityBridgeError::Platform);
         Ok(())
     }
 
@@ -1204,6 +1223,17 @@ impl View {
             .as_mut()
             .expect("successful render establishes an active session")
             .set_viewport_translation(viewport_translation)?;
+
+        self.platform_accessibility_error = match self.shared.platform_host.accessibility_service()
+        {
+            Some(service) => self
+                .session
+                .as_mut()
+                .expect("successful render establishes an active session")
+                .sync_platform_accessibility(service)
+                .err(),
+            None => None,
+        };
 
         self.shared.event_sink.on_event(&ViewEvent::FrameRendered {
             view: self.id,

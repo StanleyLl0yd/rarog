@@ -6,7 +6,9 @@ mod windows {
         PresentationStatus, PresentingCompositorWorker, SurfaceId, SurfaceSize,
     };
     use rarog_engine::{BaseUrl, Engine, View, ViewOptions};
-    use rarog_platform_windows::{WindowsGpuError, WindowsPresentingCompositor};
+    use rarog_platform_windows::{
+        WindowsGpuError, WindowsPlatformHost, WindowsPresentingCompositor,
+    };
     use rarog_types::{Point, Size};
     use std::error::Error;
     use std::fs;
@@ -16,6 +18,7 @@ mod windows {
     use winit::dpi::LogicalSize;
     use winit::event::{MouseScrollDelta, WindowEvent};
     use winit::event_loop::{ActiveEventLoop, EventLoop};
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use winit::window::{Icon, Window, WindowId};
 
     pub fn run() -> Result<(), Box<dyn Error>> {
@@ -23,7 +26,10 @@ mod windows {
             .nth(1)
             .unwrap_or_else(|| "examples/hello.html".into());
         let source = fs::read_to_string(&input)?;
-        let engine = Engine::builder().build()?;
+        let platform = Arc::new(WindowsPlatformHost::try_new()?);
+        let engine = Engine::builder()
+            .platform_host_arc(platform.clone())
+            .build()?;
         let mut view = engine.create_view(ViewOptions::default())?;
         view.load_html(source, BaseUrl::about_blank())?;
 
@@ -31,6 +37,7 @@ mod windows {
         let mut app = WindowApp {
             input,
             view,
+            platform,
             window: None,
             compositor: None,
             planner: FramePlanner::new(surface_id),
@@ -43,6 +50,7 @@ mod windows {
     struct WindowApp {
         input: String,
         view: View,
+        platform: Arc<WindowsPlatformHost>,
         window: Option<Arc<Window>>,
         compositor: Option<PresentingCompositorWorker<WindowsGpuError>>,
         planner: FramePlanner,
@@ -65,6 +73,12 @@ mod windows {
                 .with_window_icon(Some(icon))
                 .with_inner_size(LogicalSize::new(1024.0, 768.0));
             let window = Arc::new(event_loop.create_window(attributes)?);
+            let window_handle = window.window_handle()?;
+            let hwnd = match window_handle.as_raw() {
+                RawWindowHandle::Win32(handle) => handle.hwnd,
+                _ => return Err(io::Error::other("winit did not expose a Win32 HWND").into()),
+            };
+            self.platform.attach_accessibility_window(hwnd)?;
             let size = window.inner_size();
             let backend = block_on(WindowsPresentingCompositor::request(
                 Arc::clone(&window),
