@@ -26,7 +26,24 @@ jobs:
           components: rustfmt, clippy
       - name: Apply compile probe
         run: python .github/r5_uia_compile_probe.py
-      - name: Update lock for probe
+      - name: Fetch exact dependency sources
+        run: cargo fetch
+      - name: Show exact UIA implementation traits
+        shell: pwsh
+        run: |
+          $impl = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-0.58.0\src\Windows\Win32\UI\Accessibility\impl.rs" | Select-Object -First 1
+          if (-not $impl) { throw "windows 0.58.0 UIA impl.rs not found" }
+          foreach ($trait in @(
+            'IRawElementProviderFragment_Impl',
+            'IRawElementProviderFragmentRoot_Impl',
+            'IInvokeProvider_Impl',
+            'IToggleProvider_Impl',
+            'IExpandCollapseProvider_Impl'
+          )) {
+            Write-Host "===== $trait ====="
+            Select-String -Path $impl.FullName -Pattern "pub trait $trait" -Context 0,18
+          }
+      - name: Check probe
         run: cargo check -p rarog-platform-windows-native --all-targets
       - name: Clippy probe
         run: cargo clippy -p rarog-platform-windows-native --all-targets -- -D warnings
