@@ -305,7 +305,7 @@ impl WindowsUiaBridge {
     ) -> Result<(), WindowsAccessibilityNativeError> {
         validate_window(self.hwnd)?;
         let event_data = {
-            let mut state = self.shared.lock()?;
+            let state = self.shared.lock()?;
             let current = state.current.as_ref().ok_or_else(|| {
                 native_error(WindowsAccessibilityNativeErrorKind::ProviderUnavailable)
             })?;
