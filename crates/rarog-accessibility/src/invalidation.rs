@@ -324,6 +324,15 @@ fn stage_events(
     candidate: &AccessibilitySnapshot,
     queue: &AccessibilityEventQueue,
 ) -> Result<Vec<AccessibilityEvent>, AccessibilityRefreshError> {
+    let max_detailed_events = candidate
+        .tree
+        .node_count()
+        .checked_mul(3)
+        .and_then(|events| events.checked_add(1))
+        .ok_or(AccessibilityEventQueueError::CapacityExceeded {
+            events: usize::MAX,
+            limit: queue.max_events(),
+        })?;
     let mut events = Vec::new();
     let mut tree_changed = current.tree.sources.len() != candidate.tree.sources.len();
 
@@ -356,8 +365,7 @@ fn stage_events(
             || current_node.parent != candidate_node.parent
             || current_node.children != candidate_node.children;
         if current_node.name != candidate_node.name {
-            stage_event(
-                queue,
+            push_staged_event(
                 &mut events,
                 AccessibilityEvent::new(
                     candidate_id,
@@ -365,11 +373,12 @@ fn stage_events(
                     AccessibilityEventKind::NameChanged,
                     candidate.document_generation(),
                 ),
+                max_detailed_events,
+                queue.max_events(),
             )?;
         }
         if current_node.state != candidate_node.state {
-            stage_event(
-                queue,
+            push_staged_event(
                 &mut events,
                 AccessibilityEvent::new(
                     candidate_id,
@@ -377,11 +386,12 @@ fn stage_events(
                     AccessibilityEventKind::StateChanged,
                     candidate.document_generation(),
                 ),
+                max_detailed_events,
+                queue.max_events(),
             )?;
         }
         if current_node.bounds != candidate_node.bounds {
-            stage_event(
-                queue,
+            push_staged_event(
                 &mut events,
                 AccessibilityEvent::new(
                     candidate_id,
@@ -389,6 +399,8 @@ fn stage_events(
                     AccessibilityEventKind::BoundsChanged,
                     candidate.document_generation(),
                 ),
+                max_detailed_events,
+                queue.max_events(),
             )?;
         }
     }
@@ -401,41 +413,59 @@ fn stage_events(
             .any(|source| !current.tree.sources.contains_key(source));
     }
     if tree_changed {
-        let root = candidate.tree.root();
-        let source = candidate
-            .tree
-            .node(root)
-            .ok_or(AccessibilityRefreshError::Tree(
-                AccessibilityError::InconsistentTree,
-            ))?
-            .source();
-        let event = AccessibilityEvent::new(
-            root,
-            source,
-            AccessibilityEventKind::TreeChanged,
-            candidate.document_generation(),
-        );
-        events.insert(0, event);
-        queue.ensure_capacity(events.len())?;
+        events.insert(0, tree_changed_event(candidate)?);
     }
 
-    Ok(events)
+    match queue.ensure_capacity(events.len()) {
+        Ok(()) => Ok(events),
+        Err(error) if events.is_empty() => Err(error.into()),
+        Err(_) => {
+            queue.ensure_capacity(1)?;
+            Ok(vec![tree_changed_event(candidate)?])
+        }
+    }
 }
 
-fn stage_event(
-    queue: &AccessibilityEventQueue,
+fn tree_changed_event(
+    candidate: &AccessibilitySnapshot,
+) -> Result<AccessibilityEvent, AccessibilityRefreshError> {
+    let root = candidate.tree.root();
+    let source = candidate
+        .tree
+        .node(root)
+        .ok_or(AccessibilityRefreshError::Tree(
+            AccessibilityError::InconsistentTree,
+        ))?
+        .source();
+    Ok(AccessibilityEvent::new(
+        root,
+        source,
+        AccessibilityEventKind::TreeChanged,
+        candidate.document_generation(),
+    ))
+}
+
+fn push_staged_event(
     staged: &mut Vec<AccessibilityEvent>,
     event: AccessibilityEvent,
+    max_detailed_events: usize,
+    queue_limit: usize,
 ) -> Result<(), AccessibilityRefreshError> {
-    let additional =
+    let events =
         staged
             .len()
             .checked_add(1)
             .ok_or(AccessibilityEventQueueError::CapacityExceeded {
                 events: usize::MAX,
-                limit: queue.max_events(),
+                limit: queue_limit,
             })?;
-    queue.ensure_capacity(additional)?;
+    if events > max_detailed_events {
+        return Err(AccessibilityEventQueueError::CapacityExceeded {
+            events,
+            limit: max_detailed_events,
+        }
+        .into());
+    }
     staged.push(event);
     Ok(())
 }
@@ -624,6 +654,14 @@ mod tests {
         .unwrap();
         let old_generation = runtime.snapshot().document_generation();
         let old_identity_count = runtime.tree_state.identity_count();
+        let root = runtime.snapshot().tree().root();
+        let root_source = runtime.snapshot().tree().node(root).unwrap().source();
+        runtime.events.push_reserved(AccessibilityEvent::new(
+            root,
+            root_source,
+            AccessibilityEventKind::Invoked,
+            old_generation,
+        ));
 
         document.set_attribute(first, "aria-label", "Two").unwrap();
         let second = document.append_new(body, element("button")).unwrap();
@@ -649,6 +687,79 @@ mod tests {
         assert_eq!(runtime.snapshot().document_generation(), old_generation);
         assert_eq!(runtime.snapshot().geometry_revision(), 1);
         assert_eq!(runtime.tree_state.identity_count(), old_identity_count);
+        assert_eq!(runtime.event_count(), 1);
+        assert_eq!(
+            runtime.pop_event().unwrap().kind(),
+            AccessibilityEventKind::Invoked
+        );
+    }
+
+    #[test]
+    fn oversized_detailed_batch_coalesces_to_one_tree_event() {
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        let first = document.append_new(body, element("button")).unwrap();
+        let second = document.append_new(body, element("button")).unwrap();
+        document.set_attribute(first, "aria-label", "One").unwrap();
+        document.set_attribute(second, "aria-label", "Two").unwrap();
+        let layout = layout_document(&document, viewport(320.0));
+        let mut runtime = AccessibilityRuntime::try_new(
+            &document,
+            &layout.fragments,
+            1,
+            AccessibilityLimits {
+                max_nodes: 32,
+                max_identities: 64,
+                max_dom_nodes_scanned: 128,
+                max_fragments: 128,
+                max_name_bytes_per_node: 128,
+                max_total_name_bytes: 1024,
+            },
+            1,
+        )
+        .unwrap();
+
+        document
+            .set_attribute(first, "aria-label", "First")
+            .unwrap();
+        document
+            .set_attribute(second, "aria-label", "Second")
+            .unwrap();
+        let changed = layout_document(&document, viewport(320.0));
+        let report = runtime
+            .refresh(
+                &document,
+                &changed.fragments,
+                2,
+                AccessibilityInvalidation::semantic(),
+            )
+            .unwrap();
+
+        assert_eq!(report.events_produced(), 1);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .tree()
+                .node_for_source(first)
+                .unwrap()
+                .name(),
+            "First"
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .tree()
+                .node_for_source(second)
+                .unwrap()
+                .name(),
+            "Second"
+        );
+        assert_eq!(
+            runtime.pop_event().unwrap().kind(),
+            AccessibilityEventKind::TreeChanged
+        );
         assert_eq!(runtime.event_count(), 0);
     }
 
