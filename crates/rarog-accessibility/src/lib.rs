@@ -1,3 +1,6 @@
+mod actions;
+pub use actions::*;
+
 use rarog_dom::{Document, ElementData, Namespace, NodeId, NodeKind};
 use rarog_layout::{Fragment, FragmentTree};
 use rarog_types::Rect;
