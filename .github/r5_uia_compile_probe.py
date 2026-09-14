@@ -28,7 +28,7 @@ const E_NOTIMPL: HRESULT = HRESULT(0x80004001_u32 as i32);
 #[implement(IRawElementProviderSimple)]
 struct ProbeProvider;
 
-impl IRawElementProviderSimple_Impl for ProbeProvider {
+impl IRawElementProviderSimple_Impl for ProbeProvider_Impl {
     fn ProviderOptions(&self) -> Result<ProviderOptions> {
         Ok(ProviderOptions_ServerSideProvider)
     }
