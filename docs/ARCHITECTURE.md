@@ -573,7 +573,19 @@ The first Accessibility slice deliberately implements only a narrow HTML-native 
 
 Accessibility resource use is explicit and fail-closed. `AccessibilityLimits` bounds exposed nodes, retained identities, connected DOM nodes scanned, fragments traversed, name bytes per node and aggregate retained name bytes. DOM/fragment worklists are bounded before enqueue, arithmetic is checked, names are built under their byte limits, and malformed/non-finite geometry rejects the snapshot before retained identity state is committed. Stable identities survive rebuild and detach/re-attach within one document lifecycle, while stale IDs do not resolve in snapshots where their source is absent.
 
-Actions/events, mutation/render-to-accessibility invalidation and the Windows accessibility bridge remain later R5 slices. This foundation contains no Windows UIA/MSAA/COM/native accessibility objects and makes no WPT, assistive-technology compatibility or R6 qualification claim. See ADR-0135.
+Mutation/render-to-accessibility invalidation and the Windows accessibility bridge remain later R5 slices. This foundation contains no Windows UIA/MSAA/COM/native accessibility objects and makes no WPT, assistive-technology compatibility or R6 qualification claim. See ADR-0135.
+
+## R5 bounded accessibility actions and semantic events
+
+The second Accessibility slice adds action and notification contracts without changing the authority boundary above. `AccessibilityTreeState::perform_action` accepts only its own lifecycle-scoped tree and target identity. Before any executor call it requires the exact tree scope, target scope, current DOM generation, a target present in the current snapshot, a connected exact DOM source, and role/state values that still match live Rarog DOM semantics. Foreign, stale, absent or inconsistent references therefore fail before they can reach a DOM or platform side effect.
+
+The public action vocabulary is intentionally small: focus, invoke, checkbox toggle and set-expanded. Eligibility is derived from the current Rarog role/state; disabled targets fail closed, invoke is limited to the bootstrap button/link roles, and state operations require the corresponding current state. `AccessibilityActionExecutor` receives a fixed resolved command and an `AccessibilityActionTarget` bound to one exact DOM `NodeId`. That target exposes only staged checked/expanded mutations. It does not expose an arbitrary DOM editor, platform accessibility object, native handle or backend error value.
+
+DOM-backed state effects are committed only after the executor succeeds and its staged mutation exactly matches the validated command. Executor failure or contract mismatch therefore discards staged DOM state. Focus and invoke remain replaceable executor operations because the current DOM layer has no focus/activation authority; the built-in DOM executor reports those operations unavailable rather than synthesizing DOM events or script behavior. A successful DOM-backed action advances the ordinary DOM generation, so the old accessibility snapshot becomes stale until a later rebuild; automatic invalidation remains the next R5 Accessibility slice.
+
+`AccessibilityEvent` is a fixed Rarog semantic notification, not `rarog-events::Event`. It carries only the exact accessibility correlation ID, exact DOM source, fixed event kind and resulting DOM generation. `AccessibilityEventQueue` is a non-zero bounded FIFO. Required event capacity is checked before the executor is called, so backpressure cannot be discovered after an action has already mutated DOM or performed a host-side operation. The bootstrap vocabulary includes focus/state/name/value/tree changes and invocation, while this slice emits only direct action outcomes. See ADR-0136.
+
+No Windows UIA/MSAA/COM object, platform accessibility handle/ID, automatic DOM/layout invalidation, DOM/WebIDL accessibility surface, broad ARIA action completeness, WPT qualification or R6 work is introduced by this boundary.
 
 ## Platform host boundary
 

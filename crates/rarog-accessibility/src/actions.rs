@@ -1,6 +1,6 @@
 use super::{
-    role_for_node, state_for_node, AccessibilityNodeId, AccessibilityRole, AccessibilityState,
-    AccessibilityTree, AccessibilityTreeState,
+    AccessibilityNodeId, AccessibilityRole, AccessibilityState, AccessibilityTree,
+    AccessibilityTreeState, role_for_node, state_for_node,
 };
 use rarog_dom::{Document, NodeId};
 use std::collections::VecDeque;
@@ -170,8 +170,14 @@ impl Default for AccessibilityEventQueue {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessibilityActionError {
-    TreeScopeMismatch { expected: u64, actual: u64 },
-    TargetScopeMismatch { expected: u64, actual: u64 },
+    TreeScopeMismatch {
+        expected: u64,
+        actual: u64,
+    },
+    TargetScopeMismatch {
+        expected: u64,
+        actual: u64,
+    },
     StaleSnapshot {
         snapshot_generation: u64,
         document_generation: u64,
@@ -183,7 +189,10 @@ pub enum AccessibilityActionError {
         role: AccessibilityRole,
         action: AccessibilityAction,
     },
-    EventBackpressure { events: usize, limit: usize },
+    EventBackpressure {
+        events: usize,
+        limit: usize,
+    },
     Executor(AccessibilityExecutorErrorKind),
     ExecutorContractViolation,
     DomMutationFailed,
@@ -247,17 +256,11 @@ impl AccessibilityActionTarget {
         self.source
     }
 
-    pub fn set_checked(
-        &mut self,
-        checked: bool,
-    ) -> Result<(), AccessibilityExecutorErrorKind> {
+    pub fn set_checked(&mut self, checked: bool) -> Result<(), AccessibilityExecutorErrorKind> {
         self.stage_mutation(TargetMutation::SetChecked(checked))
     }
 
-    pub fn set_expanded(
-        &mut self,
-        expanded: bool,
-    ) -> Result<(), AccessibilityExecutorErrorKind> {
+    pub fn set_expanded(&mut self, expanded: bool) -> Result<(), AccessibilityExecutorErrorKind> {
         self.stage_mutation(TargetMutation::SetExpanded(expanded))
     }
 
@@ -381,9 +384,8 @@ impl AccessibilityTreeState {
         validate_executor_effect(command, action_target.mutation)?;
         apply_target_mutation(document, source, action_target.mutation)?;
 
-        let event = event_kind.map(|kind| {
-            AccessibilityEvent::new(target, source, kind, document.generation())
-        });
+        let event = event_kind
+            .map(|kind| AccessibilityEvent::new(target, source, kind, document.generation()));
         if let Some(event) = event {
             events.push_reserved(event);
         }
@@ -400,7 +402,8 @@ fn action_plan(
     role: AccessibilityRole,
     state: AccessibilityState,
     action: AccessibilityAction,
-) -> Result<(AccessibilityActionCommand, Option<AccessibilityEventKind>), AccessibilityActionError> {
+) -> Result<(AccessibilityActionCommand, Option<AccessibilityEventKind>), AccessibilityActionError>
+{
     if state.disabled() {
         return Err(AccessibilityActionError::UnsupportedAction { role, action });
     }
@@ -455,7 +458,9 @@ fn validate_executor_effect(
     mutation: Option<TargetMutation>,
 ) -> Result<(), AccessibilityActionError> {
     let valid = match command {
-        AccessibilityActionCommand::Focus | AccessibilityActionCommand::Invoke => mutation.is_none(),
+        AccessibilityActionCommand::Focus | AccessibilityActionCommand::Invoke => {
+            mutation.is_none()
+        }
         AccessibilityActionCommand::SetChecked(checked) => {
             mutation == Some(TargetMutation::SetChecked(checked))
         }
@@ -485,7 +490,11 @@ fn apply_target_mutation(
             .map(|_| ())
             .map_err(|_| AccessibilityActionError::DomMutationFailed),
         Some(TargetMutation::SetExpanded(expanded)) => document
-            .set_attribute(source, "aria-expanded", if expanded { "true" } else { "false" })
+            .set_attribute(
+                source,
+                "aria-expanded",
+                if expanded { "true" } else { "false" },
+            )
             .map_err(|_| AccessibilityActionError::DomMutationFailed),
     }
 }
@@ -509,10 +518,7 @@ mod tests {
         }
     }
 
-    fn build_tree(
-        state: &mut AccessibilityTreeState,
-        document: &Document,
-    ) -> AccessibilityTree {
+    fn build_tree(state: &mut AccessibilityTreeState, document: &Document) -> AccessibilityTree {
         let layout = layout_document(document, viewport());
         state.build(document, &layout.fragments).unwrap()
     }
@@ -739,7 +745,10 @@ mod tests {
         assert_eq!(result.target(), target);
         assert_eq!(result.source(), button);
         assert_eq!(result.action(), AccessibilityAction::Invoke);
-        assert_eq!(result.event().unwrap().kind(), AccessibilityEventKind::Invoked);
+        assert_eq!(
+            result.event().unwrap().kind(),
+            AccessibilityEventKind::Invoked
+        );
         assert_eq!(queue.pop_front(), result.event());
     }
 
@@ -774,7 +783,10 @@ mod tests {
                 target,
                 AccessibilityAction::Invoke,
             ),
-            Err(AccessibilityActionError::EventBackpressure { events: 2, limit: 1 })
+            Err(AccessibilityActionError::EventBackpressure {
+                events: 2,
+                limit: 1
+            })
         ));
         assert_eq!(executor.calls.len(), 1);
         assert_eq!(queue.len(), 1);
@@ -828,7 +840,9 @@ mod tests {
             .append_new(document.root(), element("body"))
             .unwrap();
         let checkbox = document.append_new(body, element("input")).unwrap();
-        document.set_attribute(checkbox, "type", "checkbox").unwrap();
+        document
+            .set_attribute(checkbox, "type", "checkbox")
+            .unwrap();
         let expander = document.append_new(body, element("button")).unwrap();
         document
             .set_attribute(expander, "aria-expanded", "false")
@@ -853,7 +867,10 @@ mod tests {
             panic!("checkbox must remain an element");
         };
         assert!(checked.attributes.contains_key("checked"));
-        assert_eq!(queue.pop_front().unwrap().kind(), AccessibilityEventKind::StateChanged);
+        assert_eq!(
+            queue.pop_front().unwrap().kind(),
+            AccessibilityEventKind::StateChanged
+        );
 
         let expander_tree = build_tree(&mut state, &document);
         let expander_target = expander_tree.id_for_source(expander).unwrap();
@@ -872,10 +889,16 @@ mod tests {
             panic!("expander must remain an element");
         };
         assert_eq!(
-            expander_node.attributes.get("aria-expanded").map(String::as_str),
+            expander_node
+                .attributes
+                .get("aria-expanded")
+                .map(String::as_str),
             Some("true")
         );
-        assert_eq!(queue.pop_front().unwrap().kind(), AccessibilityEventKind::StateChanged);
+        assert_eq!(
+            queue.pop_front().unwrap().kind(),
+            AccessibilityEventKind::StateChanged
+        );
     }
 
     #[test]
@@ -884,7 +907,9 @@ mod tests {
         let checkbox = document
             .append_new(document.root(), element("input"))
             .unwrap();
-        document.set_attribute(checkbox, "type", "checkbox").unwrap();
+        document
+            .set_attribute(checkbox, "type", "checkbox")
+            .unwrap();
         let mut state = AccessibilityTreeState::try_new(AccessibilityLimits::default()).unwrap();
         let tree = build_tree(&mut state, &document);
         let target = tree.id_for_source(checkbox).unwrap();
@@ -919,7 +944,9 @@ mod tests {
         let checkbox = document
             .append_new(document.root(), element("input"))
             .unwrap();
-        document.set_attribute(checkbox, "type", "checkbox").unwrap();
+        document
+            .set_attribute(checkbox, "type", "checkbox")
+            .unwrap();
         let mut state = AccessibilityTreeState::try_new(AccessibilityLimits::default()).unwrap();
         let tree = build_tree(&mut state, &document);
         let target = tree.id_for_source(checkbox).unwrap();
