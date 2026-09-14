@@ -28,30 +28,36 @@ jobs:
         run: python .github/r5_uia_compile_probe.py
       - name: Fetch exact dependency sources
         run: cargo fetch
-      - name: Show exact UIA and subclass signatures
+      - name: Show remaining exact UIA provider ABI
         shell: pwsh
         run: |
-          $windows = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-0.58.0\src\Windows\Win32\UI\Accessibility\mod.rs" | Select-Object -First 1
-          $impl = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-0.58.0\src\Windows\Win32\UI\Accessibility\impl.rs" | Select-Object -First 1
-          $controls = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-sys-0.61.2\src\Windows\Win32\UI\Controls\mod.rs" | Select-Object -First 1
-          if (-not $windows -or -not $impl -or -not $controls) { throw "required generated Windows source not found" }
-          foreach ($trait in @(
-            'IRawElementProviderFragment_Impl',
-            'IRawElementProviderFragmentRoot_Impl',
-            'IInvokeProvider_Impl',
-            'IToggleProvider_Impl',
-            'IExpandCollapseProvider_Impl'
+          $uia = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-0.58.0\src\Windows\Win32\UI\Accessibility\mod.rs" | Select-Object -First 1
+          $shell = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-sys-0.61.2\src\Windows\Win32\UI\Shell\mod.rs" | Select-Object -First 1
+          $ole = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\windows-sys-0.61.2\src\Windows\Win32\System\Ole\mod.rs" | Select-Object -First 1
+          if (-not $uia -or -not $shell -or -not $ole) { throw "required generated Windows source not found" }
+          foreach ($pattern in @(
+            'pub unsafe fn UiaHostProviderFromHwnd',
+            'pub unsafe fn UiaRaiseAutomationEvent',
+            'pub unsafe fn UiaRaiseAutomationPropertyChangedEvent',
+            'pub unsafe fn UiaRaiseStructureChangedEvent',
+            'UiaAppendRuntimeId',
+            'UIA_E_ELEMENTNOTAVAILABLE',
+            'UIA_AutomationFocusChangedEventId',
+            'UIA_NamePropertyId',
+            'UIA_ControlTypePropertyId',
+            'UIA_IsEnabledPropertyId',
+            'UIA_IsKeyboardFocusablePropertyId'
           )) {
-            Write-Host "===== $trait ====="
-            Select-String -Path $impl.FullName -Pattern "pub trait $trait" -Context 0,8
-          }
-          foreach ($pattern in @('UiaReturnRawElementProvider', 'UiaRootObjectId', 'UIA_InvokePatternId', 'UIA_TogglePatternId', 'UIA_ExpandCollapsePatternId')) {
             Write-Host "===== $pattern ====="
-            Select-String -Path $windows.FullName -Pattern $pattern -Context 0,8 | Select-Object -First 2
+            Select-String -Path $uia.FullName -Pattern $pattern -SimpleMatch -Context 0,10 | Select-Object -First 2
           }
           foreach ($pattern in @('SetWindowSubclass', 'RemoveWindowSubclass', 'DefSubclassProc', 'SUBCLASSPROC')) {
-            Write-Host "===== $pattern ====="
-            Select-String -Path $controls.FullName -Pattern $pattern -Context 0,5 | Select-Object -First 2
+            Write-Host "===== Shell::$pattern ====="
+            Select-String -Path $shell.FullName -Pattern $pattern -SimpleMatch -Context 0,6 | Select-Object -First 3
+          }
+          foreach ($pattern in @('SafeArrayCreateVector', 'SafeArrayPutElement', 'VT_I4')) {
+            Write-Host "===== Ole::$pattern ====="
+            Select-String -Path $ole.FullName -Pattern $pattern -SimpleMatch -Context 0,6 | Select-Object -First 3
           }
       - name: Check probe
         run: cargo check -p rarog-platform-windows-native --all-targets
@@ -59,6 +65,3 @@ jobs:
         run: cargo clippy -p rarog-platform-windows-native --all-targets -- -D warnings
       - name: Test probe
         run: cargo test -p rarog-platform-windows-native
-      - name: Show lock impact
-        shell: bash
-        run: git diff -- Cargo.lock
