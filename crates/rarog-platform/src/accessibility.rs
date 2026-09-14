@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::num::NonZeroU64;
 
@@ -189,24 +189,72 @@ impl PlatformAccessibilitySnapshot {
             return Err(invalid_snapshot());
         }
         let scope = root.scope();
-        let mut ids = BTreeSet::new();
-        for node in &nodes {
-            if node.id().scope() != scope || !ids.insert(node.id()) {
+        let mut indices = BTreeMap::new();
+        for (index, node) in nodes.iter().enumerate() {
+            if node.id().scope() != scope || indices.insert(node.id(), index).is_some() {
                 return Err(invalid_snapshot());
             }
             if node.bounds().is_some_and(|bounds| !bounds.is_valid()) {
                 return Err(invalid_snapshot());
             }
         }
-        if !ids.contains(&root) {
+        let Some(&root_index) = indices.get(&root) else {
+            return Err(invalid_snapshot());
+        };
+        if nodes[root_index].parent().is_some() {
             return Err(invalid_snapshot());
         }
+
         for node in &nodes {
-            if node.parent().is_some_and(|parent| !ids.contains(&parent))
-                || node.children().iter().any(|child| !ids.contains(child))
-            {
+            let mut children = BTreeSet::new();
+            for child in node.children() {
+                if !children.insert(*child) {
+                    return Err(invalid_snapshot());
+                }
+                let Some(&child_index) = indices.get(child) else {
+                    return Err(invalid_snapshot());
+                };
+                if nodes[child_index].parent() != Some(node.id()) {
+                    return Err(invalid_snapshot());
+                }
+            }
+
+            match node.parent() {
+                Some(parent) => {
+                    if node.id() == root {
+                        return Err(invalid_snapshot());
+                    }
+                    let Some(&parent_index) = indices.get(&parent) else {
+                        return Err(invalid_snapshot());
+                    };
+                    if nodes[parent_index]
+                        .children()
+                        .iter()
+                        .filter(|&&child| child == node.id())
+                        .count()
+                        != 1
+                    {
+                        return Err(invalid_snapshot());
+                    }
+                }
+                None if node.id() != root => return Err(invalid_snapshot()),
+                None => {}
+            }
+        }
+
+        let mut visited = BTreeSet::new();
+        let mut pending = vec![root];
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current) {
                 return Err(invalid_snapshot());
             }
+            let Some(&index) = indices.get(&current) else {
+                return Err(invalid_snapshot());
+            };
+            pending.extend(nodes[index].children().iter().rev().copied());
+        }
+        if visited.len() != nodes.len() {
+            return Err(invalid_snapshot());
         }
         Ok(Self {
             document_generation,
@@ -445,6 +493,110 @@ mod tests {
                 None,
                 Some(root),
                 Vec::new(),
+            ),
+        ];
+        assert_eq!(
+            PlatformAccessibilitySnapshot::try_new(1, 1, root, nodes)
+                .unwrap_err()
+                .kind(),
+            PlatformAccessibilityErrorKind::InvalidSnapshot
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_root_parent_duplicate_children_and_parent_mismatch() {
+        let root = id(1);
+        let child = id(2);
+        let root_with_parent = vec![
+            PlatformAccessibilityNode::new(
+                root,
+                PlatformAccessibilityRole::RootWebArea,
+                String::new(),
+                PlatformAccessibilityState::default(),
+                None,
+                Some(child),
+                Vec::new(),
+            ),
+            node(2, Some(1)),
+        ];
+        assert_eq!(
+            PlatformAccessibilitySnapshot::try_new(1, 1, root, root_with_parent)
+                .unwrap_err()
+                .kind(),
+            PlatformAccessibilityErrorKind::InvalidSnapshot
+        );
+
+        let duplicate_child = vec![
+            PlatformAccessibilityNode::new(
+                root,
+                PlatformAccessibilityRole::RootWebArea,
+                String::new(),
+                PlatformAccessibilityState::default(),
+                None,
+                None,
+                vec![child, child],
+            ),
+            node(2, Some(1)),
+        ];
+        assert_eq!(
+            PlatformAccessibilitySnapshot::try_new(1, 1, root, duplicate_child)
+                .unwrap_err()
+                .kind(),
+            PlatformAccessibilityErrorKind::InvalidSnapshot
+        );
+
+        let parent_mismatch = vec![
+            PlatformAccessibilityNode::new(
+                root,
+                PlatformAccessibilityRole::RootWebArea,
+                String::new(),
+                PlatformAccessibilityState::default(),
+                None,
+                None,
+                vec![child],
+            ),
+            node(2, None),
+        ];
+        assert_eq!(
+            PlatformAccessibilitySnapshot::try_new(1, 1, root, parent_mismatch)
+                .unwrap_err()
+                .kind(),
+            PlatformAccessibilityErrorKind::InvalidSnapshot
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_disconnected_cycle() {
+        let root = id(1);
+        let second = id(2);
+        let third = id(3);
+        let nodes = vec![
+            PlatformAccessibilityNode::new(
+                root,
+                PlatformAccessibilityRole::RootWebArea,
+                String::new(),
+                PlatformAccessibilityState::default(),
+                None,
+                None,
+                Vec::new(),
+            ),
+            PlatformAccessibilityNode::new(
+                second,
+                PlatformAccessibilityRole::GenericContainer,
+                String::new(),
+                PlatformAccessibilityState::default(),
+                None,
+                Some(third),
+                vec![third],
+            ),
+            PlatformAccessibilityNode::new(
+                third,
+                PlatformAccessibilityRole::GenericContainer,
+                String::new(),
+                PlatformAccessibilityState::default(),
+                None,
+                Some(second),
+                vec![second],
             ),
         ];
         assert_eq!(

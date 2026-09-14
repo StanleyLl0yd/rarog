@@ -67,6 +67,7 @@ impl WindowsAccessibilityNativeBridge {
         provider_serial: u64,
         kind: WindowsAccessibilityNativeEventKind,
     ) -> Result<(), WindowsAccessibilityNativeError> {
+        validate_window(self.hwnd)?;
         publish_win_event(self.hwnd, provider_serial, kind)
     }
 }
@@ -145,6 +146,23 @@ fn publish_win_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_revalidates_the_bound_window() {
+        let fake = NonZeroIsize::new(1).expect("non-zero test handle");
+        let mut bridge = WindowsAccessibilityNativeBridge { hwnd: fake };
+        let error = bridge
+            .publish_event(1, WindowsAccessibilityNativeEventKind::TreeChanged)
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            if cfg!(target_os = "windows") {
+                WindowsAccessibilityNativeErrorKind::InvalidWindow
+            } else {
+                WindowsAccessibilityNativeErrorKind::UnsupportedTarget
+            }
+        );
+    }
 
     #[test]
     fn construction_fails_closed_without_a_supported_live_window() {
