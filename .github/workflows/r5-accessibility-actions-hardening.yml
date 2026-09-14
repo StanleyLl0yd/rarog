@@ -21,7 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           components: clippy,rustfmt
-      - name: Restrict semantic event production to the accessibility crate
+      - name: Restrict semantic event production to validated engine paths
         shell: bash
         run: |
           python3 - <<'PY'
@@ -30,11 +30,17 @@ jobs:
           text = path.read_text()
           old_ctor = 'impl AccessibilityEvent {\n    pub const fn new('
           new_ctor = 'impl AccessibilityEvent {\n    pub(crate) const fn new('
-          old_push = '    pub fn try_push(\n        &mut self,\n        event: AccessibilityEvent,'
-          new_push = '    pub(crate) fn try_push(\n        &mut self,\n        event: AccessibilityEvent,'
           assert text.count(old_ctor) == 1, 'unexpected AccessibilityEvent constructor shape'
-          assert text.count(old_push) == 1, 'unexpected queue producer shape'
-          text = text.replace(old_ctor, new_ctor).replace(old_push, new_push)
+          text = text.replace(old_ctor, new_ctor)
+
+          push_start = text.index('    pub fn try_push(\n')
+          push_end = text.index('    fn ensure_capacity(', push_start)
+          text = text[:push_start] + text[push_end:]
+
+          test_start = text.index('    #[test]\n    fn event_queue_rejects_zero_limit_and_preserves_fifo() {')
+          next_test = text.index('    #[test]\n    fn foreign_scope_and_foreign_tree_fail_before_executor()', test_start)
+          replacement = '''    #[test]\n    fn event_queue_rejects_zero_limit() {\n        assert_eq!(\n            AccessibilityEventQueue::try_with_max_events(0).unwrap_err(),\n            AccessibilityEventQueueError::InvalidLimit\n        );\n    }\n\n'''
+          text = text[:test_start] + replacement + text[next_test:]
           path.write_text(text)
           PY
       - name: Focused verification
