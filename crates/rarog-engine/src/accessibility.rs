@@ -8,7 +8,7 @@ use rarog_layout::FragmentTree;
 use rarog_types::Size;
 
 pub(super) struct EngineAccessibilityState {
-    runtime: AccessibilityRuntime,
+    runtime: Option<AccessibilityRuntime>,
     geometry_revision: u64,
     pending: AccessibilityInvalidation,
     last_error: Option<AccessibilityRefreshError>,
@@ -16,21 +16,27 @@ pub(super) struct EngineAccessibilityState {
 }
 
 impl EngineAccessibilityState {
-    pub(super) fn try_new(
-        document: &Document,
-        fragments: &FragmentTree,
-    ) -> Result<Self, AccessibilityRefreshError> {
-        Ok(Self {
-            runtime: AccessibilityRuntime::try_default(document, fragments, 1)?,
-            geometry_revision: 1,
-            pending: AccessibilityInvalidation::default(),
-            last_error: None,
-            geometry_exhausted: false,
-        })
+    pub(super) fn new(document: &Document, fragments: &FragmentTree) -> Self {
+        match AccessibilityRuntime::try_default(document, fragments, 1) {
+            Ok(runtime) => Self {
+                runtime: Some(runtime),
+                geometry_revision: 1,
+                pending: AccessibilityInvalidation::default(),
+                last_error: None,
+                geometry_exhausted: false,
+            },
+            Err(error) => Self {
+                runtime: None,
+                geometry_revision: 1,
+                pending: AccessibilityInvalidation::full_rebuild(),
+                last_error: Some(error),
+                geometry_exhausted: false,
+            },
+        }
     }
 
     fn snapshot_if_current(&self, document: &Document) -> Option<&AccessibilitySnapshot> {
-        let snapshot = self.runtime.snapshot();
+        let snapshot = self.runtime.as_ref()?.snapshot();
         (!self.geometry_exhausted
             && snapshot.document_generation() == document.generation()
             && snapshot.geometry_revision() == self.geometry_revision)
@@ -56,22 +62,41 @@ impl EngineAccessibilityState {
         fragments: &FragmentTree,
         invalidation: AccessibilityInvalidation,
     ) {
+        if self.geometry_exhausted {
+            return;
+        }
         let mut combined = self.pending.union(invalidation);
-        if self.runtime.snapshot().document_generation() != document.generation() {
-            combined = combined.union(AccessibilityInvalidation::semantic());
+        if let Some(runtime) = self.runtime.as_ref() {
+            if runtime.snapshot().document_generation() != document.generation() {
+                combined = combined.union(AccessibilityInvalidation::semantic());
+            }
+            if runtime.snapshot().geometry_revision() != self.geometry_revision {
+                combined = combined.union(AccessibilityInvalidation::bounds());
+            }
+            if combined.is_empty() {
+                return;
+            }
+        } else {
+            combined = combined.union(AccessibilityInvalidation::full_rebuild());
         }
-        if self.runtime.snapshot().geometry_revision() != self.geometry_revision {
-            combined = combined.union(AccessibilityInvalidation::bounds());
-        }
-        if combined.is_empty() || self.geometry_exhausted {
+
+        if let Some(runtime) = self.runtime.as_mut() {
+            match runtime.refresh(document, fragments, self.geometry_revision, combined) {
+                Ok(_) => {
+                    self.pending = AccessibilityInvalidation::default();
+                    self.last_error = None;
+                }
+                Err(error) => {
+                    self.pending = combined;
+                    self.last_error = Some(error);
+                }
+            }
             return;
         }
 
-        match self
-            .runtime
-            .refresh(document, fragments, self.geometry_revision, combined)
-        {
-            Ok(_) => {
+        match AccessibilityRuntime::try_default(document, fragments, self.geometry_revision) {
+            Ok(runtime) => {
+                self.runtime = Some(runtime);
                 self.pending = AccessibilityInvalidation::default();
                 self.last_error = None;
             }
@@ -111,8 +136,19 @@ impl EngineAccessibilityState {
         self.note_geometry_change();
         self.refresh(document, fragments, AccessibilityInvalidation::bounds());
     }
-}
 
+    fn event_count(&self) -> usize {
+        self.runtime
+            .as_ref()
+            .map_or(0, AccessibilityRuntime::event_count)
+    }
+
+    fn pop_event(&mut self) -> Option<AccessibilityEvent> {
+        self.runtime
+            .as_mut()
+            .and_then(AccessibilityRuntime::pop_event)
+    }
+}
 impl RenderSession {
     pub fn accessibility_snapshot(&self) -> Option<&AccessibilitySnapshot> {
         self.accessibility.snapshot_if_current(&self.document)
@@ -131,11 +167,11 @@ impl RenderSession {
     }
 
     pub fn accessibility_event_count(&self) -> usize {
-        self.accessibility.runtime.event_count()
+        self.accessibility.event_count()
     }
 
     pub fn next_accessibility_event(&mut self) -> Option<AccessibilityEvent> {
-        self.accessibility.runtime.pop_event()
+        self.accessibility.pop_event()
     }
 
     pub fn accessibility_geometry_revision(&self) -> u64 {
@@ -224,6 +260,18 @@ mod tests {
         panic!("missing <{tag}> node");
     }
 
+    #[test]
+    fn accessibility_budget_does_not_become_render_authority() {
+        let mut source = String::from("<main>");
+        for _ in 0..4_100 {
+            source.push_str("<div>x</div>");
+        }
+        source.push_str("</main>");
+        let session = RenderSession::new(&source, RenderOptions::default()).unwrap();
+        assert!(!session.accessibility_is_current());
+        assert!(!session.accessibility_pending_invalidation().is_empty());
+        assert!(session.accessibility_last_error().is_some());
+    }
     #[test]
     fn render_update_refreshes_accessibility_from_committed_state() {
         let mut session =

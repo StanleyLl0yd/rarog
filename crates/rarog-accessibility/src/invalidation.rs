@@ -96,6 +96,8 @@ impl AccessibilitySnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessibilityRefreshError {
     InvalidGeometryRevision,
+    DocumentGenerationRegressed { current: u64, candidate: u64 },
+    GeometryRevisionRegressed { current: u64, candidate: u64 },
     Tree(AccessibilityError),
     EventQueue(AccessibilityEventQueueError),
     ScopeMismatch { expected: u64, actual: u64 },
@@ -243,6 +245,18 @@ impl AccessibilityRuntime {
 
         let from_document_generation = self.snapshot.document_generation();
         let from_geometry_revision = self.snapshot.geometry_revision();
+        if document.generation() < from_document_generation {
+            return Err(AccessibilityRefreshError::DocumentGenerationRegressed {
+                current: from_document_generation,
+                candidate: document.generation(),
+            });
+        }
+        if geometry_revision < from_geometry_revision {
+            return Err(AccessibilityRefreshError::GeometryRevisionRegressed {
+                current: from_geometry_revision,
+                candidate: geometry_revision,
+            });
+        }
         if invalidation.is_empty()
             && from_document_generation == document.generation()
             && from_geometry_revision == geometry_revision
@@ -638,6 +652,56 @@ mod tests {
         assert_eq!(runtime.event_count(), 0);
     }
 
+    #[test]
+    fn generation_regression_is_rejected_before_candidate_publication() {
+        let mut document = Document::new();
+        let body = document
+            .append_new(document.root(), element("body"))
+            .unwrap();
+        document.append_new(body, element("button")).unwrap();
+        let layout = layout_document(&document, viewport(320.0));
+        let mut runtime = AccessibilityRuntime::try_new(
+            &document,
+            &layout.fragments,
+            2,
+            AccessibilityLimits {
+                max_nodes: 32,
+                max_identities: 64,
+                max_dom_nodes_scanned: 128,
+                max_fragments: 128,
+                max_name_bytes_per_node: 128,
+                max_total_name_bytes: 1024,
+            },
+            8,
+        )
+        .unwrap();
+
+        let older = Document::new();
+        let older_layout = layout_document(&older, viewport(320.0));
+        assert!(matches!(
+            runtime.refresh(
+                &older,
+                &older_layout.fragments,
+                2,
+                AccessibilityInvalidation::full_rebuild(),
+            ),
+            Err(AccessibilityRefreshError::DocumentGenerationRegressed { .. })
+        ));
+        assert!(matches!(
+            runtime.refresh(
+                &document,
+                &layout.fragments,
+                1,
+                AccessibilityInvalidation::bounds(),
+            ),
+            Err(AccessibilityRefreshError::GeometryRevisionRegressed { .. })
+        ));
+        assert_eq!(runtime.snapshot().geometry_revision(), 2);
+        assert_eq!(
+            runtime.snapshot().document_generation(),
+            document.generation()
+        );
+    }
     #[test]
     fn full_rebuild_matches_direct_builder_for_covered_semantics() {
         let mut document = Document::new();

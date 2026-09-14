@@ -90,7 +90,6 @@ pub enum RenderError {
     DisplayCommandLimitExceeded { commands: usize, limit: usize },
     DisplayListRevisionExhausted,
     InvalidViewportTranslation,
-    Accessibility(rarog_accessibility::AccessibilityRefreshError),
     ImageDecode(ImageDecodeQueueError),
     DisplayList(DisplayListError),
     Framebuffer(FramebufferError),
@@ -136,7 +135,6 @@ impl std::fmt::Display for RenderError {
             Self::InvalidViewportTranslation => {
                 formatter.write_str("viewport translation must be finite")
             }
-            Self::Accessibility(error) => write!(formatter, "{error}"),
             Self::ImageDecode(error) => write!(formatter, "{error}"),
             Self::DisplayList(error) => write!(formatter, "{error}"),
             Self::Framebuffer(error) => write!(formatter, "{error}"),
@@ -378,11 +376,10 @@ impl RenderSession {
         let mut output = render_html_with_limits(source, options, limits)?;
         let generation = output.document.generation();
         output.document.prune_mutations_through(generation);
-        let accessibility = accessibility::EngineAccessibilityState::try_new(
+        let accessibility = accessibility::EngineAccessibilityState::new(
             &output.document,
             &output.layout.fragments,
-        )
-        .map_err(RenderError::Accessibility)?;
+        );
         Ok(Self {
             options,
             limits,
