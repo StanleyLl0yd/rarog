@@ -211,7 +211,22 @@ mod tests {
     use super::*;
     use crate::RenderOptions;
     use rarog_accessibility::{AccessibilityEventKind, AccessibilityRole};
-    use rarog_dom::NodeKind;
+    use rarog_dom::{NodeId, NodeKind};
+
+    fn find_tag(document: &Document, tag: &str) -> NodeId {
+        let mut stack = vec![document.root()];
+        let mut visited = 0usize;
+        while let Some(source) = stack.pop() {
+            visited += 1;
+            assert!(visited <= document.node_count());
+            let node = document.node(source).unwrap();
+            if matches!(&node.kind, NodeKind::Element(element) if element.tag_name.eq_ignore_ascii_case(tag)) {
+                return source;
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        panic!("missing <{tag}> node");
+    }
 
     #[test]
     fn render_update_refreshes_accessibility_from_committed_state() {
@@ -220,15 +235,7 @@ mod tests {
             RenderOptions::default(),
         )
         .unwrap();
-        let button = session
-            .document()
-            .node_ids()
-            .find(|node| {
-                session.document().node(*node).is_some_and(|node| {
-                    matches!(&node.kind, NodeKind::Element(element) if element.tag_name.eq_ignore_ascii_case("button"))
-                })
-            })
-            .unwrap();
+        let button = find_tag(session.document(), "button");
         let before = session
             .accessibility_snapshot()
             .unwrap()
@@ -246,7 +253,10 @@ mod tests {
         let snapshot = session.accessibility_snapshot().unwrap();
         assert_eq!(snapshot.tree().id_for_source(button), Some(before));
         assert_eq!(snapshot.tree().node(before).unwrap().name(), "Store");
-        assert_eq!(session.next_accessibility_event().unwrap().kind(), AccessibilityEventKind::NameChanged);
+        assert_eq!(
+            session.next_accessibility_event().unwrap().kind(),
+            AccessibilityEventKind::NameChanged
+        );
     }
 
     #[test]
@@ -256,15 +266,7 @@ mod tests {
             RenderOptions::default(),
         )
         .unwrap();
-        let button = session
-            .document()
-            .node_ids()
-            .find(|node| {
-                session.document().node(*node).is_some_and(|node| {
-                    matches!(&node.kind, NodeKind::Element(element) if element.tag_name.eq_ignore_ascii_case("button"))
-                })
-            })
-            .unwrap();
+        let button = find_tag(session.document(), "button");
         let parent = session.document().node(button).unwrap().parent.unwrap();
         let identity = session
             .accessibility_snapshot()
@@ -281,7 +283,10 @@ mod tests {
             .tree()
             .id_for_source(button)
             .is_none());
-        assert_eq!(session.next_accessibility_event().unwrap().kind(), AccessibilityEventKind::TreeChanged);
+        assert_eq!(
+            session.next_accessibility_event().unwrap().kind(),
+            AccessibilityEventKind::TreeChanged
+        );
 
         session.document_mut().append_child(parent, button).unwrap();
         session.update().unwrap();
@@ -323,15 +328,7 @@ mod tests {
             RenderOptions::default(),
         )
         .unwrap();
-        let input = session
-            .document()
-            .node_ids()
-            .find(|node| {
-                session.document().node(*node).is_some_and(|node| {
-                    matches!(&node.kind, NodeKind::Element(element) if element.tag_name.eq_ignore_ascii_case("input"))
-                })
-            })
-            .unwrap();
+        let input = find_tag(session.document(), "input");
         assert_eq!(
             session
                 .accessibility_snapshot()
@@ -359,6 +356,9 @@ mod tests {
                 .role(),
             AccessibilityRole::CheckBox
         );
-        assert_eq!(session.next_accessibility_event().unwrap().kind(), AccessibilityEventKind::TreeChanged);
+        assert_eq!(
+            session.next_accessibility_event().unwrap().kind(),
+            AccessibilityEventKind::TreeChanged
+        );
     }
 }
