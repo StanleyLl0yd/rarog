@@ -97,7 +97,7 @@ See `R4-BACKLOG.md` and `R4-EXIT.md` for the completed bounded Sky scope and exp
 
 ## R5 — Web
 
-Status: **milestone exit in progress**. Tracking issue: #260.
+Status: **complete**. Tracking issue: #260.
 
 All selected R5 implementation workstreams are complete:
 
@@ -108,7 +108,7 @@ All selected R5 implementation workstreams are complete:
 - bounded Canvas 2D/WebGL ownership, compositor invalidation and explicit context-loss semantics;
 - bounded platform-neutral accessibility derivation/actions/events plus the Windows UI Automation bridge.
 
-The remaining R5 closure boundary is the dedicated cross-workstream `r5_exit` gate on Windows-primary and Linux-portability CI, documentation/evidence reconciliation, and confirmation of the merged `main` CI. R6 remains blocked until those exit criteria are complete.
+R5 exit is complete: the dedicated cross-workstream `r5_exit` gate is green on Windows-primary and Linux-portability CI, the exact-head verification matrix passed, and the merged `main` matrix was confirmed green. R6 is a separate milestone and is not begun by this closure.
 
 See `R5-BACKLOG.md` and `R5-EXIT.md` for the bounded Web scope and explicit R6 stop boundary.
 
