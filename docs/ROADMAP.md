@@ -97,17 +97,20 @@ See `R4-BACKLOG.md` and `R4-EXIT.md` for the completed bounded Sky scope and exp
 
 ## R5 — Web
 
-Status: **in progress**. Tracking issue: #260.
+Status: **milestone exit in progress**. Tracking issue: #260.
 
-- storage process;
-- workers/service workers;
-- WebSocket;
-- audio/video;
-- canvas/WebGL;
-- accessibility foundation;
-- Windows accessibility bridge first.
+All selected R5 implementation workstreams are complete:
 
-See `R5-BACKLOG.md` and `R5-EXIT.md` for the active bounded Web scope and explicit R6 stop boundary.
+- bounded exact-origin Storage-process ownership, Host routing, transaction/checkpoint foundations and Windows lifecycle/containment evidence;
+- bounded Workers/Service Workers identity, execution, messaging, lifecycle and Host-gated Fetch interception;
+- bounded WebSocket semantics with Host-private backend authority and explicit close/error/backpressure lifecycle;
+- bounded media semantic ownership with replaceable adapters and Windows-first backend foundation;
+- bounded Canvas 2D/WebGL ownership, compositor invalidation and explicit context-loss semantics;
+- bounded platform-neutral accessibility derivation/actions/events plus the Windows UI Automation bridge.
+
+The remaining R5 closure boundary is the dedicated cross-workstream `r5_exit` gate on Windows-primary and Linux-portability CI, documentation/evidence reconciliation, and confirmation of the merged `main` CI. R6 remains blocked until those exit criteria are complete.
+
+See `R5-BACKLOG.md` and `R5-EXIT.md` for the bounded Web scope and explicit R6 stop boundary.
 
 ## R6 — Compat
 

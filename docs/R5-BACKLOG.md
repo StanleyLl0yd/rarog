@@ -51,11 +51,11 @@ Tracking issue: #260.
 
 ## G — Milestone exit
 
-- [ ] Complete every R5 backlog item selected above.
-- [ ] Add `crates/rarog-engine/tests/r5_exit.rs`.
-- [ ] Run the R5 exit gate explicitly in Windows-primary and Linux-portability CI.
-- [ ] Preserve R0–R4 exit gates, MSRV 1.85, SpiderMonkey and repository security checks.
-- [ ] Reconcile architecture/ADR/README state with implemented evidence.
+- [x] Complete every R5 backlog item selected above.
+- [x] Add `crates/rarog-engine/tests/r5_exit.rs`.
+- [x] Run the R5 exit gate explicitly in Windows-primary and Linux-portability CI.
+- [x] Preserve R0–R4 exit gates, MSRV 1.85, SpiderMonkey and repository security checks.
+- [x] Reconcile architecture/ADR/README state with implemented evidence.
 - [ ] Confirm merged `main` CI before closing #260.
 
 ## Stop boundary
