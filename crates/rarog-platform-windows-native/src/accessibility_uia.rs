@@ -391,8 +391,9 @@ impl WindowsUiaBridge {
 
 impl Drop for WindowsUiaBridge {
     fn drop(&mut self) {
-        let removed =
-            unsafe { RemoveWindowSubclass(raw_hwnd(self.hwnd), Some(uia_subclass_proc), SUBCLASS_ID) };
+        let removed = unsafe {
+            RemoveWindowSubclass(raw_hwnd(self.hwnd), Some(uia_subclass_proc), SUBCLASS_ID)
+        };
         if removed != 0 {
             unsafe { SubclassContext::reclaim(self.subclass_ref_data) };
         }
