@@ -165,6 +165,7 @@ The same core checks used by CI include:
 
 ```text
 cargo fmt --all -- --check
+python3 scripts/repository_audit.py
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace

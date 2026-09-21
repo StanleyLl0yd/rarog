@@ -1,6 +1,6 @@
 # Post-R4 repository-wide audit report
 
-Status: **complete; final merge is pending exact-head verification of this report-only closure update**.
+Status: **complete and merged**.
 
 This report records the mandatory full repository-wide audit/refactor/code review after R4 — Sky and before any R5 work. R5 is explicitly outside scope.
 
@@ -113,7 +113,7 @@ Exact verified code endpoint `1dd92fbc4c0bda72f560b0debaed221852ba0229` is green
 - CodeQL run 34386810711 — success;
 - Post-R4 Full Audit run 34386810657 — success.
 
-The implementation/report head `de1efdeffb785f9c371ce7035520c4fdf2a29176` completed every required workflow successfully. This closure update changes documentation only; PR #259 must also be green on its new exact head before merge.
+The implementation/report head `de1efdeffb785f9c371ce7035520c4fdf2a29176` and final closure head `9672f64fdf0a0627fd7046acc45fe7487d5eff88` completed every required workflow successfully. PR #259 was then squash-merged as `c90412873f73ae764c104b894f820d783d4587ba`, closing the post-R4 audit before R5 began.
 
 ## Limitations
 
@@ -135,6 +135,6 @@ The implementation/report head `de1efdeffb785f9c371ce7035520c4fdf2a29176` comple
 - Full PR diff review: complete; all 21 changed files at `de1efde…` were reviewed against `0dea3dc…` with no additional actionable finding.
 - Exact-head GitHub verification at `de1efde…`: complete; CI, Security, Security Audit/RustSec, CodeQL and Post-R4 Full Audit all succeeded.
 - Obsolete branch proof/deletion: complete; `backup/navigation-context-authority-pre249` and `r4/navigation-site-transitions` were proven superseded and deleted, leaving only `main` and this audit branch before merge.
-- Final report-only closure head verification: required before merge.
-- PR #259 squash merge and issue #258 closure: required.
-- R5: **do not start**.
+- Final report-only closure head verification: complete at `9672f64fdf0a0627fd7046acc45fe7487d5eff88`.
+- PR #259 squash merge and issue #258 closure: complete; merged as `c90412873f73ae764c104b894f820d783d4587ba`.
+- R5 remained outside this audit and began only after the post-R4 gate merged.

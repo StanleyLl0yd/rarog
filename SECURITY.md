@@ -2,7 +2,7 @@
 
 Rarog treats Web-controlled content, parser input, script-visible data, resource metadata, dimensions, URLs and platform-facing requests as hostile input.
 
-Rarog is experimental. R4 established Host-owned Site/process authority, bounded Host/Site IPC, brokered Network/Clipboard capabilities, Windows child-process containment and a dedicated R4 exit gate. These are real security foundations, but Rarog still must not be described as safe for arbitrary hostile Web content or as having Chromium-equivalent sandbox maturity: the current engine workload has not been migrated wholesale into Site children, AppContainer/resource ACL isolation is not implemented, and later Web-platform capabilities will require their own reviewed broker boundaries.
+Rarog is experimental. R4 established Host-owned Site/process authority, bounded Host/Site IPC, brokered capabilities and Windows child-process containment; R5 added bounded Storage, Workers/Service Workers, WebSocket, media, Canvas/WebGL and accessibility foundations behind the same Host/platform authority model. These are real security foundations, but Rarog still must not be described as safe for arbitrary hostile Web content or as having Chromium-equivalent sandbox maturity: the current engine workload has not been migrated wholesale into Site children, AppContainer/resource ACL isolation is not implemented, and broader Web-platform coverage will require its own reviewed authority boundaries.
 
 ## Supported versions
 
@@ -52,7 +52,7 @@ In scope:
 - hostile-input panics, integer/geometry overflow and unbounded resource retention;
 - script-runtime and SpiderMonkey adapter isolation, lifetime and unsafe-code defects;
 - origin/site identity and future capability/process-boundary correctness;
-- Windows platform, input/IME, clipboard, font and GPU adapter boundaries;
+- Windows platform, input/IME, clipboard, font, GPU and accessibility adapter boundaries;
 - dependency and build-toolchain vulnerabilities introduced by this repository;
 - GitHub Actions, dependency resolution, source integrity and future release provenance.
 
@@ -78,7 +78,7 @@ Rarog security-sensitive repository policy is:
 - RustSec audits both committed Cargo lockfiles and remains the dependency-vulnerability merge gate;
 - GitHub Dependency Review runs on pull requests and blocks moderate-or-higher dependency changes;
 - Dependabot covers Cargo and GitHub Actions version updates; alert/security-update availability still depends on the repository security-analysis settings provided by GitHub;
-- the workspace forbids ordinary unsafe Rust; unavoidable unsafe code is confined to the explicitly reviewed SpiderMonkey adapter and Windows-native process/sandbox boundary.
+- the workspace forbids ordinary unsafe Rust; unavoidable unsafe code is confined to the explicitly reviewed SpiderMonkey adapter and Windows-native process/sandbox/UI Automation boundary.
 
 Never commit an `.env` file, token, private key, certificate private material, signing key, service credential or other secret.
 

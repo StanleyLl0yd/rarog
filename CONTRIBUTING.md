@@ -26,6 +26,7 @@ Before opening a PR, run:
 
 ```text
 cargo fmt --all -- --check
+python3 scripts/repository_audit.py
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
@@ -36,6 +37,7 @@ cargo test -p rarog-engine --test r1_exit
 cargo test -p rarog-engine --test r2_exit
 cargo test -p rarog-engine --test r3_exit
 cargo test -p rarog-engine --test r4_exit
+cargo test -p rarog-engine --test r5_exit
 cargo check --manifest-path fuzz/Cargo.toml --bins
 cargo run -p rarog-shell -- examples/hello.html rarog.ppm
 ```

@@ -142,7 +142,7 @@ for name, pattern in STALE_DOC_PATTERNS.items():
 
 stale_navigation_adr_references = []
 for path in TRACKED:
-    if path == Path("scripts/post_r4_audit.py"):
+    if path == Path("scripts/repository_audit.py"):
         continue
     if path.suffix.lower() not in {".md", ".rs", ".py", ".toml", ".yml", ".yaml"}:
         continue
@@ -178,7 +178,7 @@ summary = {
     "stale_navigation_adr_references": stale_navigation_adr_references,
 }
 
-print("=== POST-R4 REPOSITORY AUDIT SUMMARY ===")
+print("=== REPOSITORY AUDIT SUMMARY ===")
 print(json.dumps(summary, indent=2, sort_keys=True))
 
 for category in ("unwrap", "expect", "panic", "todo", "unimplemented", "unsafe_block", "unsafe_fn", "allow_attr"):

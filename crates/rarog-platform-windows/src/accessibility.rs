@@ -200,7 +200,12 @@ impl WindowsAccessibilityService {
             hwnd,
             limits.max_action_requests,
         )
-        .map_err(|error| WindowsAccessibilityBridgeError::Native(error.kind()))?;
+        .map_err(|error| match error.kind() {
+            WindowsAccessibilityNativeErrorKind::AlreadyAttached => {
+                WindowsAccessibilityBridgeError::AlreadyAttached
+            }
+            kind => WindowsAccessibilityBridgeError::Native(kind),
+        })?;
         Ok(Self::with_backend(limits, Box::new(native)))
     }
 
@@ -720,6 +725,8 @@ const fn permanent_native_error(error: WindowsAccessibilityNativeErrorKind) -> b
             | WindowsAccessibilityNativeErrorKind::CapacityExceeded
             | WindowsAccessibilityNativeErrorKind::UnsupportedTarget
             | WindowsAccessibilityNativeErrorKind::InvalidWindow
+            | WindowsAccessibilityNativeErrorKind::WrongThread
+            | WindowsAccessibilityNativeErrorKind::AlreadyAttached
     )
 }
 
@@ -730,7 +737,9 @@ const fn native_platform_error(
         WindowsAccessibilityNativeErrorKind::UnsupportedTarget => {
             PlatformAccessibilityErrorKind::UnsupportedTarget
         }
-        WindowsAccessibilityNativeErrorKind::InvalidWindow => {
+        WindowsAccessibilityNativeErrorKind::InvalidWindow
+        | WindowsAccessibilityNativeErrorKind::WrongThread
+        | WindowsAccessibilityNativeErrorKind::AlreadyAttached => {
             PlatformAccessibilityErrorKind::NativeUnavailable
         }
         WindowsAccessibilityNativeErrorKind::InvalidSnapshot => {

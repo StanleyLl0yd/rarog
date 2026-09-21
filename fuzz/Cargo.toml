@@ -15,6 +15,8 @@ rarog-engine = { path = "../crates/rarog-engine" }
 rarog-fetch = { path = "../crates/rarog-fetch" }
 rarog-html = { path = "../crates/rarog-html" }
 rarog-ipc = { path = "../crates/rarog-ipc" }
+rarog-process = { path = "../crates/rarog-process" }
+rarog-storage = { path = "../crates/rarog-storage" }
 rarog-url = { path = "../crates/rarog-url" }
 rarog-webidl = { path = "../crates/rarog-webidl" }
 
@@ -62,6 +64,13 @@ bench = false
 [[bin]]
 name = "ipc_wire"
 path = "fuzz_targets/ipc_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "storage_checkpoint"
+path = "fuzz_targets/storage_checkpoint.rs"
 test = false
 doc = false
 bench = false

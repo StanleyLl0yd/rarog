@@ -1,12 +1,14 @@
-name: Post-R4 Full Audit
+name: Repository Full Audit
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: post-r4-audit-${{ github.event.pull_request.number || github.ref }}
+  group: repository-audit-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions: {}
@@ -27,7 +29,7 @@ jobs:
         with:
           components: clippy
       - name: Repository policy scan
-        run: python3 scripts/post_r4_audit.py
+        run: python3 scripts/repository_audit.py
       - name: Cargo metadata
         run: cargo metadata --locked --no-deps --format-version 1 > /tmp/metadata.json
       - name: Duplicate dependency versions

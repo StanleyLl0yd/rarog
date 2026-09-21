@@ -65,13 +65,13 @@ R2 pins optional `mozjs` 0.21.6 in the isolated `rarog-script-spidermonkey` crat
 
 The Windows platform crate currently uses `font-kit` 0.14.3 for system-font selection, `clipboard-win` 5.4.1 for clipboard integration and pinned `interprocess` 2.4.3 for bounded local Host↔Site IPC transport. These remain target-specific implementation details behind Rarog-owned platform, IPC and Host contracts. Windows GPU selection and presentation enable the DX12 backend of the same pinned `wgpu` 26.0.1 release used by the compositor adapter.
 
-The isolated `rarog-platform-windows-native` crate pins `windows-sys` 0.61.2 only for the Win32 process, mitigation-policy and Job Object calls that require unsafe FFI. No HANDLE, PID, token or Job Object type crosses its safe public boundary, and ordinary workspace crates continue to inherit `unsafe_code = "forbid"`.
+The isolated `rarog-platform-windows-native` crate pins `windows-sys` 0.61.2 for Win32 process, mitigation-policy, Job Object and low-level window/subclass operations, plus `windows` 0.58.0 and `windows-core` 0.58.0 for the HWND-bound UI Automation COM provider bridge. Raw HANDLE/PID/Job Object/HWND/COM/UIA types remain confined to this reviewed native boundary; its safe public API exposes only Rarog-owned values, and ordinary workspace crates continue to inherit `unsafe_code = "forbid"`.
 
 The Windows shell pins `winit` 0.30.13 for the application window/event-loop boundary and `pollster` 0.4.0 only to synchronously enter the asynchronous GPU setup path. These shell/toolkit helpers do not enter DOM, CSS, layout, paint, Fetch, Host/IPC or other engine-core public contracts.
 
 ### `wgpu` 26.0.1
 
-R3 pins `wgpu` 26.0.1 in the private `rarog-compositor-wgpu` adapter. The selected release remains compatible with Rarog's Rust 1.85 MSRV, while newer major releases require a newer compiler.
+R3 pins `wgpu` 26.0.1 in the private `rarog-compositor-wgpu` adapter. The selected release is the currently verified adapter/API baseline and remains compatible with Rarog's Rust 1.85 MSRV. Newer major releases change the `wgpu` adapter API and therefore require an explicit migration plus the full GPU/compositor and MSRV verification matrix rather than an unreviewed version-only bump.
 
 The adapter depends only on Rarog-owned compositor, paint and geometry contracts. It receives an already-created `wgpu::Device` and `wgpu::Queue`, applies full or partial frame plans to the retained deterministic software staging framebuffer, and uploads tightly packed RGBA8 pixels into an adapter-owned GPU texture. Window handles, surface creation, adapter/device selection and presentation are intentionally outside this crate and remain platform integration responsibilities.
 

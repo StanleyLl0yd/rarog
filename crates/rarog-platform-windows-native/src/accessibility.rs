@@ -8,6 +8,8 @@ pub const DEFAULT_MAX_WINDOWS_ACCESSIBILITY_NATIVE_ACTIONS: usize = 128;
 pub enum WindowsAccessibilityNativeErrorKind {
     UnsupportedTarget,
     InvalidWindow,
+    WrongThread,
+    AlreadyAttached,
     InvalidSnapshot,
     CapacityExceeded,
     ProviderUnavailable,

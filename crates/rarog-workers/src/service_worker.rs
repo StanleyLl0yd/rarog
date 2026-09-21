@@ -717,11 +717,12 @@ impl ServiceWorkerRegistry {
             }
         }
 
-        let replaceable = current.installing.into_iter().collect::<Vec<_>>();
+        let replaceable = current.installing;
+        let discarded_versions = usize::from(replaceable.is_some());
         let remaining_versions = self
             .versions
             .len()
-            .checked_sub(replaceable.len())
+            .checked_sub(discarded_versions)
             .ok_or(ServiceWorkerError::InvalidRegistrationSlot)?;
         let projected_versions = remaining_versions
             .checked_add(1)
@@ -729,10 +730,10 @@ impl ServiceWorkerRegistry {
         if projected_versions > self.limits.max_versions {
             return Err(ServiceWorkerError::VersionLimitExceeded);
         }
-        for version in &replaceable {
+        if let Some(replaceable) = replaceable {
             let candidate = self
                 .versions
-                .get(version)
+                .get(&replaceable)
                 .ok_or(ServiceWorkerError::InvalidRegistrationSlot)?;
             if candidate.registration != registration
                 || candidate.state != ServiceWorkerVersionState::Installing
@@ -742,8 +743,8 @@ impl ServiceWorkerRegistry {
         }
 
         let version = self.allocator.version()?;
-        for stale in &replaceable {
-            self.versions.remove(stale);
+        if let Some(replaceable) = replaceable {
+            self.versions.remove(&replaceable);
         }
         self.versions.insert(
             version,
@@ -763,7 +764,7 @@ impl ServiceWorkerRegistry {
             registration,
             version,
             created_registration: false,
-            discarded_versions: replaceable.len(),
+            discarded_versions,
         })
     }
 
@@ -1019,6 +1020,45 @@ mod tests {
                 .script_url()
                 .as_str(),
             "https://example.com/sw.js?build=1"
+        );
+    }
+
+    #[test]
+    fn exact_scope_update_replaces_only_the_current_installing_version() {
+        let mut registry = ServiceWorkerRegistry::with_default_limits().unwrap();
+        let owner = origin("https://example.com/");
+        let first = registry
+            .register(
+                &owner,
+                &url("https://example.com/app/"),
+                &url("https://example.com/sw-v1.js"),
+            )
+            .unwrap();
+        let second = registry
+            .register(
+                &owner,
+                &url("https://example.com/app/"),
+                &url("https://example.com/sw-v2.js"),
+            )
+            .unwrap();
+
+        assert_eq!(second.registration(), first.registration());
+        assert_eq!(second.discarded_versions(), 1);
+        assert_eq!(registry.version_count(), 1);
+        assert_eq!(
+            registry.version(first.version()).unwrap_err(),
+            ServiceWorkerError::UnknownVersion
+        );
+        assert_eq!(
+            registry
+                .registration(first.registration())
+                .unwrap()
+                .installing(),
+            Some(second.version())
+        );
+        assert_eq!(
+            registry.version(second.version()).unwrap().state(),
+            ServiceWorkerVersionState::Installing
         );
     }
 
