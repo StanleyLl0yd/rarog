@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "web-platform-tests/wpt",
+    "commit": "a83afd4402cffdc876508fe9a47f916d4136099f"
+  },
+  "tests": [
+    {
+      "area": "css-selectors",
+      "path": "css/selectors/dir-style-01a.html",
+      "kind": "reftest",
+      "blob": "f379d14e1896d4d3127d184cbac7278ee96c98ec",
+      "references": [
+        {
+          "relation": "match",
+          "path": "css/selectors/dir-style-01-ref.html",
+          "blob": "664d6dfa7f17cb149f24c7f5b257f3dc4fb5e01d"
+        }
+      ]
+    },
+    {
+      "area": "css-selectors",
+      "path": "css/selectors/root-siblings.html",
+      "kind": "reftest",
+      "blob": "c2f897ab28d748ac4d677004a29180f60f14d38e",
+      "references": [
+        {
+          "relation": "match",
+          "path": "css/reference/ref-filled-green-100px-square.xht",
+          "blob": "05a13794482a94f6c10bd9d4c98704e63ef60331"
+        }
+      ]
+    },
+    {
+      "area": "html-parsing",
+      "path": "html/syntax/parsing/ambiguous-ampersand.html",
+      "kind": "testharness",
+      "blob": "e6d5a822159755ede5394ff8df2bbc61f716dbfc",
+      "references": []
+    },
+    {
+      "area": "html-parsing",
+      "path": "html/syntax/parsing/no-doctype-name.html",
+      "kind": "testharness",
+      "blob": "cfd57e41d964cb8e1d3c98cbe4fa33f46ae73064",
+      "references": []
+    },
+    {
+      "area": "html-parsing",
+      "path": "html/syntax/parsing/zero.html",
+      "kind": "testharness",
+      "blob": "28e4f5310b3999bc6abc1486d1900e98d927e1b7",
+      "references": []
+    }
+  ]
+}
