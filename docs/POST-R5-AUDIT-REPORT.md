@@ -17,7 +17,7 @@ The first pass inspected the complete tracked repository rather than only R5 dif
 - all 80 production Rust files across all 38 workspace crates;
 - inline/unit tests, integration tests, examples and fuzz targets;
 - all Cargo manifests and both committed lockfiles;
-- all six GitHub workflows, Dependabot configuration and repository/security scripts;
+- all five GitHub workflow files, Dependabot configuration and repository/security scripts;
 - Windows-native/COM/UI Automation and SpiderMonkey unsafe boundaries;
 - assets/resources and their convention/build references;
 - architecture, roadmap, milestone, security, dependency and ADR documentation;
@@ -173,7 +173,7 @@ Using the same repository scanner/counting method:
 | Production Rust files | 80 | 80 |
 | Tracked Rust lines | 79,887 | 80,109 |
 | Markdown files | 171 | 171 |
-| GitHub workflow files | 6 | 6 |
+| GitHub workflow files | 5 | 5 |
 | Cargo manifests | 40 | 40 |
 | Committed Cargo lockfiles | 2 | 2 |
 | Fuzz targets | 7 | 8 |
@@ -187,7 +187,7 @@ The implementation adds one fuzz target and hardening/regression code; it does n
 - Tests/integration/examples/fuzz review: complete.
 - Assets/resources review: complete.
 - Manifests/dependencies review: complete.
-- CI/security/repository tooling review: complete.
+- CI/security/repository tooling review: complete; repository policy scanning is also wired into the required CI `Verify` path.
 - Documentation/ADR review: complete.
 - Ruleset/branch/dependency-PR hygiene review: complete.
 - Full implementation diff review: complete.
