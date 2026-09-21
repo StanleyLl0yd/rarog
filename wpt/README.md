@@ -37,6 +37,30 @@ python3 scripts/wpt_dashboard.py \
 
 Multiple non-overlapping report shards may be supplied by repeating `--report`. Duplicate test IDs across shards are rejected rather than double-counted. Ambiguous JSON with duplicate object keys and non-finite numbers is rejected.
 
+## R6 pinned selection
+
+`r6-selection.json` pins the first exact R6 candidate set to:
+
+`web-platform-tests/wpt@a83afd4402cffdc876508fe9a47f916d4136099f`
+
+It contains five concrete test files:
+
+- three HTML parsing `testharness` tests;
+- two CSS selector reftests;
+- two exact reference files for those reftests.
+
+Every selected test/reference carries its upstream Git blob object ID. The list is a denominator for the first real execution attempt; it is **not** a pass list and contains no expected Rarog outcome.
+
+Validate the manifest against an exact local upstream checkout with:
+
+```text
+python3 scripts/wpt_selection.py \
+  --manifest wpt/r6-selection.json \
+  --wpt-checkout /path/to/wpt
+```
+
+The verifier requires the checkout HEAD to match the pinned commit, hashes the selected working-tree files with Git, validates testharness/reftest metadata and confirms the declared reference files. Content drift fails even when the checkout HEAD itself has not moved.
+
 ## Synthetic fixture
 
 `fixtures/synthetic-wptreport.json` exists only to regression-test the normalizer. Use:
