@@ -11,6 +11,7 @@ Targets:
 - `fetch_values` exercises bounded Fetch method/header validation and mutation against arbitrary UTF-8 values.
 - `webidl_parse` feeds arbitrary UTF-8 WebIDL through the standards frontend.
 - `ipc_wire` feeds arbitrary bytes into the bounded R4 Host↔Site wire decoder; malformed frames must fail without panicking or allocating beyond the configured message limit.
+- `storage_checkpoint` feeds arbitrary bytes into the bounded R5 Storage checkpoint restore boundary; malformed persisted state must fail atomically without panicking or allocating beyond configured checkpoint/storage limits.
 
 Typical local commands:
 
@@ -23,6 +24,7 @@ cargo fuzz run url_parse -- -max_len=1048576
 cargo fuzz run fetch_values -- -max_len=1048576
 cargo fuzz run webidl_parse -- -max_len=1048576
 cargo fuzz run ipc_wire -- -max_len=1048576
+cargo fuzz run storage_checkpoint -- -max_len=1048576
 ```
 
 Keep crash artifacts produced by fuzzing for regression work, but do not treat a bounded fuzz run as proof of parser or renderer correctness. Reproduced crashes must become deterministic unit/integration tests before the fix is considered complete.
