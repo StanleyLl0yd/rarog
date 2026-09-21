@@ -63,6 +63,11 @@ class _RarogExecutorMixin:
         self.allowed_paths = load_allowed_paths(self.selection)
         self.protocol = ConnectionlessProtocol(self, browser)
 
+    def setup(self, runner, protocol=None):
+        self.runner = runner
+        self.runner.send_message("init_succeeded")
+        return True
+
     def _selected_path(self, test_url):
         relative = selected_url_to_path(test_url, self.allowed_paths)
         source = (self.wpt_root / Path(*relative.split("/"))).resolve()
