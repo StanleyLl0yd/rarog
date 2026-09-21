@@ -1024,6 +1024,45 @@ mod tests {
     }
 
     #[test]
+    fn exact_scope_update_replaces_only_the_current_installing_version() {
+        let mut registry = ServiceWorkerRegistry::with_default_limits().unwrap();
+        let owner = origin("https://example.com/");
+        let first = registry
+            .register(
+                &owner,
+                &url("https://example.com/app/"),
+                &url("https://example.com/sw-v1.js"),
+            )
+            .unwrap();
+        let second = registry
+            .register(
+                &owner,
+                &url("https://example.com/app/"),
+                &url("https://example.com/sw-v2.js"),
+            )
+            .unwrap();
+
+        assert_eq!(second.registration(), first.registration());
+        assert_eq!(second.discarded_versions(), 1);
+        assert_eq!(registry.version_count(), 1);
+        assert_eq!(
+            registry.version(first.version()).unwrap_err(),
+            ServiceWorkerError::UnknownVersion
+        );
+        assert_eq!(
+            registry
+                .registration(first.registration())
+                .unwrap()
+                .installing(),
+            Some(second.version())
+        );
+        assert_eq!(
+            registry.version(second.version()).unwrap().state(),
+            ServiceWorkerVersionState::Installing
+        );
+    }
+
+    #[test]
     fn exact_scope_update_preserves_active_until_replacement_commits() {
         let mut registry = ServiceWorkerRegistry::with_default_limits().unwrap();
         let owner = origin("https://example.com/");
