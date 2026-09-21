@@ -44,7 +44,7 @@ use windows_sys::Win32::{
     },
     UI::{
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-        WindowsAndMessaging::{IsWindow, WM_GETOBJECT},
+        WindowsAndMessaging::{IsWindow, WM_GETOBJECT, WM_NCDESTROY},
     },
 };
 
@@ -155,10 +155,64 @@ impl UiaShared {
 }
 
 #[derive(Debug)]
+struct SubclassContext {
+    shared: Arc<UiaShared>,
+}
+
+impl SubclassContext {
+    fn into_ref_data(shared: &Arc<UiaShared>) -> usize {
+        Box::into_raw(Box::new(Self {
+            shared: Arc::clone(shared),
+        })) as usize
+    }
+
+    unsafe fn clone_shared(ref_data: usize) -> Arc<UiaShared> {
+        let context = unsafe { &*(ref_data as *const Self) };
+        Arc::clone(&context.shared)
+    }
+
+    unsafe fn reclaim(ref_data: usize) {
+        unsafe {
+            drop(Box::from_raw(ref_data as *mut Self));
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ComApartmentGuard {
+    uninitialize: bool,
+}
+
+impl ComApartmentGuard {
+    fn enter() -> Result<Self, WindowsAccessibilityNativeError> {
+        let result = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+        if result >= 0 {
+            return Ok(Self { uninitialize: true });
+        }
+        if result == RPC_E_CHANGED_MODE {
+            return Ok(Self {
+                uninitialize: false,
+            });
+        }
+        Err(native_error(
+            WindowsAccessibilityNativeErrorKind::ComFailure,
+        ))
+    }
+}
+
+impl Drop for ComApartmentGuard {
+    fn drop(&mut self) {
+        if self.uninitialize {
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct WindowsUiaBridge {
     hwnd: NonZeroIsize,
     shared: Arc<UiaShared>,
-    com_uninitialize: bool,
+    subclass_ref_data: usize,
 }
 
 impl WindowsUiaBridge {
@@ -167,17 +221,6 @@ impl WindowsUiaBridge {
         max_pending_actions: NonZeroUsize,
     ) -> Result<Self, WindowsAccessibilityNativeError> {
         validate_window(hwnd)?;
-        let com_result =
-            unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
-        let com_uninitialize = if com_result >= 0 {
-            true
-        } else if com_result == RPC_E_CHANGED_MODE {
-            false
-        } else {
-            return Err(native_error(
-                WindowsAccessibilityNativeErrorKind::ComFailure,
-            ));
-        };
         let shared = Arc::new(UiaShared {
             hwnd,
             max_pending_actions,
@@ -189,19 +232,18 @@ impl WindowsUiaBridge {
                 callback_error: None,
             }),
         });
+        let subclass_ref_data = SubclassContext::into_ref_data(&shared);
         let raw_hwnd = raw_hwnd(hwnd);
         let installed = unsafe {
             SetWindowSubclass(
                 raw_hwnd,
                 Some(uia_subclass_proc),
                 SUBCLASS_ID,
-                Arc::as_ptr(&shared) as usize,
+                subclass_ref_data,
             )
         };
         if installed == 0 {
-            if com_uninitialize {
-                unsafe { CoUninitialize() };
-            }
+            unsafe { SubclassContext::reclaim(subclass_ref_data) };
             return Err(native_error(
                 WindowsAccessibilityNativeErrorKind::ComFailure,
             ));
@@ -209,7 +251,7 @@ impl WindowsUiaBridge {
         Ok(Self {
             hwnd,
             shared,
-            com_uninitialize,
+            subclass_ref_data,
         })
     }
 
@@ -303,6 +345,7 @@ impl WindowsUiaBridge {
         geometry_revision: u64,
         kind: WindowsAccessibilityNativeEventKind,
     ) -> Result<(), WindowsAccessibilityNativeError> {
+        let _com = ComApartmentGuard::enter()?;
         validate_window(self.hwnd)?;
         let event_data = {
             let state = self.shared.lock()?;
@@ -348,11 +391,10 @@ impl WindowsUiaBridge {
 
 impl Drop for WindowsUiaBridge {
     fn drop(&mut self) {
-        unsafe {
-            RemoveWindowSubclass(raw_hwnd(self.hwnd), Some(uia_subclass_proc), SUBCLASS_ID);
-            if self.com_uninitialize {
-                CoUninitialize();
-            }
+        let removed =
+            unsafe { RemoveWindowSubclass(raw_hwnd(self.hwnd), Some(uia_subclass_proc), SUBCLASS_ID) };
+        if removed != 0 {
+            unsafe { SubclassContext::reclaim(self.subclass_ref_data) };
         }
     }
 }
@@ -365,10 +407,25 @@ unsafe extern "system" fn uia_subclass_proc(
     _subclass_id: usize,
     ref_data: usize,
 ) -> LRESULT {
-    if message == WM_GETOBJECT && lparam == UiaRootObjectId as LPARAM && ref_data != 0 {
-        let shared_ptr = ref_data as *const UiaShared;
-        unsafe { Arc::increment_strong_count(shared_ptr) };
-        let shared = unsafe { Arc::from_raw(shared_ptr) };
+    if ref_data == 0 {
+        return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+    }
+
+    if message == WM_NCDESTROY {
+        unsafe {
+            RemoveWindowSubclass(hwnd, Some(uia_subclass_proc), SUBCLASS_ID);
+        }
+        let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+        unsafe { SubclassContext::reclaim(ref_data) };
+        return result;
+    }
+
+    if message == WM_GETOBJECT && lparam == UiaRootObjectId as LPARAM {
+        let shared = unsafe { SubclassContext::clone_shared(ref_data) };
+        let _com = match ComApartmentGuard::enter() {
+            Ok(com) => com,
+            Err(_) => return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) },
+        };
         let root = {
             let state = match shared.state.lock() {
                 Ok(state) => state,
@@ -1027,6 +1084,28 @@ const fn expand_state_value(expanded: bool) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subclass_context_keeps_shared_state_alive_until_reclaimed() {
+        let shared = Arc::new(UiaShared {
+            hwnd: NonZeroIsize::new(1).expect("non-zero test HWND"),
+            max_pending_actions: NonZeroUsize::new(1).expect("non-zero action limit"),
+            state: Mutex::new(UiaState {
+                current: None,
+                previous: None,
+                focused_provider: None,
+                pending_actions: VecDeque::new(),
+                callback_error: None,
+            }),
+        });
+        let weak = Arc::downgrade(&shared);
+        let ref_data = SubclassContext::into_ref_data(&shared);
+        drop(shared);
+
+        assert!(weak.upgrade().is_some());
+        unsafe { SubclassContext::reclaim(ref_data) };
+        assert!(weak.upgrade().is_none());
+    }
 
     #[test]
     fn private_runtime_serial_stays_in_i32_domain() {
