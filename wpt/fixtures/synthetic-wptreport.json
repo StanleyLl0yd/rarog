@@ -1,0 +1,38 @@
+{
+  "run_info": {
+    "os": "linux",
+    "product": "rarog-synthetic"
+  },
+  "results": [
+    {
+      "expected": "OK",
+      "status": "OK",
+      "subtests": [
+        {
+          "expected": "PASS",
+          "name": "selector matches",
+          "status": "PASS"
+        },
+        {
+          "expected": "PASS",
+          "name": "selector rejects",
+          "status": "FAIL"
+        }
+      ],
+      "test": "/css/selectors/synthetic-a.html"
+    },
+    {
+      "expected": [
+        "OK",
+        "ERROR"
+      ],
+      "status": "ERROR",
+      "subtests": [],
+      "test": "/html/syntax/parsing/synthetic-b.html"
+    },
+    {
+      "status": "TIMEOUT",
+      "test": "/css/css-box/synthetic-c.html"
+    }
+  ]
+}
