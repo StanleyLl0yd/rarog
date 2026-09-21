@@ -187,6 +187,6 @@ Rarog is dual-licensed under **Apache-2.0 OR MIT**, at your option. See `LICENSE
 
 ## Project status
 
-**R0 — Ember, R1 — Flame, R2 — Flight, R3 — Wings, R4 — Sky and R5 — Web are complete.** The selected R5 implementation scope, dedicated cross-workstream exit gate and merged-`main` verification are complete. R6 compatibility qualification has not begun. Rarog remains experimental and does not claim browser readiness, AppContainer isolation or Chromium-equivalent sandbox maturity.
+**R0 — Ember, R1 — Flame, R2 — Flight, R3 — Wings, R4 — Sky and R5 — Web are complete. R6 — Compat is in progress.** R6 starts with deterministic compatibility-evidence tooling and will add measured WPT, real-Web, profile, WebDriver/BiDi and Windows real-machine evidence incrementally. The current R6 tooling foundation is not itself a compatibility claim. Rarog remains experimental and does not claim browser readiness, AppContainer isolation or Chromium-equivalent sandbox maturity.
 
 Created by **Stanley Lloyd**. Contributions are welcome; see `CONTRIBUTING.md`.
