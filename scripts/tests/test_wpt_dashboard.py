@@ -58,6 +58,31 @@ class WptDashboardTests(unittest.TestCase):
         self.assertIn("Synthetic fixture — not compatibility evidence.", markdown)
         self.assertIn("does not infer results for unmeasured tests", markdown)
 
+    def test_committed_fixture_requires_synthetic_flag(self) -> None:
+        reports = self.dashboard.load_reports([FIXTURE])
+        with self.assertRaisesRegex(self.dashboard.DashboardError, "requires --synthetic"):
+            self.dashboard.normalize_reports(
+                reports,
+                rarog_commit=RAROG_COMMIT,
+                wpt_commit=WPT_COMMIT,
+                platform="linux",
+                synthetic=False,
+            )
+
+    def test_duplicate_json_keys_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "duplicate.json"
+            path.write_text('{"results":[],"results":[]}', encoding="utf-8")
+            with self.assertRaisesRegex(self.dashboard.DashboardError, "duplicate key"):
+                self.dashboard.load_reports([path])
+
+    def test_nonfinite_json_numbers_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nonfinite.json"
+            path.write_text('{"results":[],"value":NaN}', encoding="utf-8")
+            with self.assertRaisesRegex(self.dashboard.DashboardError, "non-finite JSON"):
+                self.dashboard.load_reports([path])
+
     def test_missing_expectation_is_not_counted_as_unexpected(self) -> None:
         normalized = self.dashboard.normalize_reports(
             [
