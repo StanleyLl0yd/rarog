@@ -25,7 +25,7 @@ The selection:
 
 The initial selection is deliberately small: three HTML parsing testharness files and two CSS selector reftests. Small scope makes the first execution boundary inspectable; it is not a claim that these are the only important tests or that any selected test currently passes.
 
-`scripts/wpt_selection.py` validates the manifest and can verify it against a local upstream checkout. Verification requires the checkout HEAD to equal the pinned commit. It hashes selected working-tree files with Git, checks every declared blob, confirms testharness files actually load `/resources/testharness.js`, parses reftest reference metadata, resolves references to normalized repository-relative paths, and verifies their blobs.
+`scripts/wpt_selection.py` validates the manifest and can verify it against a local upstream checkout. Verification requires the checkout HEAD to equal the pinned commit. It verifies every declared blob against the pinned commit tree, independently hashes selected working-tree files with Git, confirms testharness files actually load `/resources/testharness.js`, parses reftest reference metadata, resolves references to normalized repository-relative paths, and verifies reference blobs against both the commit tree and working tree.
 
 Malformed JSON, unknown fields, non-normalized/traversing paths, unsorted or duplicate tests/references, unsupported kinds/relations, wrong checkout commits, missing files and content drift fail closed.
 
@@ -36,6 +36,6 @@ The verifier is stdlib-only and its synthetic temporary-Git tests run through th
 - The selected set can be reviewed without executing Rarog.
 - Later execution cannot silently shrink the denominator to hide failures.
 - Upstream source drift is visible as a commit or blob change.
-- Local checkout modification of a selected test/reference is detected even if HEAD still matches.
+- A manifest blob that does not belong to the pinned commit is rejected, and local checkout modification of a selected test/reference is detected independently even if HEAD still matches.
 - The manifest itself is selection evidence, not compatibility evidence: no test has a result until a real execution emits a non-synthetic report.
 - Updating the upstream revision or selected paths requires an explicit reviewed manifest change and must remain distinguishable from changes in Rarog behavior.
