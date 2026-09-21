@@ -3,7 +3,7 @@ use rarog_types::Size;
 use std::{
     env, fs, io,
     path::PathBuf,
-    process::{ExitCode, Termination},
+    process::ExitCode,
 };
 
 struct Arguments {
