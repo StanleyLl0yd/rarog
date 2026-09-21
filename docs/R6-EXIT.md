@@ -54,9 +54,11 @@ Before R6 can close:
    - R6 exit gate green on required platforms;
    - exact-head and merged-main CI/Security/RustSec/CodeQL/Repository Full Audit green.
 
-## Current first slice
+## Current WPT slices
 
-Issue #330 adds the deterministic WPT `wptreport` normalization/dashboard foundation. Its synthetic fixture exists only to verify tooling behavior. It does **not** satisfy the required real WPT evidence item above.
+Issue #330 added deterministic WPT `wptreport` normalization/dashboard tooling. Its synthetic fixture exists only to verify tooling behavior and does **not** satisfy the required real WPT evidence item above.
+
+Issue #332 pins an exact upstream WPT revision and a small file-level candidate selection with Git blob identities plus a local-checkout verifier. This establishes a reviewable denominator for the first real run; it also does **not** satisfy the real WPT evidence item until the selected tests are actually executed by Rarog and produce a non-synthetic report.
 
 ## Non-goals
 
