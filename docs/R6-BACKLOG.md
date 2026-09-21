@@ -10,7 +10,7 @@ R6 converts compatibility claims into reproducible evidence. It must not improve
 
 ## A. WPT measurement and dashboard
 
-- [ ] Deterministic `wptreport` ingestion, canonical dashboard output and synthetic regression coverage (#330).
+- [x] Deterministic `wptreport` ingestion, canonical dashboard output and synthetic regression coverage (#330).
 - [ ] Pin an upstream WPT revision and executable selected test manifest for the first real Rarog WPT run.
 - [ ] Produce and version the first non-synthetic Rarog WPT dashboard from actual execution.
 - [ ] Define update/comparison policy so regressions and newly measured scope remain distinguishable.
