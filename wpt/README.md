@@ -35,7 +35,7 @@ python3 scripts/wpt_dashboard.py \
   --markdown-out /tmp/rarog-wpt-dashboard.md
 ```
 
-Multiple non-overlapping report shards may be supplied by repeating `--report`. Duplicate test IDs across shards are rejected rather than double-counted.
+Multiple non-overlapping report shards may be supplied by repeating `--report`. Duplicate test IDs across shards are rejected rather than double-counted. Ambiguous JSON with duplicate object keys and non-finite numbers is rejected.
 
 ## Synthetic fixture
 
@@ -52,7 +52,7 @@ python3 scripts/wpt_dashboard.py \
   --markdown-out /tmp/rarog-wpt-synthetic.md
 ```
 
-Synthetic output contains an explicit machine-readable marker and a prominent Markdown warning. It is not compatibility evidence.
+Synthetic output contains an explicit machine-readable marker and a prominent Markdown warning. It is not compatibility evidence. The committed fixture digest is recognized by the normalizer and is rejected unless `--synthetic` is supplied.
 
 Tooling regression tests:
 
