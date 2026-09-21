@@ -59,7 +59,7 @@ python3 scripts/wpt_selection.py \
   --wpt-checkout /path/to/wpt
 ```
 
-The verifier requires the checkout HEAD to match the pinned commit, hashes the selected working-tree files with Git, validates testharness/reftest metadata and confirms the declared reference files. Content drift fails even when the checkout HEAD itself has not moved.
+The verifier requires the checkout HEAD to match the pinned commit, verifies every declared blob against the pinned commit tree, independently hashes the selected working-tree files, validates testharness/reftest metadata and confirms the declared reference files. Manifest drift and local content drift therefore fail independently.
 
 ## Synthetic fixture
 
