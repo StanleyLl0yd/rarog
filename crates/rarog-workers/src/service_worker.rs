@@ -717,11 +717,12 @@ impl ServiceWorkerRegistry {
             }
         }
 
-        let replaceable = current.installing.into_iter().collect::<Vec<_>>();
+        let replaceable = current.installing;
+        let discarded_versions = usize::from(replaceable.is_some());
         let remaining_versions = self
             .versions
             .len()
-            .checked_sub(replaceable.len())
+            .checked_sub(discarded_versions)
             .ok_or(ServiceWorkerError::InvalidRegistrationSlot)?;
         let projected_versions = remaining_versions
             .checked_add(1)
@@ -729,10 +730,10 @@ impl ServiceWorkerRegistry {
         if projected_versions > self.limits.max_versions {
             return Err(ServiceWorkerError::VersionLimitExceeded);
         }
-        for version in &replaceable {
+        if let Some(replaceable) = replaceable {
             let candidate = self
                 .versions
-                .get(version)
+                .get(&replaceable)
                 .ok_or(ServiceWorkerError::InvalidRegistrationSlot)?;
             if candidate.registration != registration
                 || candidate.state != ServiceWorkerVersionState::Installing
@@ -742,8 +743,8 @@ impl ServiceWorkerRegistry {
         }
 
         let version = self.allocator.version()?;
-        for stale in &replaceable {
-            self.versions.remove(stale);
+        if let Some(replaceable) = replaceable {
+            self.versions.remove(&replaceable);
         }
         self.versions.insert(
             version,
@@ -763,7 +764,7 @@ impl ServiceWorkerRegistry {
             registration,
             version,
             created_registration: false,
-            discarded_versions: replaceable.len(),
+            discarded_versions,
         })
     }
 
