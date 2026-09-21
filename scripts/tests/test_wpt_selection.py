@@ -169,6 +169,16 @@ class WptSelectionTests(unittest.TestCase):
         ):
             self.selection.verify_checkout(manifest, self.repo)
 
+    def test_manifest_blob_must_match_pinned_commit_tree(self) -> None:
+        malformed = copy.deepcopy(self.manifest)
+        malformed["tests"][1]["blob"] = "0" * 40
+        manifest = self.selection.validate_manifest(malformed)
+        with self.assertRaisesRegex(
+            self.selection.SelectionError,
+            "pinned commit blob mismatch",
+        ):
+            self.selection.verify_checkout(manifest, self.repo)
+
     def test_worktree_blob_drift_is_rejected(self) -> None:
         (self.repo / "html" / "test.html").write_text(
             "<!doctype html><p>changed</p>\n",
@@ -178,6 +188,18 @@ class WptSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(
             self.selection.SelectionError,
             "blob mismatch",
+        ):
+            self.selection.verify_checkout(manifest, self.repo)
+
+    def test_reference_worktree_drift_is_rejected(self) -> None:
+        (self.repo / "css" / "ref.html").write_text(
+            "<!doctype html><p>changed reference</p>\n",
+            encoding="utf-8",
+        )
+        manifest = self.selection.validate_manifest(self.manifest)
+        with self.assertRaisesRegex(
+            self.selection.SelectionError,
+            "working-tree reference blob mismatch",
         ):
             self.selection.verify_checkout(manifest, self.repo)
 
