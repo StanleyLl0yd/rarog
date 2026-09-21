@@ -4,10 +4,10 @@ use crate::accessibility::{
     WindowsAccessibilityNativeEventKind, WindowsAccessibilityNativeNode,
     WindowsAccessibilityNativeRole, WindowsAccessibilityNativeSnapshot, native_error,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::num::{NonZeroIsize, NonZeroUsize};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use windows::{
     Win32::{
         Foundation::{HWND as TypedHwnd, LPARAM as TypedLparam, WPARAM as TypedWparam},
@@ -44,7 +44,7 @@ use windows_sys::Win32::{
         Variant::VT_I4,
     },
     UI::{
-        Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
+        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow, WM_GETOBJECT, WM_NCDESTROY},
     },
 };
@@ -55,6 +55,30 @@ const E_OUTOFMEMORY: HRESULT = HRESULT(0x8007_000E_u32 as i32);
 const UIA_E_ELEMENTNOTAVAILABLE_HRESULT: HRESULT = HRESULT(0x8004_0201_u32 as i32);
 const UIA_E_NOTSUPPORTED_HRESULT: HRESULT = HRESULT(0x8004_0204_u32 as i32);
 const RPC_E_CHANGED_MODE: i32 = 0x8001_0106_u32 as i32;
+
+static ATTACHED_UIA_WINDOWS: OnceLock<Mutex<BTreeSet<isize>>> = OnceLock::new();
+
+fn reserve_uia_window(hwnd: NonZeroIsize) -> Result<(), WindowsAccessibilityNativeError> {
+    let mut attached = ATTACHED_UIA_WINDOWS
+        .get_or_init(|| Mutex::new(BTreeSet::new()))
+        .lock()
+        .map_err(|_| native_error(WindowsAccessibilityNativeErrorKind::ComFailure))?;
+    if !attached.insert(hwnd.get()) {
+        return Err(native_error(
+            WindowsAccessibilityNativeErrorKind::AlreadyAttached,
+        ));
+    }
+    Ok(())
+}
+
+fn release_uia_window(hwnd: isize) {
+    if let Ok(mut attached) = ATTACHED_UIA_WINDOWS
+        .get_or_init(|| Mutex::new(BTreeSet::new()))
+        .lock()
+    {
+        attached.remove(&hwnd);
+    }
+}
 
 #[derive(Clone, Debug)]
 struct SnapshotState {
@@ -230,20 +254,7 @@ impl WindowsUiaBridge {
                 WindowsAccessibilityNativeErrorKind::WrongThread,
             ));
         }
-        let mut existing_ref_data = 0usize;
-        if unsafe {
-            GetWindowSubclass(
-                raw_hwnd,
-                Some(uia_subclass_proc),
-                SUBCLASS_ID,
-                &mut existing_ref_data,
-            )
-        } != 0
-        {
-            return Err(native_error(
-                WindowsAccessibilityNativeErrorKind::AlreadyAttached,
-            ));
-        }
+        reserve_uia_window(hwnd)?;
 
         let shared = Arc::new(UiaShared {
             hwnd,
@@ -267,6 +278,7 @@ impl WindowsUiaBridge {
         };
         if installed == 0 {
             unsafe { SubclassContext::reclaim(subclass_ref_data) };
+            release_uia_window(hwnd.get());
             return Err(native_error(
                 WindowsAccessibilityNativeErrorKind::ComFailure,
             ));
@@ -431,6 +443,7 @@ impl Drop for WindowsUiaBridge {
         };
         if removed != 0 {
             unsafe { SubclassContext::reclaim(self.subclass_ref_data) };
+            release_uia_window(self.hwnd.get());
         }
     }
 }
@@ -452,6 +465,7 @@ unsafe extern "system" fn uia_subclass_proc(
             RemoveWindowSubclass(hwnd, Some(uia_subclass_proc), SUBCLASS_ID);
         }
         let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+        release_uia_window(hwnd as isize);
         unsafe { SubclassContext::reclaim(ref_data) };
         return result;
     }
@@ -1120,6 +1134,20 @@ const fn expand_state_value(expanded: bool) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attached_window_registry_rejects_duplicate_until_release() {
+        let hwnd = NonZeroIsize::new(-0x5241).expect("non-zero synthetic HWND");
+
+        reserve_uia_window(hwnd).expect("first reservation succeeds");
+        assert_eq!(
+            reserve_uia_window(hwnd).unwrap_err().kind(),
+            WindowsAccessibilityNativeErrorKind::AlreadyAttached
+        );
+        release_uia_window(hwnd.get());
+        reserve_uia_window(hwnd).expect("released reservation can be reused");
+        release_uia_window(hwnd.get());
+    }
 
     #[test]
     fn subclass_context_keeps_shared_state_alive_until_reclaimed() {
