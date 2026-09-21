@@ -25,11 +25,11 @@ R6 WPT dashboards normalize supplied `wptreport` files into a Rarog-owned eviden
 - unexpected classification only when expectation metadata exists and the observed status is outside it;
 - deterministic sorting and deterministic JSON/Markdown generation.
 
-Duplicate test IDs across report shards and duplicate subtest names inside one test are rejected. Empty result sets are rejected.
+Duplicate JSON object keys, non-finite JSON numbers, duplicate test IDs across report shards and duplicate subtest names inside one test are rejected. Empty result sets are rejected.
 
 Missing expectation metadata is preserved as unknown and does not increment unexpected counts. The dashboard reports only records actually present in its supplied reports. It does not manufacture a directory denominator, compatibility percentage or result for unmeasured tests.
 
-Synthetic fixture dashboards carry an explicit machine-readable `synthetic: true` marker and a prominent human-readable non-evidence warning.
+Synthetic fixture dashboards carry an explicit machine-readable `synthetic: true` marker and a prominent human-readable non-evidence warning. The committed fixture's canonical digest is denylisted from non-synthetic output so omitting the CLI flag cannot accidentally turn that fixture into publishable evidence.
 
 The normalizer is stdlib-only tooling under `scripts/`; it adds no product dependency or runtime authority. Its regression suite runs in the protected Linux/Verify path and in Repository Full Audit.
 
