@@ -1,0 +1,159 @@
+name: R6 Selected WPT
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/r6-wpt-selected.yml"
+      - "crates/rarog-engine/examples/r6_wpt_render.rs"
+      - "scripts/wpt_dashboard.py"
+      - "scripts/wpt_evidence.py"
+      - "scripts/wpt_selection.py"
+      - "wpt/r6-selection.json"
+      - "wpt/runner/**"
+      - "wpt/evidence/**"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/r6-wpt-selected.yml"
+      - "crates/rarog-engine/examples/r6_wpt_render.rs"
+      - "scripts/wpt_dashboard.py"
+      - "scripts/wpt_evidence.py"
+      - "scripts/wpt_selection.py"
+      - "wpt/r6-selection.json"
+      - "wpt/runner/**"
+      - "wpt/evidence/**"
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  WPT_COMMIT: a83afd4402cffdc876508fe9a47f916d4136099f
+
+jobs:
+  selected-wpt:
+    name: Selected WPT evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Rarog
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+
+      - name: Checkout pinned upstream WPT
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: web-platform-tests/wpt
+          ref: ${{ env.WPT_COMMIT }}
+          path: upstream-wpt
+          persist-credentials: false
+
+      - name: Verify pinned WPT selection
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream-wpt rev-parse HEAD)" = "$WPT_COMMIT"
+          python3 scripts/wpt_selection.py \
+            --manifest wpt/r6-selection.json \
+            --wpt-checkout upstream-wpt
+
+      - name: Test compatibility tooling
+        run: python3 -m unittest discover -s scripts/tests -p 'test_wpt_*.py'
+
+      - name: Build test-only Rarog renderer
+        run: cargo build --locked -p rarog-engine --example r6_wpt_render
+
+      - name: Prepare pinned WPT environment
+        run: |
+          set -euo pipefail
+          python3 -m venv upstream-wpt/.rarog-venv
+          upstream-wpt/.rarog-venv/bin/python -m pip \
+            --disable-pip-version-check \
+            install \
+            --no-deps \
+            -e "$GITHUB_WORKSPACE/wpt/runner"
+          (
+            cd upstream-wpt
+            ./wpt make-hosts-file
+          ) | sudo tee -a /etc/hosts >/dev/null
+
+      - name: Execute exact selected WPT denominator
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/wpt-run-output"
+          cd upstream-wpt
+          set +e
+          ./wpt --venv .rarog-venv run rarog \
+            --binary "$GITHUB_WORKSPACE/target/debug/examples/r6_wpt_render" \
+            --rarog-wpt-root "$PWD" \
+            --rarog-selection "$GITHUB_WORKSPACE/wpt/r6-selection.json" \
+            --ssl-type=none \
+            --no-manifest-download \
+            --processes=1 \
+            --log-wptreport="$GITHUB_WORKSPACE/wpt-run-output/wptreport.json" \
+            css/selectors/dir-style-01a.html \
+            css/selectors/dir-style-03a.html \
+            html/syntax/parsing/ambiguous-ampersand.html \
+            html/syntax/parsing/no-doctype-name.html \
+            html/syntax/parsing/zero.html
+          status=$?
+          set -e
+          echo "WPT_RUN_EXIT=$status" >> "$GITHUB_ENV"
+          test -s "$GITHUB_WORKSPACE/wpt-run-output/wptreport.json"
+
+      - name: Bind report to denominator
+        run: |
+          set -euo pipefail
+          python3 scripts/wpt_evidence.py \
+            --selection wpt/r6-selection.json \
+            --report wpt-run-output/wptreport.json \
+            --rarog-commit "$GITHUB_SHA" \
+            --wpt-commit "$WPT_COMMIT" \
+            --json-out wpt-run-output/evidence.json
+          python3 scripts/wpt_dashboard.py \
+            --report wpt-run-output/wptreport.json \
+            --rarog-commit "$GITHUB_SHA" \
+            --wpt-commit "$WPT_COMMIT" \
+            --platform github-actions-ubuntu-24.04 \
+            --json-out wpt-run-output/dashboard.json \
+            --markdown-out wpt-run-output/dashboard.md
+
+      - name: Cross-check evidence digests
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          evidence = json.loads(Path("wpt-run-output/evidence.json").read_text())
+          dashboard = json.loads(Path("wpt-run-output/dashboard.json").read_text())
+          assert dashboard["synthetic"] is False
+          assert dashboard["rarog_commit"] == evidence["rarog_commit"]
+          assert dashboard["wpt_commit"] == evidence["wpt_commit"]
+          assert dashboard["source_reports"] == [evidence["report_sha256"]]
+          assert dashboard["summary"]["measured_tests"] == evidence["observed_tests"]
+          PY
+
+      - name: Print bounded first-run evidence
+        run: |
+          set -euo pipefail
+          echo "WPT runner exit: $WPT_RUN_EXIT"
+          echo "=== RAROG R6 WPT REPORT BEGIN ==="
+          cat wpt-run-output/wptreport.json
+          echo
+          echo "=== RAROG R6 WPT REPORT END ==="
+          echo "=== RAROG R6 WPT EVIDENCE BEGIN ==="
+          cat wpt-run-output/evidence.json
+          echo "=== RAROG R6 WPT EVIDENCE END ==="
+          echo "=== RAROG R6 WPT DASHBOARD JSON BEGIN ==="
+          cat wpt-run-output/dashboard.json
+          echo "=== RAROG R6 WPT DASHBOARD JSON END ==="
+          echo "=== RAROG R6 WPT DASHBOARD MARKDOWN BEGIN ==="
+          cat wpt-run-output/dashboard.md
+          echo "=== RAROG R6 WPT DASHBOARD MARKDOWN END ==="
