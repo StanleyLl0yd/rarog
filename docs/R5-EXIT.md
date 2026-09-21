@@ -1,6 +1,6 @@
 # R5 — Web exit gate
 
-Status: **in progress — implementation complete; exit verification pending**.
+Status: **complete**.
 
 Tracking issue: #260.
 
@@ -34,7 +34,7 @@ The gate combines representative runtime checks with contract checks over the R5
 
 `.github/workflows/ci.yml` invokes the R5 exit gate explicitly in both Windows-primary and Linux-portability lanes. The earlier R0/P1/R0.1/R1/R2/R3/R4 gates remain in those lanes, while MSRV 1.85, dedicated SpiderMonkey Windows/Linux jobs and the repository security/audit workflows remain separate required evidence.
 
-README and roadmap state are reconciled to describe the completed R5 implementation scope without claiming compatibility qualification. `ARCHITECTURE.md` already records the concrete R5 ownership, lifetime, resource and platform boundaries established by the implementation and its ADRs. The milestone remains **in progress** until the final exact-head matrix is green, the exit changes are merged, and the resulting `main` CI is confirmed green.
+README and roadmap state are reconciled to describe the completed R5 implementation scope without claiming compatibility qualification. `ARCHITECTURE.md` already records the concrete R5 ownership, lifetime, resource and platform boundaries established by the implementation and its ADRs. PR #325 was verified on exact head and squash-merged as `617838f6f9c0b8c32fe807f11e838581d2563a4b`; the resulting `main` push matrix completed green in CI #1208, Security #379, Security Audit #394 and CodeQL #380. The PR-scoped Post-R4 Full Audit was also green before merge. R5 is therefore complete, with R6 remaining a separate, unstarted milestone.
 
 ## Platform evidence
 
