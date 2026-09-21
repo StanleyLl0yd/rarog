@@ -60,10 +60,7 @@ const UIA_E_ELEMENTNOTAVAILABLE_HRESULT: HRESULT = HRESULT(0x8004_0201_u32 as i3
 const UIA_E_NOTSUPPORTED_HRESULT: HRESULT = HRESULT(0x8004_0204_u32 as i32);
 const RPC_E_CHANGED_MODE: i32 = 0x8001_0106_u32 as i32;
 
-fn reserve_uia_window(
-    hwnd: HWND,
-    ref_data: usize,
-) -> Result<(), WindowsAccessibilityNativeError> {
+fn reserve_uia_window(hwnd: HWND, ref_data: usize) -> Result<(), WindowsAccessibilityNativeError> {
     if !unsafe { GetPropA(hwnd, SUBCLASS_PROPERTY.as_ptr()) }.is_null() {
         return Err(native_error(
             WindowsAccessibilityNativeErrorKind::AlreadyAttached,
