@@ -30,6 +30,8 @@ jobs:
           components: clippy
       - name: Repository policy scan
         run: python3 scripts/repository_audit.py
+      - name: WPT dashboard tooling tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Cargo metadata
         run: cargo metadata --locked --no-deps --format-version 1 > /tmp/metadata.json
       - name: Duplicate dependency versions

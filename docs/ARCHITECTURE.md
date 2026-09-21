@@ -51,6 +51,18 @@ See ADR-0006.
 12. **Determinism is an R0 correctness requirement.** Equivalent input on the same architecture/toolchain must produce equivalent snapshots, display items and framebuffer hashes.
 13. **Incremental rendering is an optimization with a full-rebuild fallback.** Reuse is allowed only when the engine can prove that the affected derived state remains valid.
 
+## R6 compatibility evidence boundary
+
+R6 adds compatibility evidence without making test tooling authoritative over standards behavior.
+
+The first R6 boundary is a stdlib-only WPT dashboard normalizer under `scripts/`. It consumes machine-readable upstream WPT reports and emits deterministic Rarog-owned evidence summaries. Every dashboard is bound to exact Rarog/WPT commits plus content-addressed source-report digests. Test/subtest observations and expectation metadata remain distinct; missing expectations stay unknown, and only explicitly measured records contribute to counts.
+
+Synthetic fixtures exist only to test tooling. They are permanently marked as non-evidence and cannot satisfy R6's real WPT requirement. Directory focus manifests remain selection hints rather than compatibility denominators.
+
+Compatibility measurement remains outside DOM/layout/script authority: dashboards do not alter engine behavior, expectations do not suppress runtime failures, and no standards-engine code may be specialized merely to improve dashboard output without an independently demonstrated standards/compatibility defect.
+
+See ADR-0139 and `docs/R6-EXIT.md`.
+
 ## Long-term process topology
 
 ```text

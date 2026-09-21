@@ -39,7 +39,7 @@ ALLOWED_PRODUCTION_PANICS = {
 }
 
 STALE_DOC_PATTERNS = {
-    "r4_in_progress": re.compile(r"R4[^\n]{0,80}(?:in progress|underway)", re.I),
+    "r4_in_progress": re.compile(r"\bR4\b(?:(?!\bR[0-9]).){0,80}\b(?:in progress|underway)\b", re.I),
     "single_process_current": re.compile(r"current single-process", re.I),
     "planned_r4_security": re.compile(r"planned multi-process isolation|sandbox milestones are implemented", re.I),
     "dependency_review_disabled": re.compile(r"Dependency Review remains intentionally disabled", re.I),

@@ -27,6 +27,7 @@ Before opening a PR, run:
 ```text
 cargo fmt --all -- --check
 python3 scripts/repository_audit.py
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace

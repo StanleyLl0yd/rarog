@@ -114,6 +114,10 @@ See `R5-BACKLOG.md` and `R5-EXIT.md` for the bounded Web scope and explicit R6 s
 
 ## R6 — Compat
 
+Status: **in progress**. Tracking issue: #329.
+
+R6 begins from the fully verified post-R5 baseline and converts compatibility claims into versioned, reproducible evidence. The first slice establishes deterministic WPT report ingestion/dashboard tooling; it does not yet claim executed WPT coverage.
+
 - WPT dashboard;
 - real-Web corpus;
 - signed compatibility profiles;
