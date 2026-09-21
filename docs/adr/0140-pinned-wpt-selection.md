@@ -23,7 +23,7 @@ The selection:
 - records normalized `match`/`mismatch` reference paths plus exact Git blob IDs for reftests;
 - does not contain expected Rarog pass/fail outcomes.
 
-The initial selection is deliberately small: three HTML parsing testharness files and two CSS selector reftests. Small scope makes the first execution boundary inspectable; it is not a claim that these are the only important tests or that any selected test currently passes.
+The initial selection is deliberately small: three HTML parsing testharness files and two CSS selector reftests whose tests and references are all `.html`. Keeping the first denominator in HTML parsing mode avoids conflating future XML/XHTML parser qualification with selector/render results. Small scope makes the first execution boundary inspectable; it is not a claim that these are the only important tests or that any selected test currently passes.
 
 `scripts/wpt_selection.py` validates the manifest and can verify it against a local upstream checkout. Verification requires the checkout HEAD to equal the pinned commit. It verifies every declared blob against the pinned commit tree, independently hashes selected working-tree files with Git, confirms testharness files actually load `/resources/testharness.js`, parses reftest reference metadata, resolves references to normalized repository-relative paths, and verifies reference blobs against both the commit tree and working tree.
 
