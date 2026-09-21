@@ -339,12 +339,20 @@ def verify_checkout(
                 f"{path}: selected test file is missing"
             )
 
+        committed_blob = _git(
+            checkout, "rev-parse", f"HEAD:{path}"
+        )
+        if committed_blob != item["blob"]:
+            raise SelectionError(
+                f"{path}: pinned commit blob mismatch: "
+                f"expected {item['blob']}, got {committed_blob}"
+            )
         observed_blob = _git(
             checkout, "hash-object", "--", path
         )
         if observed_blob != item["blob"]:
             raise SelectionError(
-                f"{path}: blob mismatch: "
+                f"{path}: working-tree blob mismatch: "
                 f"expected {item['blob']}, got {observed_blob}"
             )
 
@@ -385,13 +393,22 @@ def verify_checkout(
                 raise SelectionError(
                     f"{path}: reference file is missing: {ref_path}"
                 )
+            committed_ref_blob = _git(
+                checkout, "rev-parse", f"HEAD:{ref_path}"
+            )
+            if committed_ref_blob != reference["blob"]:
+                raise SelectionError(
+                    f"{path}: pinned reference blob mismatch "
+                    f"for {ref_path}: expected {reference['blob']}, "
+                    f"got {committed_ref_blob}"
+                )
             observed_ref_blob = _git(
                 checkout, "hash-object", "--", ref_path
             )
             if observed_ref_blob != reference["blob"]:
                 raise SelectionError(
-                    f"{path}: reference blob mismatch for {ref_path}: "
-                    f"expected {reference['blob']}, "
+                    f"{path}: working-tree reference blob mismatch "
+                    f"for {ref_path}: expected {reference['blob']}, "
                     f"got {observed_ref_blob}"
                 )
             reference_count += 1
