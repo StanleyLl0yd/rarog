@@ -14,10 +14,26 @@ from typing import Any, Iterable, Sequence
 
 SCHEMA_VERSION = 1
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+KNOWN_SYNTHETIC_REPORT_DIGESTS = {
+    "sha256:cf9e06050ce2445663ffb248eed90e7103df1e88bd24980ff171020ef2179c91",
+}
 
 
 class DashboardError(ValueError):
     """Raised when WPT report input cannot be normalized safely."""
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DashboardError(f"JSON object contains duplicate key {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite(value: str) -> None:
+    raise DashboardError(f"non-finite JSON number is not allowed: {value}")
 
 
 def _require_commit(value: str, label: str) -> str:
@@ -119,6 +135,8 @@ def normalize_reports(
 
     if not report_names:
         raise DashboardError("at least one WPT report is required")
+    if not synthetic and any(name in KNOWN_SYNTHETIC_REPORT_DIGESTS for name in report_names):
+        raise DashboardError("known synthetic fixture requires --synthetic")
     if not tests:
         raise DashboardError("WPT reports contain no test results")
 
@@ -237,7 +255,11 @@ def load_reports(paths: Sequence[Path]) -> list[tuple[str, Any]]:
     for path in paths:
         try:
             with path.open("r", encoding="utf-8") as handle:
-                document = json.load(handle)
+                document = json.load(
+                    handle,
+                    object_pairs_hook=_reject_duplicate_keys,
+                    parse_constant=_reject_nonfinite,
+                )
         except (OSError, json.JSONDecodeError) as error:
             raise DashboardError(f"{path}: cannot read JSON report: {error}") from error
         canonical = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
