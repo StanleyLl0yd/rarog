@@ -40,11 +40,12 @@ use windows_sys::Win32::{
     System::{
         Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
         Ole::{SafeArrayCreateVector, SafeArrayDestroy, SafeArrayPutElement},
+        Threading::GetCurrentThreadId,
         Variant::VT_I4,
     },
     UI::{
-        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-        WindowsAndMessaging::{IsWindow, WM_GETOBJECT, WM_NCDESTROY},
+        Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
+        WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow, WM_GETOBJECT, WM_NCDESTROY},
     },
 };
 
@@ -211,6 +212,7 @@ impl Drop for ComApartmentGuard {
 #[derive(Debug)]
 pub(crate) struct WindowsUiaBridge {
     hwnd: NonZeroIsize,
+    owner_thread_id: u32,
     shared: Arc<UiaShared>,
     subclass_ref_data: usize,
 }
@@ -221,6 +223,29 @@ impl WindowsUiaBridge {
         max_pending_actions: NonZeroUsize,
     ) -> Result<Self, WindowsAccessibilityNativeError> {
         validate_window(hwnd)?;
+        let raw_hwnd = raw_hwnd(hwnd);
+        let owner_thread_id =
+            unsafe { GetWindowThreadProcessId(raw_hwnd, std::ptr::null_mut()) };
+        if owner_thread_id == 0 || owner_thread_id != unsafe { GetCurrentThreadId() } {
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::WrongThread,
+            ));
+        }
+        let mut existing_ref_data = 0usize;
+        if unsafe {
+            GetWindowSubclass(
+                raw_hwnd,
+                Some(uia_subclass_proc),
+                SUBCLASS_ID,
+                &mut existing_ref_data,
+            )
+        } != 0
+        {
+            return Err(native_error(
+                WindowsAccessibilityNativeErrorKind::AlreadyAttached,
+            ));
+        }
+
         let shared = Arc::new(UiaShared {
             hwnd,
             max_pending_actions,
@@ -233,7 +258,6 @@ impl WindowsUiaBridge {
             }),
         });
         let subclass_ref_data = SubclassContext::into_ref_data(&shared);
-        let raw_hwnd = raw_hwnd(hwnd);
         let installed = unsafe {
             SetWindowSubclass(
                 raw_hwnd,
@@ -250,6 +274,7 @@ impl WindowsUiaBridge {
         }
         Ok(Self {
             hwnd,
+            owner_thread_id,
             shared,
             subclass_ref_data,
         })
@@ -391,6 +416,17 @@ impl WindowsUiaBridge {
 
 impl Drop for WindowsUiaBridge {
     fn drop(&mut self) {
+        if let Ok(mut state) = self.shared.state.lock() {
+            state.current = None;
+            state.previous = None;
+            state.focused_provider = None;
+            state.pending_actions.clear();
+            state.callback_error = None;
+        }
+
+        if unsafe { GetCurrentThreadId() } != self.owner_thread_id {
+            return;
+        }
         let removed = unsafe {
             RemoveWindowSubclass(raw_hwnd(self.hwnd), Some(uia_subclass_proc), SUBCLASS_ID)
         };
