@@ -47,7 +47,9 @@ It contains five concrete test files:
 
 - three HTML parsing `testharness` tests;
 - two CSS selector reftests;
-- two exact reference files for those reftests.
+- two exact `.html` reference files for those reftests.
+
+The first denominator is intentionally HTML-mode only. XML/XHTML parser-mode qualification is not mixed into this initial render-based compatibility slice.
 
 Every selected test/reference carries its upstream Git blob object ID. The list is a denominator for the first real execution attempt; it is **not** a pass list and contains no expected Rarog outcome.
 
