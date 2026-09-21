@@ -142,6 +142,14 @@ class WptSelectionTests(unittest.TestCase):
         paths = [item["path"] for item in manifest["tests"]]
         self.assertEqual(paths, sorted(paths))
         self.assertTrue(all(not path.endswith("/") for path in paths))
+        self.assertTrue(all(path.endswith(".html") for path in paths))
+        self.assertTrue(
+            all(
+                reference["path"].endswith(".html")
+                for item in manifest["tests"]
+                for reference in item["references"]
+            )
+        )
 
     def test_valid_checkout_verifies_exact_commit_blobs_and_metadata(self) -> None:
         manifest = self.selection.validate_manifest(self.manifest)
