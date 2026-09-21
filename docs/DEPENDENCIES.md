@@ -71,7 +71,7 @@ The Windows shell pins `winit` 0.30.13 for the application window/event-loop bou
 
 ### `wgpu` 26.0.1
 
-R3 pins `wgpu` 26.0.1 in the private `rarog-compositor-wgpu` adapter. The selected release remains compatible with Rarog's Rust 1.85 MSRV, while newer major releases require a newer compiler.
+R3 pins `wgpu` 26.0.1 in the private `rarog-compositor-wgpu` adapter. The selected release is the currently verified adapter/API baseline and remains compatible with Rarog's Rust 1.85 MSRV. Newer major releases change the `wgpu` adapter API and therefore require an explicit migration plus the full GPU/compositor and MSRV verification matrix rather than an unreviewed version-only bump.
 
 The adapter depends only on Rarog-owned compositor, paint and geometry contracts. It receives an already-created `wgpu::Device` and `wgpu::Queue`, applies full or partial frame plans to the retained deterministic software staging framebuffer, and uploads tightly packed RGBA8 pixels into an adapter-owned GPU texture. Window handles, surface creation, adapter/device selection and presentation are intentionally outside this crate and remain platform integration responsibilities.
 
