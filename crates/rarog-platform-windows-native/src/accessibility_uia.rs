@@ -4,10 +4,10 @@ use crate::accessibility::{
     WindowsAccessibilityNativeEventKind, WindowsAccessibilityNativeNode,
     WindowsAccessibilityNativeRole, WindowsAccessibilityNativeSnapshot, native_error,
 };
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::num::{NonZeroIsize, NonZeroUsize};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard};
 use windows::{
     Win32::{
         Foundation::{HWND as TypedHwnd, LPARAM as TypedLparam, WPARAM as TypedWparam},
@@ -45,38 +45,48 @@ use windows_sys::Win32::{
     },
     UI::{
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-        WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow, WM_GETOBJECT, WM_NCDESTROY},
+        WindowsAndMessaging::{
+            GetPropA, GetWindowThreadProcessId, IsWindow, RemovePropA, SetPropA, WM_GETOBJECT,
+            WM_NCDESTROY,
+        },
     },
 };
 
 const SUBCLASS_ID: usize = 0x5241_524F_4705;
+const SUBCLASS_PROPERTY: &[u8] = b"Rarog.UIA.Subclass.5241524F4705\0";
 const E_NOTIMPL: HRESULT = HRESULT(0x8000_4001_u32 as i32);
 const E_OUTOFMEMORY: HRESULT = HRESULT(0x8007_000E_u32 as i32);
 const UIA_E_ELEMENTNOTAVAILABLE_HRESULT: HRESULT = HRESULT(0x8004_0201_u32 as i32);
 const UIA_E_NOTSUPPORTED_HRESULT: HRESULT = HRESULT(0x8004_0204_u32 as i32);
 const RPC_E_CHANGED_MODE: i32 = 0x8001_0106_u32 as i32;
 
-static ATTACHED_UIA_WINDOWS: OnceLock<Mutex<BTreeSet<isize>>> = OnceLock::new();
-
-fn reserve_uia_window(hwnd: NonZeroIsize) -> Result<(), WindowsAccessibilityNativeError> {
-    let mut attached = ATTACHED_UIA_WINDOWS
-        .get_or_init(|| Mutex::new(BTreeSet::new()))
-        .lock()
-        .map_err(|_| native_error(WindowsAccessibilityNativeErrorKind::ComFailure))?;
-    if !attached.insert(hwnd.get()) {
+fn reserve_uia_window(
+    hwnd: HWND,
+    ref_data: usize,
+) -> Result<(), WindowsAccessibilityNativeError> {
+    if !unsafe { GetPropA(hwnd, SUBCLASS_PROPERTY.as_ptr()) }.is_null() {
         return Err(native_error(
             WindowsAccessibilityNativeErrorKind::AlreadyAttached,
+        ));
+    }
+    if unsafe {
+        SetPropA(
+            hwnd,
+            SUBCLASS_PROPERTY.as_ptr(),
+            ref_data as *mut std::ffi::c_void,
+        )
+    } == 0
+    {
+        return Err(native_error(
+            WindowsAccessibilityNativeErrorKind::ComFailure,
         ));
     }
     Ok(())
 }
 
-fn release_uia_window(hwnd: isize) {
-    if let Ok(mut attached) = ATTACHED_UIA_WINDOWS
-        .get_or_init(|| Mutex::new(BTreeSet::new()))
-        .lock()
-    {
-        attached.remove(&hwnd);
+fn release_uia_window(hwnd: HWND) {
+    unsafe {
+        RemovePropA(hwnd, SUBCLASS_PROPERTY.as_ptr());
     }
 }
 
@@ -254,8 +264,6 @@ impl WindowsUiaBridge {
                 WindowsAccessibilityNativeErrorKind::WrongThread,
             ));
         }
-        reserve_uia_window(hwnd)?;
-
         let shared = Arc::new(UiaShared {
             hwnd,
             max_pending_actions,
@@ -268,6 +276,10 @@ impl WindowsUiaBridge {
             }),
         });
         let subclass_ref_data = SubclassContext::into_ref_data(&shared);
+        if let Err(error) = reserve_uia_window(raw_hwnd, subclass_ref_data) {
+            unsafe { SubclassContext::reclaim(subclass_ref_data) };
+            return Err(error);
+        }
         let installed = unsafe {
             SetWindowSubclass(
                 raw_hwnd,
@@ -278,7 +290,7 @@ impl WindowsUiaBridge {
         };
         if installed == 0 {
             unsafe { SubclassContext::reclaim(subclass_ref_data) };
-            release_uia_window(hwnd.get());
+            release_uia_window(raw_hwnd);
             return Err(native_error(
                 WindowsAccessibilityNativeErrorKind::ComFailure,
             ));
@@ -443,7 +455,7 @@ impl Drop for WindowsUiaBridge {
         };
         if removed != 0 {
             unsafe { SubclassContext::reclaim(self.subclass_ref_data) };
-            release_uia_window(self.hwnd.get());
+            release_uia_window(raw_hwnd(self.hwnd));
         }
     }
 }
@@ -465,7 +477,7 @@ unsafe extern "system" fn uia_subclass_proc(
             RemoveWindowSubclass(hwnd, Some(uia_subclass_proc), SUBCLASS_ID);
         }
         let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
-        release_uia_window(hwnd as isize);
+        release_uia_window(hwnd);
         unsafe { SubclassContext::reclaim(ref_data) };
         return result;
     }
@@ -1134,20 +1146,6 @@ const fn expand_state_value(expanded: bool) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn attached_window_registry_rejects_duplicate_until_release() {
-        let hwnd = NonZeroIsize::new(-0x5241).expect("non-zero synthetic HWND");
-
-        reserve_uia_window(hwnd).expect("first reservation succeeds");
-        assert_eq!(
-            reserve_uia_window(hwnd).unwrap_err().kind(),
-            WindowsAccessibilityNativeErrorKind::AlreadyAttached
-        );
-        release_uia_window(hwnd.get());
-        reserve_uia_window(hwnd).expect("released reservation can be reused");
-        release_uia_window(hwnd.get());
-    }
 
     #[test]
     fn subclass_context_keeps_shared_state_alive_until_reclaimed() {
