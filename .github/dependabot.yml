@@ -10,8 +10,6 @@ updates:
       time: "09:00"
       timezone: "Europe/Amsterdam"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
     commit-message:
       prefix: "deps"
     groups:
@@ -30,8 +28,6 @@ updates:
       time: "09:30"
       timezone: "Europe/Amsterdam"
     open-pull-requests-limit: 3
-    labels:
-      - "dependencies"
     commit-message:
       prefix: "ci"
     groups:
