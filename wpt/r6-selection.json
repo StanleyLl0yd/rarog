@@ -20,14 +20,14 @@
     },
     {
       "area": "css-selectors",
-      "path": "css/selectors/root-siblings.html",
+      "path": "css/selectors/dir-style-03a.html",
       "kind": "reftest",
-      "blob": "c2f897ab28d748ac4d677004a29180f60f14d38e",
+      "blob": "c57b93eaa60c16b07000474401a25cd3dc0a84bd",
       "references": [
         {
           "relation": "match",
-          "path": "css/reference/ref-filled-green-100px-square.xht",
-          "blob": "05a13794482a94f6c10bd9d4c98704e63ef60331"
+          "path": "css/selectors/dir-style-03-ref.html",
+          "blob": "8c2a60745a87a29c17ce9d5464aa5a0bf6a56ebe"
         }
       ]
     },
