@@ -38,6 +38,7 @@ No production area remains unreviewed.
 
 - The repository policy scanner is now the durable `scripts/repository_audit.py` and its workflow is `Repository Full Audit`.
 - The audit workflow now runs on pushes to `main` as well as pull requests and manual dispatch, so merged-main repository policy evidence is produced continuously rather than only during the old post-R4 gate.
+- The fast repository policy scanner also runs inside the Linux portability CI lane. Because the protected `Verify` status depends on that lane, the scanner's production-unwrap/unsafe/manifest/ADR/stale-doc invariants are now an actual merge gate without requiring a new ruleset context.
 - Windows UI Automation attachment ownership is tied to the HWND itself through one private per-window property instead of introducing a process-global HWND registry.
 
 ## Simplified and hardened
@@ -139,7 +140,7 @@ The final tree preserves:
 - Security, Semgrep, Gitleaks, Dependency Review and CodeQL workflows;
 - workspace `unsafe_code = "forbid"` outside the two reviewed native/runtime exceptions.
 
-The active ruleset requires `Verify`, `Security Gate`, `RustSec`, `Analyze Rust` and `Analyze GitHub Actions`, requires linear signed squash merges, and resolves review threads. `Repository Full Audit` is not currently a required ruleset status; changing repository rules requires administration permission not available to the connected GitHub integration. The workflow still runs on every PR and merged-main push and is treated as required evidence by this audit.
+The active ruleset requires `Verify`, `Security Gate`, `RustSec`, `Analyze Rust` and `Analyze GitHub Actions`, requires linear signed squash merges, and resolves review threads. The repository policy scanner now runs in the Linux portability job, so its failure propagates into required `Verify`. The separate `Repository Full Audit` context is not independently required; it supplies the extended Cargo metadata/duplicate-dependency/doc/rustdoc/fuzz/supply-chain evidence on every PR and merged-main push.
 
 ## Verification
 
@@ -159,7 +160,6 @@ The report-bearing PR head must pass the same exact-head evidence before PR #328
 - CI exercises the Windows-native code and exact UIA build/lifetime tests, but this audit does not claim assistive-technology compatibility certification or broad UIA pattern coverage.
 - Static review, CodeQL, Semgrep and RustSec do not prove correctness or memory safety of third-party native dependencies.
 - No controlled before/after performance benchmark was run, so no performance percentage is claimed.
-- The GitHub integration can read the repository ruleset but cannot administer it; making `Repository Full Audit` a branch-protection-required status remains a repository-administration follow-up.
 - Dependency upgrade PRs intentionally remain separate where they require API migration, coherent lockfile refresh or current-head revalidation.
 
 ## Before/after statistics
@@ -192,6 +192,6 @@ The implementation adds one fuzz target and hardening/regression code; it does n
 - Ruleset/branch/dependency-PR hygiene review: complete.
 - Full implementation diff review: complete.
 - Verified implementation matrix: complete at `b33986a8bb297e8891f413e3034a7ea84b14e4f4`.
-- Report-bearing exact-head verification: required before merge.
+- Closure exact-head verification after the report and CI-policy wiring: required before merge.
 - PR #328 squash merge / issue #327 closure: required after exact-head verification.
 - R6: **do not start as part of this audit**.
