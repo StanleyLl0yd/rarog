@@ -224,8 +224,7 @@ impl WindowsUiaBridge {
     ) -> Result<Self, WindowsAccessibilityNativeError> {
         validate_window(hwnd)?;
         let raw_hwnd = raw_hwnd(hwnd);
-        let owner_thread_id =
-            unsafe { GetWindowThreadProcessId(raw_hwnd, std::ptr::null_mut()) };
+        let owner_thread_id = unsafe { GetWindowThreadProcessId(raw_hwnd, std::ptr::null_mut()) };
         if owner_thread_id == 0 || owner_thread_id != unsafe { GetCurrentThreadId() } {
             return Err(native_error(
                 WindowsAccessibilityNativeErrorKind::WrongThread,
