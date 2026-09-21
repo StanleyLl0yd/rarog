@@ -1,6 +1,6 @@
 # R5 — Web backlog
 
-Status: **in progress**.
+Status: **complete**.
 
 Tracking issue: #260.
 
@@ -56,7 +56,7 @@ Tracking issue: #260.
 - [x] Run the R5 exit gate explicitly in Windows-primary and Linux-portability CI.
 - [x] Preserve R0–R4 exit gates, MSRV 1.85, SpiderMonkey and repository security checks.
 - [x] Reconcile architecture/ADR/README state with implemented evidence.
-- [ ] Confirm merged `main` CI before closing #260.
+- [x] Confirm merged `main` CI before closing #260.
 
 ## Stop boundary
 
