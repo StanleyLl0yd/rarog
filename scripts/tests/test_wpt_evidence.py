@@ -9,17 +9,27 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "scripts" / "wpt_evidence.py"
+DASHBOARD_MODULE_PATH = ROOT / "scripts" / "wpt_dashboard.py"
+HISTORICAL_SELECTION = ROOT / "wpt" / "r6-selection.json"
+HISTORICAL_REPORT = ROOT / "wpt" / "evidence" / "r6-first-wptreport.json"
+HISTORICAL_EVIDENCE = ROOT / "wpt" / "evidence" / "r6-first-evidence.json"
+HISTORICAL_DASHBOARD = ROOT / "wpt" / "evidence" / "r6-first-dashboard.json"
+HISTORICAL_MARKDOWN = ROOT / "wpt" / "evidence" / "r6-first-dashboard.md"
 RAROG_COMMIT = "d" * 40
 WPT_COMMIT = "a" * 40
 
 
-def load_module():
-    spec = importlib.util.spec_from_file_location("wpt_evidence", MODULE_PATH)
+def load_path_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError("cannot load wpt_evidence module")
+        raise RuntimeError(f"cannot load {name} module")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_module():
+    return load_path_module("wpt_evidence", MODULE_PATH)
 
 
 def selection():
@@ -50,6 +60,7 @@ class WptEvidenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.evidence = load_module()
+        cls.dashboard = load_path_module("wpt_dashboard", DASHBOARD_MODULE_PATH)
 
     def test_exact_denominator_is_content_addressed(self) -> None:
         result = self.evidence.build_evidence(
@@ -119,6 +130,37 @@ class WptEvidenceTests(unittest.TestCase):
                 rarog_commit=RAROG_COMMIT,
                 wpt_commit="b" * 40,
             )
+
+    def test_committed_first_run_evidence_reproduces_exactly(self) -> None:
+        selected = json.loads(HISTORICAL_SELECTION.read_text(encoding="utf-8"))
+        observed = json.loads(HISTORICAL_REPORT.read_text(encoding="utf-8"))
+        committed_evidence = json.loads(
+            HISTORICAL_EVIDENCE.read_text(encoding="utf-8")
+        )
+        committed_dashboard = json.loads(
+            HISTORICAL_DASHBOARD.read_text(encoding="utf-8")
+        )
+
+        reproduced_evidence = self.evidence.build_evidence(
+            selected,
+            observed,
+            rarog_commit=committed_evidence["rarog_commit"],
+            wpt_commit=committed_evidence["wpt_commit"],
+        )
+        self.assertEqual(reproduced_evidence, committed_evidence)
+
+        reproduced_dashboard = self.dashboard.normalize_reports(
+            [(committed_evidence["report_sha256"], observed)],
+            rarog_commit=committed_evidence["rarog_commit"],
+            wpt_commit=committed_evidence["wpt_commit"],
+            platform=committed_dashboard["platform"],
+            synthetic=False,
+        )
+        self.assertEqual(reproduced_dashboard, committed_dashboard)
+        self.assertEqual(
+            self.dashboard.render_markdown(reproduced_dashboard),
+            HISTORICAL_MARKDOWN.read_text(encoding="utf-8"),
+        )
 
     def test_cli_output_is_repeatable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
