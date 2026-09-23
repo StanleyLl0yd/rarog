@@ -1,6 +1,6 @@
 # R6 — Compat exit gate
 
-Status: **in progress — evidence infrastructure is beginning**.
+Status: **in progress — first bounded non-synthetic WPT baseline measured**.
 
 Tracking issue: #329.
 
