@@ -61,7 +61,7 @@ Synthetic fixtures exist only to test tooling. They are permanently marked as no
 
 Compatibility measurement remains outside DOM/layout/script authority: dashboards do not alter engine behavior, expectations do not suppress runtime failures, and no standards-engine code may be specialized merely to improve dashboard output without an independently demonstrated standards/compatibility defect.
 
-See ADR-0139, ADR-0140 and `docs/R6-EXIT.md`.
+See ADR-0139, ADR-0140, ADR-0141 and `docs/R6-EXIT.md`.
 
 ## Long-term process topology
 
