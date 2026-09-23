@@ -63,6 +63,27 @@ python3 scripts/wpt_selection.py \
 
 The verifier requires the checkout HEAD to match the pinned commit, verifies every declared blob against the pinned commit tree, independently hashes the selected working-tree files, validates testharness/reftest metadata and confirms the declared reference files. Manifest drift and local content drift therefore fail independently.
 
+## First real R6 evidence baseline
+
+R6.3 executes the exact five-test selection through an external upstream-wptrunner `rarog` Product. Reftests use Rarog's existing render pipeline and upstream `RefTestImplementation`; selected testharness files remain explicit `ERROR` results until Rarog has real DOM/script testharness integration.
+
+The first complete non-synthetic baseline is bound to:
+
+- Rarog `dcd349dd37b0340ec67a2fb8d36b13980e2fd918`;
+- WPT `a83afd4402cffdc876508fe9a47f916d4136099f`;
+- GitHub Actions Ubuntu 24.04 x86_64;
+- exactly 5 selected tests;
+- report digest `sha256:087d34554cefb38d54d82323a5a8d3419e3a97936fe9b4a2e539e2a2cd6f347f`.
+
+Observed outcomes are deliberately preserved rather than treated as a gate to publication:
+
+- 2 CSS selector reftests: `FAIL`;
+- 3 HTML parsing testharness entries: `ERROR` because the selected execution adapter does not yet provide DOM/script testharness integration.
+
+Committed historical evidence is under `wpt/evidence/`. Protected tooling tests reproduce the evidence binding and JSON/Markdown dashboard from the raw report.
+
+This is a bounded baseline, not a general WPT or Web-compatibility percentage and not a claim that any selected test passes. See ADR-0141.
+
 ## Synthetic fixture
 
 `fixtures/synthetic-wptreport.json` exists only to regression-test the normalizer. Use:
