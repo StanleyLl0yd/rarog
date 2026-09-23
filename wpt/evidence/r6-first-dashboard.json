@@ -1,0 +1,70 @@
+{
+  "platform": "github-actions-ubuntu-24.04",
+  "rarog_commit": "dcd349dd37b0340ec67a2fb8d36b13980e2fd918",
+  "results": [
+    {
+      "expected": [
+        "PASS"
+      ],
+      "status": "FAIL",
+      "subtests": [],
+      "test": "/css/selectors/dir-style-01a.html",
+      "unexpected": true
+    },
+    {
+      "expected": [
+        "PASS"
+      ],
+      "status": "FAIL",
+      "subtests": [],
+      "test": "/css/selectors/dir-style-03a.html",
+      "unexpected": true
+    },
+    {
+      "expected": [
+        "OK"
+      ],
+      "status": "ERROR",
+      "subtests": [],
+      "test": "/html/syntax/parsing/ambiguous-ampersand.html",
+      "unexpected": true
+    },
+    {
+      "expected": [
+        "OK"
+      ],
+      "status": "ERROR",
+      "subtests": [],
+      "test": "/html/syntax/parsing/no-doctype-name.html",
+      "unexpected": true
+    },
+    {
+      "expected": [
+        "OK"
+      ],
+      "status": "ERROR",
+      "subtests": [],
+      "test": "/html/syntax/parsing/zero.html",
+      "unexpected": true
+    }
+  ],
+  "schema_version": 1,
+  "source_reports": [
+    "sha256:087d34554cefb38d54d82323a5a8d3419e3a97936fe9b4a2e539e2a2cd6f347f"
+  ],
+  "summary": {
+    "measured_subtests": 0,
+    "measured_tests": 5,
+    "subtest_statuses": {},
+    "subtests_with_expectations": 0,
+    "test_statuses": {
+      "ERROR": 3,
+      "FAIL": 2
+    },
+    "tests_with_expectations": 5,
+    "unexpected_subtests": 0,
+    "unexpected_tests": 5
+  },
+  "synthetic": false,
+  "wpt_commit": "a83afd4402cffdc876508fe9a47f916d4136099f"
+}
