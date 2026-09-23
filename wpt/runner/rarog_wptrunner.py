@@ -196,21 +196,13 @@ def executor_kwargs(
     subsuite,
     **kwargs,
 ):
-    result = base_executor_kwargs(
+    return base_executor_kwargs(
         test_type,
         test_environment,
         run_info_data,
         subsuite,
         **kwargs,
     )
-    result.update(
-        {
-            "binary": kwargs["binary"],
-            "rarog_wpt_root": kwargs["rarog_wpt_root"],
-            "rarog_selection": kwargs["rarog_selection"],
-        }
-    )
-    return result
 
 
 def env_extras(**kwargs):
