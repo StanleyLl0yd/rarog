@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -80,7 +81,7 @@ class RarogWptHelperTests(unittest.TestCase):
         workflow = (
             ROOT / ".github" / "workflows" / "r6-wpt-selected.yml"
         ).read_text(encoding="utf-8")
-        selection = __import__("json").loads(SELECTION.read_text(encoding="utf-8"))
+        selection = json.loads(SELECTION.read_text(encoding="utf-8"))
         selected_paths = [item["path"] for item in selection["tests"]]
 
         self.assertIn("--test-types reftest testharness", workflow)
