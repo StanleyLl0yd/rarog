@@ -1,10 +1,6 @@
 use rarog_engine::{RenderOptions, render_html};
 use rarog_types::Size;
-use std::{
-    env, fs, io,
-    path::PathBuf,
-    process::ExitCode,
-};
+use std::{env, fs, io, path::PathBuf, process::ExitCode};
 
 struct Arguments {
     input: PathBuf,
