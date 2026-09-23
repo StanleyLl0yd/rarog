@@ -116,9 +116,9 @@ See `R5-BACKLOG.md` and `R5-EXIT.md` for the bounded Web scope and explicit R6 s
 
 Status: **in progress**. Tracking issue: #329.
 
-R6 begins from the fully verified post-R5 baseline and converts compatibility claims into versioned, reproducible evidence. The first slice establishes deterministic WPT report ingestion/dashboard tooling; it does not yet claim executed WPT coverage.
+R6 begins from the fully verified post-R5 baseline and converts compatibility claims into versioned, reproducible evidence. Deterministic WPT report/dashboard tooling and an exact file-level denominator are now followed by the first bounded non-synthetic selected run. That baseline records the observed failures/errors rather than treating measurement as a pass gate; it remains far narrower than general WPT or Web compatibility.
 
-- WPT dashboard;
+- WPT dashboard and versioned selected-run evidence;
 - real-Web corpus;
 - signed compatibility profiles;
 - high-priority Web app scenarios;
