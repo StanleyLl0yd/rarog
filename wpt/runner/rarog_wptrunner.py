@@ -114,6 +114,8 @@ class RarogRefTestExecutor(_RarogExecutorMixin, RefTestExecutor):
                 "INTERNAL-ERROR",
                 f"R6 Rarog renderer does not support non-default dpi {dpi!r}",
             )
+        # Ordinary screen reftests use the upstream default empty mapping.
+        # Only a non-empty value means print-page rendering is requested.
         if page_ranges:
             return False, (
                 "INTERNAL-ERROR",
