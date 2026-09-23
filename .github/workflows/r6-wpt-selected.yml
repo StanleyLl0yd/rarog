@@ -96,7 +96,6 @@ jobs:
             --binary "$GITHUB_WORKSPACE/target/debug/examples/r6_wpt_render" \
             --rarog-wpt-root "$PWD" \
             --rarog-selection "$GITHUB_WORKSPACE/wpt/r6-selection.json" \
-            --ssl-type=none \
             --no-manifest-download \
             --test-type=reftest \
             --test-type=testharness \
