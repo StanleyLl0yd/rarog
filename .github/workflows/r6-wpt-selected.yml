@@ -99,8 +99,7 @@ jobs:
             --rarog-wpt-root "$PWD" \
             --rarog-selection "$GITHUB_WORKSPACE/wpt/r6-selection.json" \
             --no-manifest-download \
-            --test-type=reftest \
-            --test-type=testharness \
+            --test-types reftest testharness \
             --processes=1 \
             --default-exclude \
             --include=/css/selectors/dir-style-01a.html \
