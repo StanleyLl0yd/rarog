@@ -76,6 +76,19 @@ class RarogWptHelperTests(unittest.TestCase):
                 with self.assertRaises(self.helpers.AdapterError):
                     self.helpers.parse_viewport(malformed)
 
+    def test_selected_workflow_invokes_exact_manifest_denominator(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "r6-wpt-selected.yml"
+        ).read_text(encoding="utf-8")
+        selection = __import__("json").loads(SELECTION.read_text(encoding="utf-8"))
+        selected_paths = [item["path"] for item in selection["tests"]]
+
+        self.assertIn("--test-types reftest testharness", workflow)
+        self.assertNotIn("--test-type=", workflow)
+        self.assertEqual(workflow.count("--include=/"), len(selected_paths))
+        for path in selected_paths:
+            self.assertIn(f"--include=/{path}", workflow)
+
     def test_render_command_is_argument_vector_not_shell_text(self) -> None:
         command = self.helpers.build_render_command(
             Path("/tmp/rarog renderer"),
