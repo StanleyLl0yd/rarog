@@ -80,7 +80,9 @@ jobs:
             --disable-pip-version-check \
             install \
             --no-deps \
-            -e "$GITHUB_WORKSPACE/wpt/runner"
+            "$GITHUB_WORKSPACE/wpt/runner"
+          upstream-wpt/.rarog-venv/bin/python -c \
+            'import rarog_wptrunner, rarog_wpt_helpers; print(rarog_wptrunner.__file__)'
           (
             cd upstream-wpt
             ./wpt make-hosts-file
@@ -92,7 +94,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/wpt-run-output"
           cd upstream-wpt
           set +e
-          ./wpt --venv .rarog-venv run rarog \
+          .rarog-venv/bin/python ./wpt --venv .rarog-venv run rarog \
             --binary "$GITHUB_WORKSPACE/target/debug/examples/r6_wpt_render" \
             --rarog-wpt-root "$PWD" \
             --rarog-selection "$GITHUB_WORKSPACE/wpt/r6-selection.json" \
