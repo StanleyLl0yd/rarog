@@ -31,6 +31,7 @@ permissions: {}
 
 env:
   WPT_COMMIT: a83afd4402cffdc876508fe9a47f916d4136099f
+  RAROG_EVIDENCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   selected-wpt:
@@ -40,9 +41,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout Rarog
+      - name: Checkout Rarog exact evidence commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RAROG_EVIDENCE_COMMIT }}
           persist-credentials: false
 
       - name: Install Rust toolchain
@@ -97,12 +99,13 @@ jobs:
             --ssl-type=none \
             --no-manifest-download \
             --processes=1 \
-            --log-wptreport="$GITHUB_WORKSPACE/wpt-run-output/wptreport.json" \
-            css/selectors/dir-style-01a.html \
-            css/selectors/dir-style-03a.html \
-            html/syntax/parsing/ambiguous-ampersand.html \
-            html/syntax/parsing/no-doctype-name.html \
-            html/syntax/parsing/zero.html
+            --default-exclude \
+            --include=/css/selectors/dir-style-01a.html \
+            --include=/css/selectors/dir-style-03a.html \
+            --include=/html/syntax/parsing/ambiguous-ampersand.html \
+            --include=/html/syntax/parsing/no-doctype-name.html \
+            --include=/html/syntax/parsing/zero.html \
+            --log-wptreport="$GITHUB_WORKSPACE/wpt-run-output/wptreport.json"
           status=$?
           set -e
           echo "WPT_RUN_EXIT=$status" >> "$GITHUB_ENV"
@@ -114,12 +117,12 @@ jobs:
           python3 scripts/wpt_evidence.py \
             --selection wpt/r6-selection.json \
             --report wpt-run-output/wptreport.json \
-            --rarog-commit "$GITHUB_SHA" \
+            --rarog-commit "$RAROG_EVIDENCE_COMMIT" \
             --wpt-commit "$WPT_COMMIT" \
             --json-out wpt-run-output/evidence.json
           python3 scripts/wpt_dashboard.py \
             --report wpt-run-output/wptreport.json \
-            --rarog-commit "$GITHUB_SHA" \
+            --rarog-commit "$RAROG_EVIDENCE_COMMIT" \
             --wpt-commit "$WPT_COMMIT" \
             --platform github-actions-ubuntu-24.04 \
             --json-out wpt-run-output/dashboard.json \
