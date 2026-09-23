@@ -98,6 +98,8 @@ jobs:
             --rarog-selection "$GITHUB_WORKSPACE/wpt/r6-selection.json" \
             --ssl-type=none \
             --no-manifest-download \
+            --test-type=reftest \
+            --test-type=testharness \
             --processes=1 \
             --default-exclude \
             --include=/css/selectors/dir-style-01a.html \
