@@ -235,7 +235,7 @@ def get_product():
         check_args=check_args,
         get_browser_kwargs=browser_kwargs,
         get_executor_kwargs=executor_kwargs,
-        env_options={"host": "127.0.0.1", "bind_address": False},
+        env_options={"server_host": "127.0.0.1", "bind_address": False},
         get_env_extras=env_extras,
         get_timeout_multiplier=timeout_multiplier,
         executor_classes={
