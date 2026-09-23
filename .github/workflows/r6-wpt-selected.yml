@@ -82,7 +82,7 @@ jobs:
             --no-deps \
             "$GITHUB_WORKSPACE/wpt/runner"
           upstream-wpt/.rarog-venv/bin/python -c \
-            'import rarog_wptrunner, rarog_wpt_helpers; print(rarog_wptrunner.__file__)'
+            'import importlib.util; s = importlib.util.find_spec("rarog_wptrunner"); assert s; print(s.origin)'
           (
             cd upstream-wpt
             ./wpt make-hosts-file
