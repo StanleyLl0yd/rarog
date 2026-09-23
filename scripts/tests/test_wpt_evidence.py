@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -62,6 +63,24 @@ class WptEvidenceTests(unittest.TestCase):
         self.assertEqual(result["test_ids"], ["/a.html", "/b.html"])
         self.assertRegex(result["selection_sha256"], r"^sha256:[0-9a-f]{64}$")
         self.assertRegex(result["report_sha256"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_report_digest_matches_dashboard_canonicalization(self) -> None:
+        document = report()
+        document["results"][0]["message"] = "unicode: é"
+        expected = "sha256:" + hashlib.sha256(
+            json.dumps(
+                document,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        result = self.evidence.build_evidence(
+            selection(),
+            document,
+            rarog_commit=RAROG_COMMIT,
+            wpt_commit=WPT_COMMIT,
+        )
+        self.assertEqual(result["report_sha256"], expected)
 
     def test_missing_or_extra_tests_are_rejected(self) -> None:
         for ids in (("/a.html",), ("/a.html", "/b.html", "/c.html")):
