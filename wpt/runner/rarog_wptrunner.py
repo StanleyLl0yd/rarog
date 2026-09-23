@@ -114,10 +114,10 @@ class RarogRefTestExecutor(_RarogExecutorMixin, RefTestExecutor):
                 "INTERNAL-ERROR",
                 f"R6 Rarog renderer does not support non-default dpi {dpi!r}",
             )
-        if page_ranges not in (None, []):
+        if page_ranges:
             return False, (
                 "INTERNAL-ERROR",
-                "R6 Rarog renderer does not support print page ranges",
+                "R6 Rarog renderer does not support non-empty print page ranges",
             )
 
         try:
