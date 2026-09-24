@@ -392,9 +392,21 @@ class RealWebResultTests(unittest.TestCase):
             observations=observed(),
         )
         value["observations"][0]["value"] = "<script>|`title`"
-        markdown = self.result.render_markdown(self.normalize(value))
+        normalized = self.result.normalize_attempt(
+            self.corpus,
+            value,
+            rarog_commit=RAROG_COMMIT,
+            platform={
+                "os": "linux",
+                "arch": "x86_64",
+                "environment": "<i>|\`ci\`",
+            },
+        )
+        markdown = self.result.render_markdown(normalized)
         self.assertNotIn("<script>", markdown)
+        self.assertNotIn("<i>", markdown)
         self.assertIn("&lt;script&gt;", markdown)
+        self.assertIn("&lt;i&gt;", markdown)
         self.assertIn("\\|", markdown)
         self.assertIn("\\`title\\`", markdown)
 
