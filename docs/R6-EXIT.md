@@ -34,7 +34,7 @@ Before R6 can close:
    - deterministic report ingestion/dashboard contract;
    - pinned upstream revision and exact executable selection;
    - at least one real, non-synthetic Rarog WPT evidence set;
-   - explicit regression/update policy.
+   - explicit regression/update policy. **Implemented by #336 / ADR-0142: evidence bundles are revalidated before comparison; upstream, denominator, platform, source and expectation drift remain explicit; regression/improvement labels are restricted to directly comparable observations.**
 2. **Real-Web**
    - versioned corpus/scenario contract;
    - reproducible result capture with external-dependency classification;
@@ -61,6 +61,14 @@ Issue #330 added deterministic WPT `wptreport` normalization/dashboard tooling. 
 Issue #332 pins an exact upstream WPT revision and a small file-level candidate selection with Git blob identities plus a local-checkout verifier. This establishes the reviewable denominator used by the first real run.
 
 Issue #334 adds the bounded connectionless upstream-wptrunner adapter and the first complete non-synthetic selected run. Historical evidence is versioned under `wpt/evidence/` for Rarog `dcd349dd37b0340ec67a2fb8d36b13980e2fd918` against WPT `a83afd4402cffdc876508fe9a47f916d4136099f`. The exact five-test denominator was measured: two CSS reftests observed FAIL and three HTML testharness cases observed explicit unsupported ERROR. This satisfies the requirement for an initial real WPT evidence set; it does **not** claim selected-test success, broad WPT conformance or general-Web compatibility. See ADR-0141.
+
+## WPT comparison policy
+
+Issue #336 adds deterministic WPT evidence comparison. It classifies comparisons by upstream/denominator stability, validates each input bundle independently, and separates scope/source/expectation changes from observed result transitions.
+
+The first R6.3 evidence set remains the immutable baseline. Future evidence may update upstream WPT or the selected denominator, but those structural changes are reported explicitly and are not converted into an aggregate compatibility score or hidden percentage movement.
+
+See ADR-0142.
 
 ## Non-goals
 

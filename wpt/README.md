@@ -84,6 +84,32 @@ Committed historical evidence is under `wpt/evidence/`. Protected tooling tests 
 
 This is a bounded baseline, not a general WPT or Web-compatibility percentage and not a claim that any selected test passes. See ADR-0141.
 
+## Comparing measured evidence
+
+`scripts/wpt_compare.py` compares two independently reproducible evidence bundles. Each side must provide the exact selection, raw report, evidence envelope and normalized dashboard.
+
+Example:
+
+```text
+python3 scripts/wpt_compare.py \
+  --baseline-selection wpt/r6-selection.json \
+  --baseline-report wpt/evidence/r6-first-wptreport.json \
+  --baseline-evidence wpt/evidence/r6-first-evidence.json \
+  --baseline-dashboard wpt/evidence/r6-first-dashboard.json \
+  --candidate-selection /path/to/selection.json \
+  --candidate-report /path/to/wptreport.json \
+  --candidate-evidence /path/to/evidence.json \
+  --candidate-dashboard /path/to/dashboard.json \
+  --json-out /tmp/rarog-wpt-comparison.json \
+  --markdown-out /tmp/rarog-wpt-comparison.md
+```
+
+The comparator validates/reproduces both bundles before comparing them. It distinguishes same-upstream/same-denominator runs from upstream and denominator changes, lists added/removed tests and source/expectation drift explicitly, and emits no compatibility percentage.
+
+A result is called a regression or improvement only when the exact denominator, source identity, platform and test expectation basis are directly comparable. For example, `ERROR -> FAIL` while both outcomes remain unexpected is reported only as a changed unexpected status.
+
+See ADR-0142.
+
 ## Synthetic fixture
 
 `fixtures/synthetic-wptreport.json` exists only to regression-test the normalizer. Use:
