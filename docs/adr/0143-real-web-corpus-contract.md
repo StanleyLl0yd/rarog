@@ -44,6 +44,8 @@ Initial live scenarios:
 - declare every allowed origin explicitly;
 - declare the source origin exactly once as a required `primary-document`.
 
+The manifest validator rejects unsafe literal host targets. A later network executor must additionally validate resolved addresses before connecting and on redirects so DNS resolution cannot turn an allowed public hostname into a private/link-local target after contract validation.
+
 Dependency roles are closed to `primary-document`, `subresource` and `api`.
 
 ### Interaction and resource boundary
