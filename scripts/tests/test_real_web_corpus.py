@@ -147,6 +147,32 @@ class RealWebCorpusTests(unittest.TestCase):
                 corpus_with(scenario), root=ROOT
             )
 
+    def test_private_and_wildcard_network_targets_are_rejected(self) -> None:
+        for source in (
+            "https://localhost/page",
+            "https://127.0.0.1/page",
+            "https://10.0.0.1/page",
+            "https://*.example.test/page",
+        ):
+            scenario = live_scenario()
+            scenario["source_url"] = source
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(
+                    self.corpus.CorpusError, "public"
+                ):
+                    self.corpus.validate_corpus(
+                        corpus_with(scenario), root=ROOT
+                    )
+
+        scenario = live_scenario()
+        scenario["external_dependencies"][0]["origin"] = "https://127.0.0.1"
+        with self.assertRaisesRegex(
+            self.corpus.CorpusError, "public"
+        ):
+            self.corpus.validate_corpus(
+                corpus_with(scenario), root=ROOT
+            )
+
     def test_captured_input_is_content_addressed_and_offline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -164,6 +190,16 @@ class RealWebCorpusTests(unittest.TestCase):
                 "media_type": "text/html",
             }
             scenario["external_dependencies"] = []
+            invalid_media = copy.deepcopy(scenario)
+            invalid_media["input"]["media_type"] = "application/octet-stream"
+            with self.assertRaisesRegex(
+                self.corpus.CorpusError,
+                "unsupported captured media type",
+            ):
+                self.corpus.validate_corpus(
+                    corpus_with(invalid_media), root=root
+                )
+
             result = self.corpus.validate_corpus(
                 corpus_with(scenario), root=root
             )
