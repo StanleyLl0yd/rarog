@@ -65,7 +65,7 @@ R6.6 adds `scripts/real_web_result.py`. It validates one raw scenario attempt ag
 
 Each result is bound to the exact Rarog commit, normalized corpus SHA-256/revision, measured platform and exact scenario ID. Every declared external dependency and every declared observation receives an explicit result record; missing records fail closed.
 
-Dependency evidence keeps DNS/TLS/HTTP/redirect/content/limit failures distinct. Required external dependency failure cannot be relabeled as an engine failure. Resolved addresses recorded by the evidence must still be public; captured-versioned scenarios remain offline and cannot emit external-network outcomes.
+Dependency evidence keeps DNS/TLS/HTTP/redirect/content/limit failures distinct. Required external dependency failure cannot be relabeled as an engine failure. Resolved addresses recorded by the evidence must still be public; live final URLs must remain within declared dependency origins, while captured final URLs remain the exact scenario source URL. Captured-versioned scenarios remain offline and cannot emit external-network outcomes.
 
 Example normalization:
 
