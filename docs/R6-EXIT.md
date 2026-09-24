@@ -36,7 +36,7 @@ Before R6 can close:
    - at least one real, non-synthetic Rarog WPT evidence set;
    - explicit regression/update policy. **Implemented by #336 / ADR-0142: evidence bundles are revalidated before comparison; upstream, denominator, platform, source and expectation drift remain explicit; regression/improvement labels are restricted to directly comparable observations.**
 2. **Real-Web**
-   - versioned corpus/scenario contract;
+   - versioned corpus/scenario contract. **R6.5 / #339 defines the initial strict contract: live-external and captured-versioned inputs have explicit mutability/network rules; external unavailable/content drift remain distinct from engine failure.**
    - reproducible result capture with external-dependency classification;
    - measured baseline.
 3. **Compatibility profiles**
