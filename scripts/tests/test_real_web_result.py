@@ -379,6 +379,35 @@ class RealWebResultTests(unittest.TestCase):
                     platform=platform(),
                 )
 
+    def test_markdown_escapes_web_and_diagnostic_text(self) -> None:
+        value = attempt(
+            category="completed-observation",
+            detail="completed",
+            dep=dependency(
+                "available",
+                addresses=[PUBLIC_IP],
+                http_status=200,
+                content=CONTENT,
+            ),
+            observations=observed(),
+        )
+        value["observations"][0]["value"] = "<script>|\`title\`"
+        markdown = self.result.render_markdown(self.normalize(value))
+        self.assertNotIn("<script>", markdown)
+        self.assertIn("&lt;script&gt;", markdown)
+        self.assertIn("\\|", markdown)
+        self.assertIn("\\`title\\`", markdown)
+
+        failure = attempt(
+            category="external-unavailable",
+            detail="dns-failure",
+            dep=dependency("dns-failure"),
+            diagnostic="<b>|\`network\`",
+        )
+        markdown = self.result.render_markdown(self.normalize(failure))
+        self.assertNotIn("<b>", markdown)
+        self.assertIn("&lt;b&gt;", markdown)
+
     def test_cli_outputs_are_repeatable(self) -> None:
         value = attempt(
             category="external-unavailable",
