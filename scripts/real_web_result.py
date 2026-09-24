@@ -510,6 +510,18 @@ def _enforce_outcome_consistency(
             raise ResultError(
                 f"{scenario_id}: completed observation requires every declared observation"
             )
+        render_completion = next(
+            (
+                item["value"]
+                for item in observations
+                if item["kind"] == "render-completion"
+            ),
+            None,
+        )
+        if render_completion is not None and render_completion is not True:
+            raise ResultError(
+                f"{scenario_id}: completed observation requires render-completion=true"
+            )
         if any(item["state"] != "available" for item in required_dependencies):
             raise ResultError(
                 f"{scenario_id}: completed live observation requires every required dependency available"
