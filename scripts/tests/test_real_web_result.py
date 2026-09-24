@@ -279,7 +279,7 @@ class RealWebResultTests(unittest.TestCase):
         value = attempt(
             category="external-unavailable",
             detail="timeout-limit-exceeded",
-            dep=dependency("not-attempted"),
+            dep=dependency("timeout-limit-exceeded"),
         )
         normalized = self.normalize(value)
         self.assertEqual(
