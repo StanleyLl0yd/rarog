@@ -55,9 +55,10 @@ Within that boundary:
 - expected -> unexpected = `regression`;
 - unexpected -> expected = `improvement`;
 - unexpected -> unexpected with a different observed status = `changed-unexpected-status`;
-- expected -> expected with a different allowed observed status = `changed-expected-status`.
+- expected -> expected with a different allowed observed status = `changed-expected-status`;
+- unchanged top-level status/expectation with changed subtest observations = `subtests-changed`.
 
-The last two are deliberately not ranked.
+These structural/status-change states are deliberately not ranked.
 
 If the upstream revision, denominator, platform, source identity or relevant expectation basis changed, status differences are reported as `observed-change-not-directly-comparable` rather than as behavior verdicts.
 
