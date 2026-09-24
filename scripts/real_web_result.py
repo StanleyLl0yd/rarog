@@ -48,6 +48,8 @@ _DEPENDENCY_STATES = {
     "http-unavailable",
     "redirect-policy-violation",
     "content-drift",
+    "resource-limit-exceeded",
+    "timeout-limit-exceeded",
 }
 _DETAIL_TO_DEPENDENCY_STATE = {
     "dns-failure": "dns-failure",
@@ -55,6 +57,8 @@ _DETAIL_TO_DEPENDENCY_STATE = {
     "http-unavailable": "http-unavailable",
     "redirect-policy-violation": "redirect-policy-violation",
     "content-drift": "content-drift",
+    "resource-limit-exceeded": "resource-limit-exceeded",
+    "timeout-limit-exceeded": "timeout-limit-exceeded",
 }
 
 
@@ -298,6 +302,21 @@ def _validate_dependency_record(
             raise ResultError(
                 f"{scenario_id}: redirect-policy-violation requires HTTP 3xx and no content identity"
             )
+    elif state == "timeout-limit-exceeded":
+        if http_status is not None or content is not None or expected is not None:
+            raise ResultError(
+                f"{scenario_id}: timeout-limit-exceeded must not claim HTTP or content identity"
+            )
+    elif state == "resource-limit-exceeded":
+        if (
+            not addresses
+            or http_status is None
+            or content is not None
+            or expected is not None
+        ):
+            raise ResultError(
+                f"{scenario_id}: resource-limit-exceeded requires resolved addresses and HTTP status only"
+            )
     elif state == "available":
         if (
             not addresses
@@ -491,11 +510,6 @@ def _enforce_outcome_consistency(
             if not any(item["state"] == mapped for item in required_dependencies):
                 raise ResultError(
                     f"{scenario_id}: {detail} outcome requires a matching required dependency state"
-                )
-        elif detail in {"resource-limit-exceeded", "timeout-limit-exceeded"}:
-            if scenario["input"]["mode"] != "live-external":
-                raise ResultError(
-                    f"{scenario_id}: external {detail} requires live-external input"
                 )
         return
 
