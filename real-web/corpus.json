@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "corpus_revision": 1,
+  "policy": {
+    "credentials": "forbidden",
+    "authenticated_content": "forbidden",
+    "payments": "forbidden",
+    "destructive_actions": "forbidden",
+    "persistent_identity": "forbidden",
+    "undeclared_network_origins": "forbidden"
+  },
+  "outcome_categories": [
+    "completed-observation",
+    "engine-failure",
+    "external-content-drift",
+    "external-unavailable",
+    "unsupported-capability"
+  ],
+  "scenarios": [
+    {
+      "id": "rfc9110-html",
+      "source_url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "input": {
+        "mode": "live-external"
+      },
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "device_scale": 1
+      },
+      "actions": [
+        {
+          "kind": "load-input"
+        },
+        {
+          "kind": "wait-for-idle",
+          "timeout_ms": 3000
+        }
+      ],
+      "observations": [
+        "document-title",
+        "final-url",
+        "render-completion",
+        "screenshot"
+      ],
+      "external_dependencies": [
+        {
+          "origin": "https://www.rfc-editor.org",
+          "role": "primary-document",
+          "required": true
+        }
+      ],
+      "limits": {
+        "timeout_ms": 10000,
+        "max_response_bytes": 4194304,
+        "max_total_bytes": 16777216,
+        "max_subresources": 32
+      }
+    }
+  ]
+}
