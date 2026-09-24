@@ -451,6 +451,39 @@ def _validate_observations(
     return normalized
 
 
+def _enforce_final_url_consistency(
+    *,
+    scenario: dict[str, Any],
+    observations: list[dict[str, Any]],
+) -> None:
+    final_url = next(
+        (
+            item["value"]
+            for item in observations
+            if item["kind"] == "final-url" and item["state"] == "observed"
+        ),
+        None,
+    )
+    if final_url is None:
+        return
+
+    if scenario["input"]["mode"] == "captured-versioned":
+        if final_url != scenario["source_url"]:
+            raise ResultError(
+                f"{scenario['id']}: captured final-url must equal the scenario source_url"
+            )
+        return
+
+    observed_origin = real_web_corpus._url_origin(final_url)
+    declared_origins = {
+        item["origin"] for item in scenario["external_dependencies"]
+    }
+    if observed_origin not in declared_origins:
+        raise ResultError(
+            f"{scenario['id']}: final-url origin {observed_origin!r} is not a declared dependency"
+        )
+
+
 def _enforce_outcome_consistency(
     *,
     scenario: dict[str, Any],
@@ -554,6 +587,10 @@ def normalize_attempt(
     )
     observations = _validate_observations(
         attempt["observations"], scenario=scenario
+    )
+    _enforce_final_url_consistency(
+        scenario=scenario,
+        observations=observations,
     )
     _enforce_outcome_consistency(
         scenario=scenario,
