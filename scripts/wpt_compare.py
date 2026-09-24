@@ -290,6 +290,7 @@ def compare_bundles(
         "improvements": 0,
         "changed_unexpected_statuses": 0,
         "changed_expected_statuses": 0,
+        "subtests_changed": 0,
         "observed_changes_not_directly_comparable": 0,
         "unchanged_results": 0,
     }
@@ -304,9 +305,18 @@ def compare_bundles(
             and test_id not in expectation_change_ids
         )
 
+        top_level_changed = (
+            before["status"] != after["status"]
+            or before["expected"] != after["expected"]
+            or before["unexpected"] != after["unexpected"]
+        )
+
         if not changed:
             interpretation = "unchanged"
             summary["unchanged_results"] += 1
+        elif not top_level_changed:
+            interpretation = "subtests-changed"
+            summary["subtests_changed"] += 1
         elif not test_comparable:
             interpretation = "observed-change-not-directly-comparable"
             summary["observed_changes_not_directly_comparable"] += 1
@@ -483,6 +493,7 @@ def render_markdown(comparison: dict[str, Any]) -> str:
             f"- Improvements: {summary['improvements']}",
             f"- Changed unexpected statuses: {summary['changed_unexpected_statuses']}",
             f"- Changed expected statuses: {summary['changed_expected_statuses']}",
+            f"- Tests with subtest-only changes: {summary['subtests_changed']}",
             "- Observed changes not directly comparable: "
             f"{summary['observed_changes_not_directly_comparable']}",
             "",
