@@ -634,8 +634,9 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"- Corpus: `{result['corpus_sha256']}` (revision {result['corpus_revision']})",
         f"- Scenario: `{result['scenario_id']}`",
         f"- Input mode: `{result['input']['mode']}`",
-        f"- Platform: `{result['platform']['os']}/{result['platform']['arch']}` — "
-        f"`{result['platform']['environment']}`",
+        f"- Platform: `{_markdown_text(result['platform']['os'])}/"
+        f"{_markdown_text(result['platform']['arch'])}` — "
+        f"`{_markdown_text(result['platform']['environment'])}`",
         f"- Outcome: `{outcome['category']}` / `{outcome['detail']}`",
         "",
         "This is one bounded scenario observation. It is not a general-Web compatibility score.",
