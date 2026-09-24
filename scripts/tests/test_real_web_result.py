@@ -273,6 +273,24 @@ class RealWebResultTests(unittest.TestCase):
         ):
             self.normalize(bad_type)
 
+    def test_live_final_url_cannot_escape_declared_dependency_origins(self) -> None:
+        value = attempt(
+            category="completed-observation",
+            detail="completed",
+            dep=dependency(
+                "available",
+                addresses=[PUBLIC_IP],
+                http_status=200,
+                content=CONTENT,
+            ),
+            observations=observed(),
+        )
+        value["observations"][1]["value"] = "https://example.com/redirected"
+        with self.assertRaisesRegex(
+            self.result.ResultError, "not a declared dependency"
+        ):
+            self.normalize(value)
+
     def test_live_timeout_classification_is_external_without_fake_dependency_state(
         self,
     ) -> None:
