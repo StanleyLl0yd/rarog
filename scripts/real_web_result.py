@@ -614,6 +614,17 @@ def normalize_attempt(
     }
 
 
+def _markdown_text(value: Any) -> str:
+    text = str(value).replace("\n", " ")
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("|", "\\|")
+        .replace("`", "\\`")
+    )
+
+
 def render_markdown(result: dict[str, Any]) -> str:
     outcome = result["outcome"]
     lines = [
@@ -668,7 +679,7 @@ def render_markdown(result: dict[str, Any]) -> str:
         elif value is None:
             rendered = "-"
         else:
-            rendered = str(value).replace("\n", " ").replace("|", "\\|")
+            rendered = _markdown_text(value)
         lines.append(f"| {item['kind']} | {item['state']} | {rendered} |")
 
     if outcome["diagnostic"] is not None:
@@ -677,7 +688,7 @@ def render_markdown(result: dict[str, Any]) -> str:
                 "",
                 "## Diagnostic",
                 "",
-                outcome["diagnostic"].replace("\n", " "),
+                _markdown_text(outcome["diagnostic"]),
             ]
         )
     return "\n".join(lines) + "\n"
