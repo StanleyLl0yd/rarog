@@ -1,6 +1,6 @@
 # R6 — Compat exit gate
 
-Status: **in progress — evidence infrastructure is beginning**.
+Status: **in progress — first bounded non-synthetic WPT baseline measured**.
 
 Tracking issue: #329.
 
@@ -58,7 +58,9 @@ Before R6 can close:
 
 Issue #330 added deterministic WPT `wptreport` normalization/dashboard tooling. Its synthetic fixture exists only to verify tooling behavior and does **not** satisfy the required real WPT evidence item above.
 
-Issue #332 pins an exact upstream WPT revision and a small file-level candidate selection with Git blob identities plus a local-checkout verifier. This establishes a reviewable denominator for the first real run; it also does **not** satisfy the real WPT evidence item until the selected tests are actually executed by Rarog and produce a non-synthetic report.
+Issue #332 pins an exact upstream WPT revision and a small file-level candidate selection with Git blob identities plus a local-checkout verifier. This establishes the reviewable denominator used by the first real run.
+
+Issue #334 adds the bounded connectionless upstream-wptrunner adapter and the first complete non-synthetic selected run. Historical evidence is versioned under `wpt/evidence/` for Rarog `dcd349dd37b0340ec67a2fb8d36b13980e2fd918` against WPT `a83afd4402cffdc876508fe9a47f916d4136099f`. The exact five-test denominator was measured: two CSS reftests observed FAIL and three HTML testharness cases observed explicit unsupported ERROR. This satisfies the requirement for an initial real WPT evidence set; it does **not** claim selected-test success, broad WPT conformance or general-Web compatibility. See ADR-0141.
 
 ## Non-goals
 

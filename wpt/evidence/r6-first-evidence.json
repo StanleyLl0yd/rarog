@@ -1,0 +1,16 @@
+{
+  "observed_tests": 5,
+  "rarog_commit": "dcd349dd37b0340ec67a2fb8d36b13980e2fd918",
+  "report_sha256": "sha256:087d34554cefb38d54d82323a5a8d3419e3a97936fe9b4a2e539e2a2cd6f347f",
+  "schema_version": 1,
+  "selected_tests": 5,
+  "selection_sha256": "sha256:3d0951f045626f699ce123a1cc52e06b989ad1d01305e43f1471f6719163b075",
+  "test_ids": [
+    "/css/selectors/dir-style-01a.html",
+    "/css/selectors/dir-style-03a.html",
+    "/html/syntax/parsing/ambiguous-ampersand.html",
+    "/html/syntax/parsing/no-doctype-name.html",
+    "/html/syntax/parsing/zero.html"
+  ],
+  "wpt_commit": "a83afd4402cffdc876508fe9a47f916d4136099f"
+}

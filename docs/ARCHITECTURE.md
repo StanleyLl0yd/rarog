@@ -57,11 +57,11 @@ R6 adds compatibility evidence without making test tooling authoritative over st
 
 The first R6 boundary is a stdlib-only WPT dashboard normalizer under `scripts/`. It consumes machine-readable upstream WPT reports and emits deterministic Rarog-owned evidence summaries. Every dashboard is bound to exact Rarog/WPT commits plus content-addressed source-report digests. Test/subtest observations and expectation metadata remain distinct; missing expectations stay unknown, and only explicitly measured records contribute to counts.
 
-Synthetic fixtures exist only to test tooling. They are permanently marked as non-evidence and cannot satisfy R6's real WPT requirement. Directory focus manifests remain selection hints rather than compatibility denominators. R6.2 adds a separate exact file-level selection whose upstream commit and Git blob identities form the candidate denominator for the first real run; selection itself still carries no pass/fail claim.
+Synthetic fixtures exist only to test tooling. They are permanently marked as non-evidence and cannot satisfy R6's real WPT requirement. Directory focus manifests remain selection hints rather than compatibility denominators. R6.2 adds a separate exact file-level selection whose upstream commit and Git blob identities form the candidate denominator for the first real run; selection itself still carries no pass/fail claim. R6.3 executes that exact denominator through upstream wptrunner using a bounded connectionless adapter. Reftest comparison remains owned by upstream `RefTestImplementation`, unsupported testharness capability remains an explicit ERROR, and the first historical non-synthetic report/dashboard is versioned under `wpt/evidence/` without modifying engine behavior to improve the result.
 
 Compatibility measurement remains outside DOM/layout/script authority: dashboards do not alter engine behavior, expectations do not suppress runtime failures, and no standards-engine code may be specialized merely to improve dashboard output without an independently demonstrated standards/compatibility defect.
 
-See ADR-0139, ADR-0140 and `docs/R6-EXIT.md`.
+See ADR-0139, ADR-0140, ADR-0141 and `docs/R6-EXIT.md`.
 
 ## Long-term process topology
 
