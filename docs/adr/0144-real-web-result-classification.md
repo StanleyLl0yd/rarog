@@ -70,7 +70,7 @@ Observed values are type checked:
 - render completion: boolean;
 - screenshot: SHA-256 identity.
 
-A completed scenario requires every declared observation to be present and observed. Missing observations therefore cannot be hidden by omitting records.
+A completed scenario requires every declared observation to be present and observed. Missing observations therefore cannot be hidden by omitting records. An observed live final URL must remain within an origin declared by the corpus; an observed captured final URL must remain the exact scenario source URL.
 
 ### Unsupported capability
 
