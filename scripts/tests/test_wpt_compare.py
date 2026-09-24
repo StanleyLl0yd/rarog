@@ -78,6 +78,31 @@ def raw_report(
     return {"run_info": {"product": "rarog"}, "results": results}
 
 
+def make_bundle_from_report(
+    *,
+    selection,
+    report,
+    rarog_commit: str = RAROG_BASE,
+    platform: str = "linux-x86_64",
+):
+    normalized_selection = wpt_selection.validate_manifest(selection)
+    wpt_commit = normalized_selection["source"]["commit"]
+    evidence = wpt_evidence.build_evidence(
+        normalized_selection,
+        report,
+        rarog_commit=rarog_commit,
+        wpt_commit=wpt_commit,
+    )
+    dashboard = wpt_dashboard.normalize_reports(
+        [(evidence["report_sha256"], report)],
+        rarog_commit=rarog_commit,
+        wpt_commit=wpt_commit,
+        platform=platform,
+        synthetic=False,
+    )
+    return normalized_selection, report, evidence, dashboard
+
+
 def make_bundle(
     *,
     selection=None,
@@ -217,6 +242,50 @@ class WptCompareTests(unittest.TestCase):
         )
         self.assertEqual(result["summary"]["improvements"], 0)
         self.assertEqual(result["summary"]["regressions"], 0)
+
+    def test_subtest_only_change_is_not_ranked(self) -> None:
+        selection = raw_selection(paths=("a.html",))
+        before_report = {
+            "results": [
+                {
+                    "test": "/a.html",
+                    "status": "PASS",
+                    "expected": "PASS",
+                    "subtests": [
+                        {
+                            "name": "detail",
+                            "status": "PASS",
+                            "expected": "PASS",
+                        }
+                    ],
+                }
+            ]
+        }
+        after_report = copy.deepcopy(before_report)
+        after_report["results"][0]["subtests"][0]["status"] = "FAIL"
+
+        baseline = self.validated(
+            make_bundle_from_report(
+                selection=selection,
+                report=before_report,
+            )
+        )
+        candidate = self.validated(
+            make_bundle_from_report(
+                selection=selection,
+                report=after_report,
+                rarog_commit=RAROG_CANDIDATE,
+            )
+        )
+        result = self.compare.compare_bundles(baseline, candidate)
+        self.assertTrue(result["direct_behavior_comparable"])
+        self.assertEqual(
+            result["results"][0]["interpretation"],
+            "subtests-changed",
+        )
+        self.assertEqual(result["summary"]["subtests_changed"], 1)
+        self.assertEqual(result["summary"]["regressions"], 0)
+        self.assertEqual(result["summary"]["improvements"], 0)
 
     def test_platform_change_blocks_behavior_interpretation(self) -> None:
         baseline = self.validated(make_bundle(platform="linux"))
