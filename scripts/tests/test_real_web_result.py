@@ -391,7 +391,7 @@ class RealWebResultTests(unittest.TestCase):
             ),
             observations=observed(),
         )
-        value["observations"][0]["value"] = "<script>|\`title\`"
+        value["observations"][0]["value"] = "<script>|`title`"
         markdown = self.result.render_markdown(self.normalize(value))
         self.assertNotIn("<script>", markdown)
         self.assertIn("&lt;script&gt;", markdown)
@@ -402,7 +402,7 @@ class RealWebResultTests(unittest.TestCase):
             category="external-unavailable",
             detail="dns-failure",
             dep=dependency("dns-failure"),
-            diagnostic="<b>|\`network\`",
+            diagnostic="<b>|`network`",
         )
         markdown = self.result.render_markdown(self.normalize(failure))
         self.assertNotIn("<b>", markdown)
