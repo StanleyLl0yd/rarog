@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import math
 import posixpath
@@ -18,6 +19,7 @@ SCHEMA_VERSION = 1
 _ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _ALLOWED_INPUT_MODES = {"live-external", "captured-versioned"}
+_ALLOWED_CAPTURE_MEDIA_TYPES = {"text/html"}
 _ALLOWED_ACTIONS = {"load-input", "wait-for-idle"}
 _ALLOWED_DEPENDENCY_ROLES = {"api", "primary-document", "subresource"}
 _ALLOWED_OBSERVATIONS = {
@@ -122,6 +124,30 @@ def _require_number(
     return numeric
 
 
+def _require_public_host(host: str, label: str) -> None:
+    lowered = host.lower()
+    if (
+        "*" in lowered
+        or lowered == "localhost"
+        or lowered.endswith(".localhost")
+        or lowered.endswith(".local")
+    ):
+        raise CorpusError(f"{label} must identify a public host")
+    try:
+        address = ipaddress.ip_address(lowered)
+    except ValueError:
+        return
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        raise CorpusError(f"{label} must identify a public IP address")
+
+
 def _parsed_port(parsed: Any, label: str) -> int | None:
     try:
         return parsed.port
@@ -136,6 +162,7 @@ def _canonical_https_url(value: Any, label: str) -> str:
         raise CorpusError(f"{label} must use https")
     if not parsed.hostname:
         raise CorpusError(f"{label} must include a hostname")
+    _require_public_host(parsed.hostname, label)
     if parsed.username is not None or parsed.password is not None:
         raise CorpusError(f"{label} must not contain userinfo")
     if parsed.fragment:
@@ -155,6 +182,7 @@ def _origin(value: Any, label: str) -> str:
     parsed = urlsplit(text)
     if parsed.scheme != "https" or not parsed.hostname:
         raise CorpusError(f"{label} must be an https origin")
+    _require_public_host(parsed.hostname, label)
     if (
         parsed.username is not None
         or parsed.password is not None
@@ -239,6 +267,10 @@ def _validate_input(
     media_type = _require_text(
         value["media_type"], f"{scenario_id}: capture media_type"
     )
+    if media_type not in _ALLOWED_CAPTURE_MEDIA_TYPES:
+        raise CorpusError(
+            f"{scenario_id}: unsupported captured media type {media_type!r}"
+        )
     full = root / Path(*path.split("/"))
     if full.is_symlink():
         raise CorpusError(f"{scenario_id}: captured input must not be a symlink")
