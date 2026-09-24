@@ -19,6 +19,7 @@ _ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _ALLOWED_INPUT_MODES = {"live-external", "captured-versioned"}
 _ALLOWED_ACTIONS = {"load-input", "wait-for-idle"}
+_ALLOWED_DEPENDENCY_ROLES = {"api", "primary-document", "subresource"}
 _ALLOWED_OBSERVATIONS = {
     "document-title",
     "final-url",
@@ -231,6 +232,8 @@ def _validate_input(
         value["media_type"], f"{scenario_id}: capture media_type"
     )
     full = root / Path(*path.split("/"))
+    if full.is_symlink():
+        raise CorpusError(f"{scenario_id}: captured input must not be a symlink")
     if not full.is_file():
         raise CorpusError(f"{scenario_id}: captured input is missing: {path}")
     observed = _sha256(full)
@@ -311,10 +314,11 @@ def _validate_dependencies(
     *,
     scenario_id: str,
     source_url: str,
+    input_mode: str,
 ) -> list[dict[str, Any]]:
-    if not isinstance(raw, list) or not raw:
+    if not isinstance(raw, list):
         raise CorpusError(
-            f"{scenario_id}: external_dependencies must be a non-empty list"
+            f"{scenario_id}: external_dependencies must be a list"
         )
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(raw):
@@ -332,6 +336,10 @@ def _validate_dependencies(
         role = _require_text(
             dep["role"], f"{scenario_id}: external dependency {index} role"
         )
+        if role not in _ALLOWED_DEPENDENCY_ROLES:
+            raise CorpusError(
+                f"{scenario_id}: unsupported external dependency role {role!r}"
+            )
         required = dep["required"]
         if not isinstance(required, bool):
             raise CorpusError(
@@ -348,6 +356,18 @@ def _validate_dependencies(
             f"{scenario_id}: external dependencies must be unique and sorted"
         )
 
+    if input_mode == "captured-versioned":
+        if normalized:
+            raise CorpusError(
+                f"{scenario_id}: captured-versioned input must not require "
+                "external dependencies"
+            )
+        return normalized
+
+    if not normalized:
+        raise CorpusError(
+            f"{scenario_id}: live-external input requires declared dependencies"
+        )
     primary_origin = _url_origin(source_url)
     primary = [
         item
@@ -526,6 +546,7 @@ def validate_corpus(document: Any, *, root: Path) -> dict[str, Any]:
                     item["external_dependencies"],
                     scenario_id=scenario_id,
                     source_url=source_url,
+                    input_mode=input_value["mode"],
                 ),
                 "limits": _validate_limits(item["limits"], scenario_id),
             }
