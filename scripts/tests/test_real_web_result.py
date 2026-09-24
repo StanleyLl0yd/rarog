@@ -175,6 +175,13 @@ class RealWebResultTests(unittest.TestCase):
         ):
             self.normalize(missing)
 
+        incomplete_render = copy.deepcopy(value)
+        incomplete_render["observations"][2]["value"] = False
+        with self.assertRaisesRegex(
+            self.result.ResultError, "render-completion=true"
+        ):
+            self.normalize(incomplete_render)
+
     def test_external_content_drift_requires_distinct_digests(self) -> None:
         value = attempt(
             category="external-content-drift",
