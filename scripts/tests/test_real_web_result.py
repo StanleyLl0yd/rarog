@@ -399,7 +399,7 @@ class RealWebResultTests(unittest.TestCase):
             platform={
                 "os": "linux",
                 "arch": "x86_64",
-                "environment": "<i>|\`ci\`",
+                "environment": "<i>|`ci`",
             },
         )
         markdown = self.result.render_markdown(normalized)
