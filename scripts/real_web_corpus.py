@@ -122,6 +122,13 @@ def _require_number(
     return numeric
 
 
+def _parsed_port(parsed: Any, label: str) -> int | None:
+    try:
+        return parsed.port
+    except ValueError as error:
+        raise CorpusError(f"{label} contains an invalid port") from error
+
+
 def _canonical_https_url(value: Any, label: str) -> str:
     text = _require_text(value, label)
     parsed = urlsplit(text)
@@ -135,7 +142,8 @@ def _canonical_https_url(value: Any, label: str) -> str:
         raise CorpusError(f"{label} must not contain a fragment")
     if parsed.hostname != parsed.hostname.lower():
         raise CorpusError(f"{label} hostname must be lowercase")
-    if parsed.port == 443:
+    port = _parsed_port(parsed, label)
+    if port == 443:
         raise CorpusError(f"{label} must omit the default https port")
     if parsed.path == "":
         raise CorpusError(f"{label} must include an explicit path")
@@ -159,21 +167,21 @@ def _origin(value: Any, label: str) -> str:
         )
     if "*" in text:
         raise CorpusError(f"{label} must not contain wildcards")
-    if parsed.port == 443:
+    parsed_port = _parsed_port(parsed, label)
+    if parsed_port == 443:
         raise CorpusError(f"{label} must omit the default https port")
     host = parsed.hostname.lower()
-    if parsed.hostname != host:
-        raise CorpusError(f"{label} hostname must be lowercase")
-    port = f":{parsed.port}" if parsed.port is not None else ""
+    port = f":{parsed_port}" if parsed_port is not None else ""
     canonical = f"https://{host}{port}"
-    if text.rstrip("/") != canonical:
+    if text != canonical:
         raise CorpusError(f"{label} must be canonical: {canonical}")
     return canonical
 
 
 def _url_origin(url: str) -> str:
     parsed = urlsplit(url)
-    port = f":{parsed.port}" if parsed.port is not None else ""
+    parsed_port = _parsed_port(parsed, "source URL")
+    port = f":{parsed_port}" if parsed_port is not None else ""
     return f"{parsed.scheme}://{parsed.hostname}{port}"
 
 
