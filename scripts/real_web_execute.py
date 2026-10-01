@@ -258,11 +258,19 @@ def _request_once(
 
     last_error: BaseException | None = None
     for address in addresses:
+        try:
+            connection_timeout = min(_remaining(deadline), 5.0)
+        except TimeoutError as error:
+            raise NetworkFailure(
+                "timeout-limit-exceeded",
+                _diagnostic(error),
+                addresses=addresses,
+            ) from error
         connection = _PinnedHTTPSConnection(
             parsed.hostname,
             port=port,
             address=address,
-            timeout=min(_remaining(deadline), 5.0),
+            timeout=connection_timeout,
         )
         try:
             connection.request(
