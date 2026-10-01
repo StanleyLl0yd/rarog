@@ -548,6 +548,8 @@ impl Engine {
         self.shared.platform_host.capabilities()
     }
 
+    // `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+    #[allow(deprecated)]
     pub fn create_view(&self, options: ViewOptions) -> Result<View, EngineError> {
         let raw_id = self
             .shared
