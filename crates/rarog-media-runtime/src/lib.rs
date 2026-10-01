@@ -243,6 +243,8 @@ pub struct MediaRuntime {
 }
 
 impl MediaRuntime {
+    // `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+    #[allow(deprecated)]
     pub fn try_new(
         limits: MediaRuntimeLimits,
         background_policy: MediaBackgroundPolicy,
