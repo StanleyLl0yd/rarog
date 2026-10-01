@@ -11,6 +11,7 @@ import json
 import socket
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -192,7 +193,7 @@ def _attempt(
 def _read_bounded(
     response: http.client.HTTPResponse,
     *,
-    connection: _PinnedHTTPSConnection,
+    sock: socket.socket,
     deadline: float,
     maximum: int,
 ) -> bytes:
@@ -214,9 +215,7 @@ def _read_bounded(
         remaining = maximum + 1 - len(output)
         if remaining <= 0:
             raise OverflowError(f"response exceeded {maximum} bytes")
-        if connection.sock is None:
-            raise ExecutionError("HTTPS connection lost its socket during response read")
-        connection.sock.settimeout(min(_remaining(deadline), 5.0))
+        sock.settimeout(min(_remaining(deadline), 5.0))
         chunk = response.read(min(_READ_CHUNK, remaining))
         if not chunk:
             break
@@ -276,13 +275,16 @@ def _request_once(
                     "User-Agent": "Rarog-R6-Compatibility-Qualification/1",
                 },
             )
+            active_socket = connection.sock
+            if active_socket is None:
+                raise ExecutionError("HTTPS connection did not expose an active socket")
             response = connection.getresponse()
             _remaining(deadline)
             headers = {key.lower(): value for key, value in response.getheaders()}
             try:
                 body = _read_bounded(
                     response,
-                    connection=connection,
+                    sock=active_socket,
                     deadline=deadline,
                     maximum=maximum_bytes,
                 )
