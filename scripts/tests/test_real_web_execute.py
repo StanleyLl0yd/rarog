@@ -171,6 +171,29 @@ class RealWebExecuteTests(unittest.TestCase):
             ("external-unavailable", "tls-failure", "certificate failure"),
         )
 
+    def test_response_read_honors_absolute_deadline(self) -> None:
+        class FakeSocket:
+            def settimeout(self, value):
+                raise AssertionError("deadline should fail before socket timeout update")
+
+        class FakeConnection:
+            sock = FakeSocket()
+
+        class FakeResponse:
+            def getheader(self, name):
+                return None
+
+            def read(self, count):
+                raise AssertionError("deadline should fail before response read")
+
+        with self.assertRaises(TimeoutError):
+            real_web_execute._read_bounded(
+                FakeResponse(),
+                connection=FakeConnection(),
+                deadline=0.0,
+                maximum=16,
+            )
+
     def test_completed_attempt_keeps_network_and_engine_observations_distinct(self) -> None:
         dependency = real_web_execute._dependency(
             self.scenario["external_dependencies"][0],
