@@ -77,7 +77,12 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
             raise
 
 
-def _public_addresses(host: str, port: int) -> list[str]:
+def _public_addresses(
+    host: str,
+    port: int,
+    *,
+    deadline: float | None = None,
+) -> list[str]:
     try:
         resolved = socket.getaddrinfo(
             host,
@@ -87,6 +92,8 @@ def _public_addresses(host: str, port: int) -> list[str]:
         )
     except socket.gaierror as error:
         raise LookupError(str(error)) from error
+    if deadline is not None and time.monotonic() >= deadline:
+        raise TimeoutError("DNS resolution exceeded scenario timeout")
 
     addresses: set[str] = set()
     for item in resolved:
@@ -229,7 +236,18 @@ def _request_once(
     if parsed.scheme != "https" or not parsed.hostname:
         raise ExecutionError(f"executor received non-HTTPS URL {url!r}")
     port = parsed.port or 443
-    addresses = _public_addresses(parsed.hostname, port)
+    try:
+        addresses = _public_addresses(
+            parsed.hostname,
+            port,
+            deadline=deadline,
+        )
+    except TimeoutError as error:
+        raise NetworkFailure(
+            "timeout-limit-exceeded",
+            _diagnostic(error),
+            addresses=[],
+        ) from error
     target = parsed.path or "/"
     if parsed.query:
         target += f"?{parsed.query}"
@@ -301,6 +319,7 @@ def _fetch_live(
     declared_origins = {item["origin"] for item in scenario["external_dependencies"]}
     current = scenario["source_url"]
     observed_addresses: set[str] = set()
+    total_bytes = 0
 
     for redirect_index in range(_MAX_REDIRECTS + 1):
         try:
@@ -376,6 +395,23 @@ def _fetch_live(
             raise
 
         observed_addresses.update(addresses)
+        total_bytes += len(body)
+        if total_bytes > scenario["limits"]["max_total_bytes"]:
+            return (
+                None,
+                None,
+                _dependency(
+                    declared,
+                    state="resource-limit-exceeded",
+                    addresses=sorted(observed_addresses),
+                    http_status=status,
+                ),
+                (
+                    "external-unavailable",
+                    "resource-limit-exceeded",
+                    "total response byte budget exceeded",
+                ),
+            )
 
         if status in {301, 302, 303, 307, 308}:
             location = headers.get("location")
@@ -428,23 +464,6 @@ def _fetch_live(
                     "external-unavailable",
                     "http-unavailable",
                     f"HTTP status {status}",
-                ),
-            )
-
-        if len(body) > scenario["limits"]["max_total_bytes"]:
-            return (
-                None,
-                None,
-                _dependency(
-                    declared,
-                    state="resource-limit-exceeded",
-                    addresses=sorted(observed_addresses),
-                    http_status=status,
-                ),
-                (
-                    "external-unavailable",
-                    "resource-limit-exceeded",
-                    "total response byte budget exceeded",
                 ),
             )
 
