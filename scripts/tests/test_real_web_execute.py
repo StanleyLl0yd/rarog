@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import sys
 import time
 import unittest
@@ -41,6 +42,24 @@ class RealWebExecuteTests(unittest.TestCase):
             ):
                 real_web_execute._public_addresses("example.test", 443)
 
+    def test_dns_result_returning_after_deadline_is_timeout(self) -> None:
+        answer = [
+            (
+                2,
+                1,
+                6,
+                "",
+                ("1.1.1.1", 443),
+            )
+        ]
+        with patch.object(real_web_execute.socket, "getaddrinfo", return_value=answer):
+            with self.assertRaisesRegex(TimeoutError, "DNS resolution exceeded"):
+                real_web_execute._public_addresses(
+                    "example.test",
+                    443,
+                    deadline=0.0,
+                )
+
     def test_same_origin_redirect_is_followed_and_content_addressed(self) -> None:
         responses = [
             (
@@ -74,6 +93,37 @@ class RealWebExecuteTests(unittest.TestCase):
         self.assertRegex(
             dependency["content_sha256"],
             r"^sha256:[0-9a-f]{64}$",
+        )
+
+    def test_redirect_bodies_count_against_total_byte_budget(self) -> None:
+        scenario = copy.deepcopy(self.scenario)
+        scenario["limits"]["max_total_bytes"] = 5
+        responses = [
+            (
+                302,
+                ["1.1.1.1"],
+                {"location": "/rfc/rfc9110.html?redirected=1"},
+                b"abc",
+            ),
+            (
+                200,
+                ["1.1.1.1"],
+                {},
+                b"def",
+            ),
+        ]
+        with patch.object(real_web_execute, "_request_once", side_effect=responses):
+            body, final_url, dependency, failure = real_web_execute._fetch_live(
+                scenario,
+                deadline=time.monotonic() + 5,
+            )
+
+        self.assertIsNone(body)
+        self.assertIsNone(final_url)
+        self.assertEqual(dependency["state"], "resource-limit-exceeded")
+        self.assertEqual(
+            failure[0:2],
+            ("external-unavailable", "resource-limit-exceeded"),
         )
 
     def test_redirect_to_undeclared_origin_is_external_policy_failure(self) -> None:
