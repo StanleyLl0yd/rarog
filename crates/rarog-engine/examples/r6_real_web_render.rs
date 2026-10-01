@@ -46,14 +46,13 @@ fn document_title(document: &Document) -> Option<String> {
     let mut stack = vec![document.root()];
     while let Some(id) = stack.pop() {
         let node = document.node(id)?;
-        if let NodeKind::Element(element) = &node.kind
-            && element.namespace == Namespace::Html
-            && element.tag_name.as_str() == "title"
-        {
-            let mut text = String::new();
-            collect_text(document, id, &mut text);
-            let normalized = text.split_ascii_whitespace().collect::<Vec<_>>().join(" ");
-            return Some(normalized);
+        if let NodeKind::Element(element) = &node.kind {
+            if element.namespace == Namespace::Html && element.tag_name.as_str() == "title" {
+                let mut text = String::new();
+                collect_text(document, id, &mut text);
+                let normalized = text.split_ascii_whitespace().collect::<Vec<_>>().join(" ");
+                return Some(normalized);
+            }
         }
         stack.extend(node.children.iter().rev().copied());
     }
