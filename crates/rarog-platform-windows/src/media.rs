@@ -351,6 +351,8 @@ impl MediaOutput for WindowsMediaBackend {
     }
 }
 
+// `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+#[allow(deprecated)]
 fn allocate_ticket() -> Result<NonZeroU64, MediaAdapterError> {
     let raw = NEXT_WINDOWS_MEDIA_TICKET
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
