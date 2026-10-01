@@ -6,7 +6,7 @@ static NEXT_REALM_SCOPE: AtomicU64 = AtomicU64::new(1);
 static NEXT_ROOT_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 // `AtomicU64::try_update` replaces `fetch_update` only from Rust 1.95 onward.
- // Keep the workspace MSRV at 1.85 while newer toolchains deprecate the old name.
+// Keep the workspace MSRV at 1.85 while newer toolchains deprecate the old name.
 #[allow(deprecated)]
 fn allocate_scope(counter: &AtomicU64, exhausted: &'static str) -> Result<NonZeroU64, ScriptError> {
     let value = counter
