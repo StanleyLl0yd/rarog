@@ -1,0 +1,109 @@
+name: R6 Real-Web Baseline
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/r6-real-web-baseline.yml"
+      - "crates/rarog-engine/examples/r6_real_web_render.rs"
+      - "real-web/**"
+      - "scripts/real_web_*.py"
+      - "scripts/tests/test_real_web_*.py"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/r6-real-web-baseline.yml"
+      - "crates/rarog-engine/examples/r6_real_web_render.rs"
+      - "real-web/**"
+      - "scripts/real_web_*.py"
+      - "scripts/tests/test_real_web_*.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  baseline:
+    name: Real-Web baseline evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact Rarog head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Record exact Rarog commit
+        run: echo "RAROG_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+
+      - name: Validate corpus and compatibility tooling
+        run: |
+          set -euo pipefail
+          python3 scripts/real_web_corpus.py \
+            --manifest real-web/corpus.json \
+            --root .
+          python3 -m unittest discover -s scripts/tests -p 'test_real_web_*.py'
+
+      - name: Build test-only real-Web renderer
+        run: cargo build --locked -p rarog-engine --example r6_real_web_render
+
+      - name: Execute exact corpus
+        run: |
+          set -euo pipefail
+          mkdir -p real-web-run
+          python3 scripts/real_web_execute.py \
+            --manifest real-web/corpus.json \
+            --root . \
+            --renderer target/debug/examples/r6_real_web_render \
+            --json-out real-web-run/execution.json
+
+      - name: Bind full corpus baseline
+        run: |
+          set -euo pipefail
+          python3 scripts/real_web_baseline.py \
+            --manifest real-web/corpus.json \
+            --root . \
+            --execution real-web-run/execution.json \
+            --rarog-commit "$RAROG_SHA" \
+            --platform-os linux \
+            --platform-arch x86_64 \
+            --environment github-actions-ubuntu-24.04-live \
+            --json-out real-web-run/baseline.json \
+            --markdown-out real-web-run/baseline.md
+
+      - name: Verify denominator coverage
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          corpus = json.loads(Path("real-web/corpus.json").read_text())
+          execution = json.loads(Path("real-web-run/execution.json").read_text())
+          baseline = json.loads(Path("real-web-run/baseline.json").read_text())
+          expected = [item["id"] for item in corpus["scenarios"]]
+          assert execution["scenario_ids"] == expected
+          assert [item["scenario_id"] for item in execution["attempts"]] == expected
+          assert baseline["scenario_ids"] == expected
+          assert [item["scenario_id"] for item in baseline["results"]] == expected
+          assert len(expected) > 0
+          PY
+
+      - name: Print bounded first-run evidence
+        run: |
+          set -euo pipefail
+          echo "=== RAROG R6 REAL-WEB EXECUTION BEGIN ==="
+          cat real-web-run/execution.json
+          echo "=== RAROG R6 REAL-WEB EXECUTION END ==="
+          echo "=== RAROG R6 REAL-WEB BASELINE JSON BEGIN ==="
+          cat real-web-run/baseline.json
+          echo "=== RAROG R6 REAL-WEB BASELINE JSON END ==="
+          echo "=== RAROG R6 REAL-WEB BASELINE MARKDOWN BEGIN ==="
+          cat real-web-run/baseline.md
+          echo "=== RAROG R6 REAL-WEB BASELINE MARKDOWN END ==="
