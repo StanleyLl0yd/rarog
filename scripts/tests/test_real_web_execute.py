@@ -176,9 +176,6 @@ class RealWebExecuteTests(unittest.TestCase):
             def settimeout(self, value):
                 raise AssertionError("deadline should fail before socket timeout update")
 
-        class FakeConnection:
-            sock = FakeSocket()
-
         class FakeResponse:
             def getheader(self, name):
                 return None
@@ -189,7 +186,7 @@ class RealWebExecuteTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             real_web_execute._read_bounded(
                 FakeResponse(),
-                connection=FakeConnection(),
+                sock=FakeSocket(),
                 deadline=0.0,
                 maximum=16,
             )
