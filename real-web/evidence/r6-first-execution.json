@@ -1,0 +1,56 @@
+{
+  "attempts": [
+    {
+      "dependencies": [
+        {
+          "content_sha256": "sha256:d431760660ea44e130f6e919dab216df2d0b3a490567a98089267523368fe1e5",
+          "expected_content_sha256": null,
+          "http_status": 200,
+          "origin": "https://www.rfc-editor.org",
+          "resolved_addresses": [
+            "104.18.20.81",
+            "104.18.21.81",
+            "2606:4700::6812:1451",
+            "2606:4700::6812:1551"
+          ],
+          "role": "primary-document",
+          "state": "available"
+        }
+      ],
+      "observations": [
+        {
+          "kind": "document-title",
+          "state": "observed",
+          "value": "RFC 9110: HTTP Semantics"
+        },
+        {
+          "kind": "final-url",
+          "state": "observed",
+          "value": "https://www.rfc-editor.org/rfc/rfc9110.html"
+        },
+        {
+          "kind": "render-completion",
+          "state": "observed",
+          "value": true
+        },
+        {
+          "kind": "screenshot",
+          "state": "observed",
+          "value": "sha256:376a97100a0ae7fd1027bc5054c03e08c21d575347baf99443627ec0def0708a"
+        }
+      ],
+      "outcome": {
+        "category": "completed-observation",
+        "detail": "completed",
+        "diagnostic": null
+      },
+      "scenario_id": "rfc9110-html",
+      "schema_version": 1
+    }
+  ],
+  "corpus_revision": 1,
+  "scenario_ids": [
+    "rfc9110-html"
+  ],
+  "schema_version": 1
+}
