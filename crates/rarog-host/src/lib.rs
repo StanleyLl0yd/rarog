@@ -687,6 +687,8 @@ struct ServiceWorkerFetchDispatchIdAllocator {
 }
 
 impl ServiceWorkerFetchDispatchIdAllocator {
+    // `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+    #[allow(deprecated)]
     fn new() -> Result<Self, HostControlError> {
         let raw = NEXT_SERVICE_WORKER_FETCH_DISPATCH_SCOPE
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
