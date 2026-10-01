@@ -40,7 +40,7 @@ Before R6 can close:
    - reproducible result capture with external-dependency classification. **R6.6 / #341 adds deterministic per-scenario normalization: exact dependency/observation coverage is required and external DNS/TLS/HTTP/redirect/content/limit evidence remains distinct from engine failure.**
    - measured baseline. **R6.7 / #342 records the first live corpus baseline for exact Rarog commit `2301370b6ccce06a8839a94a75dfeee12e3a3499`: the one-scenario denominator produced `completed-observation / completed`; raw execution and deterministic summary are versioned under `real-web/evidence/`. This is one bounded observation, not a general-Web compatibility claim.**
 3. **Compatibility profiles**
-   - canonical reproducible profile payload;
+   - canonical reproducible profile payload. **R6.8 / #345 defines schema version 1 / profile revision 1 in `compatibility/profile.json`. It contains separate WPT and real-Web historical entries, each retaining its own measured Rarog commit, source identity, raw/normalized evidence digest, platform and exact scope. The generator reconstructs both committed evidence sets before inclusion and emits no aggregate score. See ADR-0146.**
    - independent reproduction check;
    - signature over the canonical payload.
 4. **High-priority scenarios**
@@ -79,6 +79,12 @@ Issue #341 / R6.6 defines deterministic per-scenario result classification and p
 Issue #342 / R6.7 executes the exact current corpus with a qualification-only network runner and the existing Rarog render pipeline. The first historical raw execution is content-addressed as `sha256:daa3bf52900393e3755b903f0ba2fef9a310b3c3294c84869908ee27a1acf2b8`; its normalized corpus identity is `sha256:835751b5e67c10ac4f77c838d4e4496724597814c9917f58b1358a7d076df203`. The single `rfc9110-html` scenario observed HTTP 200, the Rarog DOM title `RFC 9110: HTTP Semantics`, the declared final URL, render completion and a deterministic screenshot digest. See ADR-0145.
 
 A later live run may observe different external addresses/content and must create new evidence rather than mutating this historical baseline.
+
+## Current compatibility-profile slice
+
+Issue #345 / R6.8 defines the first canonical compatibility-profile payload from the already-versioned WPT and real-Web baselines. `scripts/compat_profile.py` independently rebuilds the underlying evidence before producing the profile, so manually copied or stale digests cannot silently enter it. The profile explicitly preserves the WPT FAIL/ERROR counts and the real-Web scenario/dependency states, while keeping `dcd349dd…` and `2301370b…` as distinct measured engine commits. The repository commit that contains the profile is not substituted for either historical measurement identity.
+
+Signing is intentionally not part of R6.8. A later slice must first treat this reproducible/content-addressed payload as the signing input rather than signing mutable source files independently.
 
 ## Non-goals
 
