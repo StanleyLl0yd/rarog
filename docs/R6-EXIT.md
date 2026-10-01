@@ -1,6 +1,6 @@
 # R6 — Compat exit gate
 
-Status: **in progress — first bounded non-synthetic WPT baseline measured**.
+Status: **in progress — bounded non-synthetic WPT and real-Web baselines measured**.
 
 Tracking issue: #329.
 
@@ -38,7 +38,7 @@ Before R6 can close:
 2. **Real-Web**
    - versioned corpus/scenario contract. **R6.5 / #339 defines the initial strict contract: live-external and captured-versioned inputs have explicit mutability/network rules; external unavailable/content drift remain distinct from engine failure.**
    - reproducible result capture with external-dependency classification. **R6.6 / #341 adds deterministic per-scenario normalization: exact dependency/observation coverage is required and external DNS/TLS/HTTP/redirect/content/limit evidence remains distinct from engine failure.**
-   - measured baseline.
+   - measured baseline. **R6.7 / #342 records the first live corpus baseline for exact Rarog commit `2301370b6ccce06a8839a94a75dfeee12e3a3499`: the one-scenario denominator produced `completed-observation / completed`; raw execution and deterministic summary are versioned under `real-web/evidence/`. This is one bounded observation, not a general-Web compatibility claim.**
 3. **Compatibility profiles**
    - canonical reproducible profile payload;
    - independent reproduction check;
@@ -69,6 +69,16 @@ Issue #336 adds deterministic WPT evidence comparison. It classifies comparisons
 The first R6.3 evidence set remains the immutable baseline. Future evidence may update upstream WPT or the selected denominator, but those structural changes are reported explicitly and are not converted into an aggregate compatibility score or hidden percentage movement.
 
 See ADR-0142.
+
+## Current real-Web slices
+
+Issue #339 / R6.5 defines the versioned corpus, live-vs-captured input policy, explicit dependency origins and privacy/resource bounds.
+
+Issue #341 / R6.6 defines deterministic per-scenario result classification and prevents external DNS/TLS/HTTP/redirect/content/resource failures from being relabeled as engine failures.
+
+Issue #342 / R6.7 executes the exact current corpus with a qualification-only network runner and the existing Rarog render pipeline. The first historical raw execution is content-addressed as `sha256:daa3bf52900393e3755b903f0ba2fef9a310b3c3294c84869908ee27a1acf2b8`; its normalized corpus identity is `sha256:835751b5e67c10ac4f77c838d4e4496724597814c9917f58b1358a7d076df203`. The single `rfc9110-html` scenario observed HTTP 200, the Rarog DOM title `RFC 9110: HTTP Semantics`, the declared final URL, render completion and a deterministic screenshot digest. See ADR-0145.
+
+A later live run may observe different external addresses/content and must create new evidence rather than mutating this historical baseline.
 
 ## Non-goals
 
