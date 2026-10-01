@@ -1,0 +1,93 @@
+{
+  "evidence": [
+    {
+      "id": "real-web-first-baseline",
+      "kind": "real-web",
+      "measured_rarog_commit": "2301370b6ccce06a8839a94a75dfeee12e3a3499",
+      "normalized_evidence": {
+        "path": "real-web/evidence/r6-first-baseline.json",
+        "sha256": "sha256:821907e3e5903f6184abd34001559e141a8e0f17f2dd04ac9bcc94245f585053"
+      },
+      "observed": {
+        "dependency_states": [
+          {
+            "origin": "https://www.rfc-editor.org",
+            "role": "primary-document",
+            "scenario_id": "rfc9110-html",
+            "state": "available"
+          }
+        ],
+        "scenario_outcomes": [
+          {
+            "category": "completed-observation",
+            "detail": "completed",
+            "scenario_id": "rfc9110-html"
+          }
+        ]
+      },
+      "platform": {
+        "arch": "x86_64",
+        "environment": "github-actions-ubuntu-24.04-live",
+        "os": "linux"
+      },
+      "raw_evidence": {
+        "path": "real-web/evidence/r6-first-execution.json",
+        "sha256": "sha256:daa3bf52900393e3755b903f0ba2fef9a310b3c3294c84869908ee27a1acf2b8"
+      },
+      "scope": {
+        "scenario_ids": [
+          "rfc9110-html"
+        ]
+      },
+      "source": {
+        "corpus_revision": 1,
+        "corpus_sha256": "sha256:835751b5e67c10ac4f77c838d4e4496724597814c9917f58b1358a7d076df203"
+      }
+    },
+    {
+      "id": "wpt-first-selected-baseline",
+      "kind": "wpt",
+      "measured_rarog_commit": "dcd349dd37b0340ec67a2fb8d36b13980e2fd918",
+      "normalized_evidence": {
+        "path": "wpt/evidence/r6-first-dashboard.json",
+        "sha256": "sha256:f02f45dd2b0e0affa7c0bf0fab97f0b1f0dc52c769201af71f4f300a66df3ae0"
+      },
+      "observed": {
+        "measured_subtests": 0,
+        "measured_tests": 5,
+        "subtest_statuses": {},
+        "subtests_with_expectations": 0,
+        "test_statuses": {
+          "ERROR": 3,
+          "FAIL": 2
+        },
+        "tests_with_expectations": 5,
+        "unexpected_subtests": 0,
+        "unexpected_tests": 5
+      },
+      "platform": {
+        "environment": "github-actions-ubuntu-24.04"
+      },
+      "raw_evidence": {
+        "path": "wpt/evidence/r6-first-wptreport.json",
+        "sha256": "sha256:087d34554cefb38d54d82323a5a8d3419e3a97936fe9b4a2e539e2a2cd6f347f"
+      },
+      "scope": {
+        "selection_sha256": "sha256:3d0951f045626f699ce123a1cc52e06b989ad1d01305e43f1471f6719163b075",
+        "test_ids": [
+          "/css/selectors/dir-style-01a.html",
+          "/css/selectors/dir-style-03a.html",
+          "/html/syntax/parsing/ambiguous-ampersand.html",
+          "/html/syntax/parsing/no-doctype-name.html",
+          "/html/syntax/parsing/zero.html"
+        ]
+      },
+      "source": {
+        "commit": "a83afd4402cffdc876508fe9a47f916d4136099f",
+        "repository": "web-platform-tests/wpt"
+      }
+    }
+  ],
+  "profile_revision": 1,
+  "schema_version": 1
+}
