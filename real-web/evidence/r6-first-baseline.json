@@ -1,0 +1,77 @@
+{
+  "corpus_revision": 1,
+  "corpus_sha256": "sha256:835751b5e67c10ac4f77c838d4e4496724597814c9917f58b1358a7d076df203",
+  "execution_sha256": "sha256:daa3bf52900393e3755b903f0ba2fef9a310b3c3294c84869908ee27a1acf2b8",
+  "platform": {
+    "arch": "x86_64",
+    "environment": "github-actions-ubuntu-24.04-live",
+    "os": "linux"
+  },
+  "rarog_commit": "2301370b6ccce06a8839a94a75dfeee12e3a3499",
+  "results": [
+    {
+      "corpus_revision": 1,
+      "corpus_sha256": "sha256:835751b5e67c10ac4f77c838d4e4496724597814c9917f58b1358a7d076df203",
+      "dependencies": [
+        {
+          "content_sha256": "sha256:d431760660ea44e130f6e919dab216df2d0b3a490567a98089267523368fe1e5",
+          "expected_content_sha256": null,
+          "http_status": 200,
+          "origin": "https://www.rfc-editor.org",
+          "required": true,
+          "resolved_addresses": [
+            "104.18.20.81",
+            "104.18.21.81",
+            "2606:4700::6812:1451",
+            "2606:4700::6812:1551"
+          ],
+          "role": "primary-document",
+          "state": "available"
+        }
+      ],
+      "input": {
+        "mode": "live-external"
+      },
+      "observations": [
+        {
+          "kind": "document-title",
+          "state": "observed",
+          "value": "RFC 9110: HTTP Semantics"
+        },
+        {
+          "kind": "final-url",
+          "state": "observed",
+          "value": "https://www.rfc-editor.org/rfc/rfc9110.html"
+        },
+        {
+          "kind": "render-completion",
+          "state": "observed",
+          "value": true
+        },
+        {
+          "kind": "screenshot",
+          "state": "observed",
+          "value": "sha256:376a97100a0ae7fd1027bc5054c03e08c21d575347baf99443627ec0def0708a"
+        }
+      ],
+      "outcome": {
+        "category": "completed-observation",
+        "detail": "completed",
+        "diagnostic": null
+      },
+      "platform": {
+        "arch": "x86_64",
+        "environment": "github-actions-ubuntu-24.04-live",
+        "os": "linux"
+      },
+      "rarog_commit": "2301370b6ccce06a8839a94a75dfeee12e3a3499",
+      "scenario_id": "rfc9110-html",
+      "schema_version": 1,
+      "source_url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+    }
+  ],
+  "scenario_ids": [
+    "rfc9110-html"
+  ],
+  "schema_version": 1
+}

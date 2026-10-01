@@ -310,6 +310,8 @@ struct WorkerMessageIdAllocator {
 }
 
 impl WorkerMessageIdAllocator {
+    // `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+    #[allow(deprecated)]
     fn new() -> Result<Self, WorkerMessageError> {
         let scope = NEXT_MESSAGE_SCOPE
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {

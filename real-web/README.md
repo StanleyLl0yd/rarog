@@ -23,7 +23,7 @@ A live service outage or external content change must not be reported as an engi
 - title/final-URL/render/screenshot observations;
 - explicit per-response, total-byte, subresource and overall timeout budgets.
 
-This is scenario selection only. R6.5 does not execute the scenario and does not publish a real-Web result.
+R6.5 introduced this scenario as selection only. R6.7 now measures that unchanged one-scenario denominator; the historical evidence is described below.
 
 ## Validation
 
@@ -82,11 +82,37 @@ python3 scripts/real_web_result.py \
   --markdown-out /tmp/real-web-result.md
 ```
 
-R6.6 defines the capture/classification contract only. A live measured baseline is separate work.
+R6.6 defines the capture/classification contract. R6.7 feeds the live corpus through that same contract rather than inventing a second result vocabulary.
 
-## Outcome taxonomy for later execution
+## Live execution
 
-When execution is added in a later slice, results must preserve these categories:
+R6.7 adds `scripts/real_web_execute.py` and `scripts/real_web_baseline.py`.
+
+For every live request and redirect, the executor revalidates the declared HTTPS origin, resolves DNS immediately before connection, rejects unsafe resolved addresses, connects to an already checked numeric address while retaining the original hostname for TLS SNI/certificate verification, and applies redirect/response/aggregate/time budgets.
+
+The test-only `r6_real_web_render` example renders the fetched primary document through the existing Rarog engine. The title observation comes from the parsed Rarog DOM; the screenshot identity is SHA-256 of Rarog's PPM framebuffer output.
+
+The corpus binder requires exactly one raw attempt per manifest scenario and revalidates every attempt through R6.6 before emitting the corpus baseline.
+
+## First measured baseline
+
+Historical evidence under `real-web/evidence/` records the first complete live run for Rarog `2301370b6ccce06a8839a94a75dfeee12e3a3499`.
+
+- denominator: exactly `rfc9110-html`;
+- external primary document: HTTP 200 / available;
+- observed title: `RFC 9110: HTTP Semantics`;
+- observed final URL: `https://www.rfc-editor.org/rfc/rfc9110.html`;
+- render completion: true;
+- outcome: `completed-observation / completed`;
+- raw execution digest: `sha256:daa3bf52900393e3755b903f0ba2fef9a310b3c3294c84869908ee27a1acf2b8`.
+
+The source page remains mutable and is not vendored. Committed raw execution reproduces the historical normalized baseline, while future live probes may legitimately observe different DNS/content evidence.
+
+This single successful observation is not a general-Web compatibility score.
+
+## Outcome taxonomy
+
+Measured and future results preserve these categories:
 
 - `completed-observation`
 - `engine-failure`
@@ -96,4 +122,4 @@ When execution is added in a later slice, results must preserve these categories
 
 The two external categories are not Rarog regressions.
 
-See ADR-0143, ADR-0144 and `docs/R6-EXIT.md`.
+See ADR-0143, ADR-0144, ADR-0145 and `docs/R6-EXIT.md`.

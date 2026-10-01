@@ -296,6 +296,8 @@ impl ScrollTree {
     }
 }
 
+// `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+#[allow(deprecated)]
 fn allocate_scroll_node_id() -> Result<ScrollNodeId, ScrollTreeError> {
     let raw = NEXT_SCROLL_NODE_ID
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {

@@ -73,6 +73,8 @@ pub struct EventListenerIdAllocator {
 }
 
 impl EventListenerIdAllocator {
+    // `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+    #[allow(deprecated)]
     pub fn new() -> Result<Self, EventError> {
         let scope = NEXT_LISTENER_SCOPE
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
