@@ -137,6 +137,8 @@ pub struct EventLoopScheduler<T, M> {
 }
 
 impl<T, M> EventLoopScheduler<T, M> {
+    // `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+    #[allow(deprecated)]
     pub fn new(limits: SchedulerLimits) -> Result<Self, SchedulerError> {
         let scope = NEXT_SCHEDULER_SCOPE
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
