@@ -18,7 +18,7 @@ R6 converts compatibility claims into reproducible evidence. It must not improve
 ## B. Real-Web corpus
 
 - [x] Define a versioned real-Web scenario/corpus manifest with exact inputs and external-dependency policy.
-- [ ] Add deterministic result capture that separates engine failures from unavailable/changed external services.
+- [x] Add deterministic result capture that separates engine failures from unavailable/changed external services.
 - [ ] Establish the first measured corpus baseline without converting it into a general-Web compatibility claim.
 
 ## C. Signed compatibility profiles

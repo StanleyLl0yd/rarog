@@ -59,6 +59,31 @@ Schema version 1 forbids:
 
 The initial action language is intentionally small: `load-input` and `wait-for-idle`. Interaction actions require a reviewed schema extension rather than free-form scripting.
 
+## Deterministic result capture
+
+R6.6 adds `scripts/real_web_result.py`. It validates one raw scenario attempt against the exact corpus contract and emits deterministic JSON plus Markdown.
+
+Each result is bound to the exact Rarog commit, normalized corpus SHA-256/revision, measured platform and exact scenario ID. Every declared external dependency and every declared observation receives an explicit result record; missing records fail closed.
+
+Dependency evidence keeps DNS/TLS/HTTP/redirect/content/limit failures distinct. Required external dependency failure cannot be relabeled as an engine failure. Resolved addresses recorded by the evidence must still be public; live final URLs must remain within declared dependency origins, while captured final URLs remain the exact scenario source URL. Captured-versioned scenarios remain offline and cannot emit external-network outcomes.
+
+Example normalization:
+
+```text
+python3 scripts/real_web_result.py \
+  --manifest real-web/corpus.json \
+  --root . \
+  --attempt /path/to/raw-attempt.json \
+  --rarog-commit <40-hex-rarog-commit> \
+  --platform-os linux \
+  --platform-arch x86_64 \
+  --environment qualification-run \
+  --json-out /tmp/real-web-result.json \
+  --markdown-out /tmp/real-web-result.md
+```
+
+R6.6 defines the capture/classification contract only. A live measured baseline is separate work.
+
 ## Outcome taxonomy for later execution
 
 When execution is added in a later slice, results must preserve these categories:
@@ -71,4 +96,4 @@ When execution is added in a later slice, results must preserve these categories
 
 The two external categories are not Rarog regressions.
 
-See ADR-0143 and `docs/R6-EXIT.md`.
+See ADR-0143, ADR-0144 and `docs/R6-EXIT.md`.

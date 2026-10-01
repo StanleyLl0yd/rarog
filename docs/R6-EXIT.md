@@ -37,7 +37,7 @@ Before R6 can close:
    - explicit regression/update policy. **Implemented by #336 / ADR-0142: evidence bundles are revalidated before comparison; upstream, denominator, platform, source and expectation drift remain explicit; regression/improvement labels are restricted to directly comparable observations.**
 2. **Real-Web**
    - versioned corpus/scenario contract. **R6.5 / #339 defines the initial strict contract: live-external and captured-versioned inputs have explicit mutability/network rules; external unavailable/content drift remain distinct from engine failure.**
-   - reproducible result capture with external-dependency classification;
+   - reproducible result capture with external-dependency classification. **R6.6 / #341 adds deterministic per-scenario normalization: exact dependency/observation coverage is required and external DNS/TLS/HTTP/redirect/content/limit evidence remains distinct from engine failure.**
    - measured baseline.
 3. **Compatibility profiles**
    - canonical reproducible profile payload;

@@ -61,9 +61,9 @@ Synthetic fixtures exist only to test tooling. They are permanently marked as no
 
 Compatibility measurement remains outside DOM/layout/script authority: dashboards do not alter engine behavior, expectations do not suppress runtime failures, and no standards-engine code may be specialized merely to improve dashboard output without an independently demonstrated standards/compatibility defect.
 
-R6 real-Web qualification uses a separate versioned corpus contract. Live external pages are explicitly mutable and dependency-bound; captured inputs are content-addressed, offline and network-independent in schema v1. Network/service/content drift is classified separately from engine failure, and the contract forbids credentials, authenticated/private content, payments, destructive actions, persistent identity and undeclared origins. The initial action language is intentionally bounded rather than free-form script automation.
+R6 real-Web qualification uses a separate versioned corpus contract. Live external pages are explicitly mutable and dependency-bound; captured inputs are content-addressed, offline and network-independent in schema v1. Network/service/content drift is classified separately from engine failure, and the contract forbids credentials, authenticated/private content, payments, destructive actions, persistent identity and undeclared origins. The initial action language is intentionally bounded rather than free-form script automation. R6.6 normalizes execution attempts against that corpus: exact dependency and observation coverage is required, external DNS/TLS/HTTP/redirect/content/limit states remain distinct from engine failures, captured inputs cannot acquire network outcomes, and every result is bound to exact Rarog/corpus/platform identity.
 
-See ADR-0139, ADR-0140, ADR-0141, ADR-0142, ADR-0143 and `docs/R6-EXIT.md`.
+See ADR-0139, ADR-0140, ADR-0141, ADR-0142, ADR-0143, ADR-0144 and `docs/R6-EXIT.md`.
 
 ## Long-term process topology
 
