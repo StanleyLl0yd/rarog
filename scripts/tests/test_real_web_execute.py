@@ -60,6 +60,21 @@ class RealWebExecuteTests(unittest.TestCase):
                     deadline=0.0,
                 )
 
+    def test_exhausted_deadline_before_address_attempt_is_classified(self) -> None:
+        with patch.object(
+            real_web_execute,
+            "_public_addresses",
+            return_value=["1.1.1.1"],
+        ):
+            with self.assertRaises(real_web_execute.NetworkFailure) as context:
+                real_web_execute._request_once(
+                    "https://www.rfc-editor.org/rfc/rfc9110.html",
+                    deadline=0.0,
+                    maximum_bytes=1024,
+                )
+        self.assertEqual(context.exception.state, "timeout-limit-exceeded")
+        self.assertEqual(context.exception.addresses, ["1.1.1.1"])
+
     def test_same_origin_redirect_is_followed_and_content_addressed(self) -> None:
         responses = [
             (
