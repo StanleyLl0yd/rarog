@@ -29,6 +29,22 @@ class ExecutionError(RuntimeError):
     """Raised for local executor/configuration errors rather than measured outcomes."""
 
 
+class NetworkFailure(RuntimeError):
+    def __init__(
+        self,
+        state: str,
+        diagnostic: str,
+        *,
+        addresses: list[str],
+        http_status: int | None = None,
+    ) -> None:
+        super().__init__(diagnostic)
+        self.state = state
+        self.diagnostic = diagnostic
+        self.addresses = addresses
+        self.http_status = http_status
+
+
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(
         self,
@@ -239,16 +255,36 @@ def _request_once(
             )
             response = connection.getresponse()
             headers = {key.lower(): value for key, value in response.getheaders()}
-            body = _read_bounded(response, maximum=maximum_bytes)
+            try:
+                body = _read_bounded(response, maximum=maximum_bytes)
+            except OverflowError as error:
+                raise NetworkFailure(
+                    "resource-limit-exceeded",
+                    _diagnostic(error),
+                    addresses=addresses,
+                    http_status=response.status,
+                ) from error
             return response.status, addresses, headers, body
+        except NetworkFailure:
+            raise
+        except TimeoutError as error:
+            last_error = error
         except (OSError, ssl.SSLError, http.client.HTTPException) as error:
             last_error = error
         finally:
             connection.close()
 
     if isinstance(last_error, TimeoutError):
-        raise last_error
-    raise ssl.SSLError(_diagnostic(last_error or "connection failed"))
+        raise NetworkFailure(
+            "timeout-limit-exceeded",
+            _diagnostic(last_error),
+            addresses=addresses,
+        ) from last_error
+    raise NetworkFailure(
+        "tls-failure",
+        _diagnostic(last_error or "connection failed"),
+        addresses=addresses,
+    ) from last_error
 
 
 def _fetch_live(
@@ -319,50 +355,25 @@ def _fetch_live(
                 _dependency(declared, state="dns-failure"),
                 ("external-unavailable", "dns-failure", _diagnostic(error)),
             )
-        except TimeoutError as error:
+        except NetworkFailure as error:
+            addresses = sorted(set(observed_addresses) | set(error.addresses))
             return (
                 None,
                 None,
                 _dependency(
                     declared,
-                    state="timeout-limit-exceeded",
-                    addresses=sorted(observed_addresses),
+                    state=error.state,
+                    addresses=addresses,
+                    http_status=error.http_status,
                 ),
                 (
                     "external-unavailable",
-                    "timeout-limit-exceeded",
-                    _diagnostic(error),
+                    error.state,
+                    error.diagnostic,
                 ),
             )
         except ExecutionError:
             raise
-        except (OSError, ssl.SSLError) as error:
-            return (
-                None,
-                None,
-                _dependency(
-                    declared,
-                    state="tls-failure",
-                    addresses=sorted(observed_addresses),
-                ),
-                ("external-unavailable", "tls-failure", _diagnostic(error)),
-            )
-        except OverflowError as error:
-            return (
-                None,
-                None,
-                _dependency(
-                    declared,
-                    state="resource-limit-exceeded",
-                    addresses=sorted(observed_addresses),
-                    http_status=200,
-                ),
-                (
-                    "external-unavailable",
-                    "resource-limit-exceeded",
-                    _diagnostic(error),
-                ),
-            )
 
         observed_addresses.update(addresses)
 
