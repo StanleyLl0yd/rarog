@@ -495,6 +495,8 @@ fn push_dom_children(
     Ok(())
 }
 
+// `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+#[allow(deprecated)]
 fn allocate_scope() -> Result<NonZeroU64, AccessibilityError> {
     let scope = NEXT_ACCESSIBILITY_SCOPE
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
