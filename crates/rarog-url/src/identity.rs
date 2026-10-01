@@ -9,6 +9,8 @@ static NEXT_OPAQUE_ORIGIN: AtomicU64 = AtomicU64::new(1);
 pub struct OpaqueOriginId(NonZeroU64);
 
 impl OpaqueOriginId {
+    // `AtomicU64::try_update` requires Rust 1.95; the workspace MSRV is 1.85.
+    #[allow(deprecated)]
     fn allocate() -> Result<Self, UrlError> {
         let raw = NEXT_OPAQUE_ORIGIN
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
