@@ -192,6 +192,8 @@ def _attempt(
 def _read_bounded(
     response: http.client.HTTPResponse,
     *,
+    connection: _PinnedHTTPSConnection,
+    deadline: float,
     maximum: int,
 ) -> bytes:
     content_length = response.getheader("Content-Length")
@@ -212,6 +214,9 @@ def _read_bounded(
         remaining = maximum + 1 - len(output)
         if remaining <= 0:
             raise OverflowError(f"response exceeded {maximum} bytes")
+        if connection.sock is None:
+            raise ExecutionError("HTTPS connection lost its socket during response read")
+        connection.sock.settimeout(min(_remaining(deadline), 5.0))
         chunk = response.read(min(_READ_CHUNK, remaining))
         if not chunk:
             break
@@ -272,9 +277,15 @@ def _request_once(
                 },
             )
             response = connection.getresponse()
+            _remaining(deadline)
             headers = {key.lower(): value for key, value in response.getheaders()}
             try:
-                body = _read_bounded(response, maximum=maximum_bytes)
+                body = _read_bounded(
+                    response,
+                    connection=connection,
+                    deadline=deadline,
+                    maximum=maximum_bytes,
+                )
             except OverflowError as error:
                 raise NetworkFailure(
                     "resource-limit-exceeded",
