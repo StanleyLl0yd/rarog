@@ -15,7 +15,7 @@ rarog-platform-windows-native = { path = "../rarog-platform-windows-native" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = { version = "5.4.1", default-features = false, features = ["std"] }
-interprocess = { version = "=2.4.3", default-features = false }
+interprocess = { version = "=2.4.4", default-features = false }
 font-kit = { version = "0.14.3", default-features = false, features = ["source"] }
 rarog-compositor = { path = "../rarog-compositor" }
 rarog-compositor-wgpu = { path = "../rarog-compositor-wgpu" }
