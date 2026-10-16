@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -114,7 +115,7 @@ def _require_repo_path(value: Any, label: str, prefix: str) -> str:
         "\\" in path
         or path.startswith("/")
         or path.endswith("/")
-        or ".." in path.split("/")
+        or posixpath.normpath(path) != path
         or not path.startswith(prefix)
     ):
         raise ProfileError(f"{label} must be a normalized path under {prefix}")
@@ -443,7 +444,7 @@ def reproduce_wpt_entry(root: Path) -> dict[str, Any]:
         rarog_commit=measured_commit,
         wpt_commit=wpt_commit,
     )
-    if rebuilt_evidence != committed_evidence:
+    if _canonical_bytes(rebuilt_evidence) != _canonical_bytes(committed_evidence):
         raise ProfileError("committed WPT evidence JSON does not reproduce exactly")
 
     platform = _require_text(
@@ -456,7 +457,7 @@ def reproduce_wpt_entry(root: Path) -> dict[str, Any]:
         platform=platform,
         synthetic=False,
     )
-    if rebuilt_dashboard != committed_dashboard:
+    if _canonical_bytes(rebuilt_dashboard) != _canonical_bytes(committed_dashboard):
         raise ProfileError("committed WPT dashboard JSON does not reproduce exactly")
     if wpt_dashboard.render_markdown(rebuilt_dashboard) != _read_text(
         dashboard_md_path, "WPT dashboard Markdown"
@@ -512,7 +513,7 @@ def reproduce_real_web_entry(root: Path) -> dict[str, Any]:
         rarog_commit=measured_commit,
         platform=platform,
     )
-    if rebuilt_baseline != committed_baseline:
+    if _canonical_bytes(rebuilt_baseline) != _canonical_bytes(committed_baseline):
         raise ProfileError("committed real-Web baseline JSON does not reproduce exactly")
     if real_web_baseline.render_markdown(rebuilt_baseline) != _read_text(
         baseline_md_path, "real-Web baseline Markdown"
@@ -582,7 +583,16 @@ def build_initial_profile(root: Path) -> dict[str, Any]:
 
 
 def _md(value: Any) -> str:
-    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+    return (
+        str(value)
+        .replace("\n", " ")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("`", "\\`")
+    )
 
 
 def render_markdown(profile: dict[str, Any]) -> str:
