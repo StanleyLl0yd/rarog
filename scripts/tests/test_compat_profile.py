@@ -154,6 +154,50 @@ class CompatibilityProfileTests(unittest.TestCase):
         ):
             compat_profile.validate_profile(profile)
 
+    def test_artifact_paths_must_be_normalized(self) -> None:
+        for suffix in (
+            "wpt/evidence/./r6-first-wptreport.json",
+            "wpt/evidence//r6-first-wptreport.json",
+            "wpt/evidence/../r6-first-wptreport.json",
+        ):
+            with self.subTest(path=suffix):
+                profile = load_profile()
+                profile["evidence"][1]["raw_evidence"]["path"] = suffix
+                with self.assertRaisesRegex(
+                    compat_profile.ProfileError, "normalized path"
+                ):
+                    compat_profile.validate_profile(profile)
+
+    def test_boolean_drift_is_not_equal_to_integer_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copy_wpt_bundle(root)
+            dashboard_path = root / "wpt" / "evidence" / "r6-first-dashboard.json"
+            dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
+            self.assertEqual(dashboard["summary"]["measured_subtests"], 0)
+            dashboard["summary"]["measured_subtests"] = False
+            dashboard_path.write_text(
+                json.dumps(dashboard, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                compat_profile.ProfileError,
+                "dashboard JSON does not reproduce exactly",
+            ):
+                compat_profile.reproduce_wpt_entry(root)
+
+    def test_profile_markdown_escapes_untrusted_text(self) -> None:
+        profile = load_profile()
+        profile["evidence"][0]["observed"]["dependency_states"][0]["origin"] = (
+            "https://example.org/<script>|\x60x\x60&"
+        )
+        markdown = compat_profile.render_markdown(profile)
+        self.assertIn("&lt;script&gt;", markdown)
+        self.assertIn("\\|", markdown)
+        self.assertIn("\\\x60x\\\x60", markdown)
+        self.assertIn("&amp;", markdown)
+        self.assertNotIn("<script>", markdown)
+
     def test_cli_outputs_are_repeatable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
