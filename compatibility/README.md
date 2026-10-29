@@ -45,6 +45,31 @@ The committed `verification.json` is reproduced byte-for-byte by the independent
 
 The digest is **not a signature**, a common measured engine version or an aggregate compatibility score. Signing remains a separate, later step.
 
+## Offline signing (R6.10 in progress)
+
+`scripts/compat_profile_signature.py` accepts **only** the exact independently verified compact profile payload from ADR-0147 and signs it with Ed25519 via local OpenSSL 3. It neither generates keys nor signs unverified evidence.
+
+A release operator must first provision an Ed25519 private key **outside** the checkout and independently publish/pin a reviewed public trust root. The release-specific trust root is strict canonical JSON with `schema_version: 1`, `profile_sha256` (the exact independently verified profile digest), `expected_key_id` (the required signer fingerprint), and a non-empty sorted `keys` array; each key has `algorithm: "Ed25519"`, `key_id` (SHA-256 of SPKI DER), `public_key_spki_der_base64` (canonical SPKI DER), and `status: "active"` or `"revoked"`.
+
+After that provisioning, the release operator can sign locally:
+
+```text
+python3 scripts/compat_profile_signature.py sign \
+  --root . --trust /trusted/release-trust.json \
+  --private-key /secure/off-repository/ed25519.pem \
+  --signature compatibility/profile.sig.json
+```
+
+Anyone with the separately pinned trust root can verify **offline, without private keys**:
+
+```text
+python3 scripts/compat_profile_signature.py verify \
+  --root . --trust /trusted/release-trust.json \
+  --signature compatibility/profile.sig.json
+```
+
+Neither a production trust root nor a real signature has been provisioned/published by R6.10 tooling development. Ephemeral CI keys and fixtures only test signing/verification behavior. Do not infer a trusted signature or an engine compatibility claim from those tests. See ADR-0148 for trust provenance, key rotation and revocation.
+
 ## Interpretation rules
 
 - WPT and real-Web evidence remain separate kinds.
