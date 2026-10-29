@@ -166,6 +166,18 @@ class CompatibilitySignatureTests(unittest.TestCase):
         with self.assertRaisesRegex(signatures.SignatureError, "outside the checkout"):
             signatures.sign_profile(checkout, private, self.trust, self.signature)
 
+    def test_signer_never_overwrites_existing_or_symlinked_output(self) -> None:
+        existing = b"sentinel"
+        self.signature.write_bytes(existing)
+        with self.assertRaisesRegex(signatures.SignatureError, "already exists"):
+            self.sign()
+        self.assertEqual(self.signature.read_bytes(), existing)
+        self.signature.unlink()
+        self.signature.symlink_to(self.private)
+        with self.assertRaisesRegex(signatures.SignatureError, "symlink"):
+            self.sign()
+        self.assertTrue(self.private.exists())
+
     def test_rejects_mutated_profile_before_verifying_signature(self) -> None:
         checkout = self.base / "checkout"
         for name in SOURCE_FILES:
