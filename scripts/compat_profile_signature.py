@@ -213,10 +213,13 @@ def sign_profile(
         "signature_base64": base64.b64encode(signature).decode("ascii"),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
-    if output.resolve() in (key, (root / "compatibility/profile.json").resolve(),
-                            trust_file.resolve()):
-        raise SignatureError("signature output must not overwrite input or private key")
-    output.write_bytes(_pretty(record))
+    if output.is_symlink() or output.exists():
+        raise SignatureError("signature output already exists or is a symlink")
+    try:
+        with output.open("xb") as stream:
+            stream.write(_pretty(record))
+    except FileExistsError as error:
+        raise SignatureError("signature output already exists") from error
     verify_signature(root, trust_file, output, executable=executable)
     return record
 
