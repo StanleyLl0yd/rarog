@@ -40,6 +40,8 @@ The verifier emits a small deterministic verification envelope with:
 - byte length, evidence count and sorted evidence IDs;
 - exact set of historical measured Rarog commits.
 
+The first published envelope is `compatibility/verification.json`. The canonical profile payload is 2097 bytes, with digest `sha256:adc16fa371c260b49b8f9fc476e91fdd304c1a1ef3ceb10712963bdb41731c66`. The envelope is independently regenerated during protected tests.
+
 This SHA-256 is **content identity**, not a signature, trust assertion, current-engine measurement or conformance score. Any future profile revision requires an explicit verifier schema change, not a silent acceptance of unknown evidence.
 
 ## Consequences
