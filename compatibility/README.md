@@ -39,6 +39,10 @@ python3 scripts/compat_profile_verify.py --root . --json-out /tmp/rarog-profile-
 
 It independently binds the historical source evidence, validates the committed profile and Markdown byte-for-byte, and emits the canonical payload SHA-256. The signed-payload candidate uses compact sorted UTF-8 JSON with no ASCII escaping as specified in ADR-0147; the pretty JSON file is a human-readable view of the same data.
 
+The committed `verification.json` is reproduced byte-for-byte by the independent test suite. For revision 1, the compact canonical profile is **2097 UTF-8 bytes** and has digest:
+
+`sha256:adc16fa371c260b49b8f9fc476e91fdd304c1a1ef3ceb10712963bdb41731c66`
+
 The digest is **not a signature**, a common measured engine version or an aggregate compatibility score. Signing remains a separate, later step.
 
 ## Interpretation rules
