@@ -41,8 +41,8 @@ Before R6 can close:
    - measured baseline. **R6.7 / #342 records the first live corpus baseline for exact Rarog commit `2301370b6ccce06a8839a94a75dfeee12e3a3499`: the one-scenario denominator produced `completed-observation / completed`; raw execution and deterministic summary are versioned under `real-web/evidence/`. This is one bounded observation, not a general-Web compatibility claim.**
 3. **Compatibility profiles**
    - canonical reproducible profile payload. **R6.8 / #345 defines schema version 1 / profile revision 1 in `compatibility/profile.json`. It contains separate WPT and real-Web historical entries, each retaining its own measured Rarog commit, source identity, raw/normalized evidence digest, platform and exact scope. The generator reconstructs both committed evidence sets before inclusion and emits no aggregate score. See ADR-0146.**
-   - independent reproduction check;
-   - signature over the canonical payload.
+   - independent reproduction check. **R6.9 / #348 adds separate profile/source verification, canonical byte SHA-256 and fail-closed tamper testing. See ADR-0147.**
+   - signature over the canonical payload. **Not yet implemented: a digest is not a signature.**
 4. **High-priority scenarios**
    - explicit action/outcome scenarios with measured results.
 5. **WebDriver/BiDi**
