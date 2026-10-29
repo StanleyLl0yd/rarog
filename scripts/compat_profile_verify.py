@@ -173,6 +173,8 @@ def _wpt(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     raw_ref, raw = _artifact(
         root, entry["raw_evidence"], "wpt/evidence/", "WPT raw"
     )
+    if raw_ref["path"] != "wpt/evidence/r6-first-wptreport.json":
+        raise VerificationError("WPT revision-1 raw artifact path mismatch")
     envelope = wpt_evidence.build_evidence(
         selection, raw, rarog_commit=measured, wpt_commit=upstream,
     )
@@ -186,6 +188,8 @@ def _wpt(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     normalized_ref, normalized = _artifact(
         root, entry["normalized_evidence"], "wpt/evidence/", "WPT dashboard"
     )
+    if normalized_ref["path"] != "wpt/evidence/r6-first-dashboard.json":
+        raise VerificationError("WPT revision-1 normalized artifact path mismatch")
     platform = _object(entry["platform"], "WPT platform", {"environment"})
     environment = _text(platform["environment"], "WPT platform environment")
     rebuilt = wpt_dashboard.normalize_reports(
@@ -230,12 +234,16 @@ def _real_web(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     raw_ref, raw = _artifact(
         root, entry["raw_evidence"], "real-web/evidence/", "real-Web raw"
     )
+    if raw_ref["path"] != "real-web/evidence/r6-first-execution.json":
+        raise VerificationError("real-Web revision-1 raw artifact path mismatch")
     baseline = real_web_baseline.build_baseline(
         corpus, raw, rarog_commit=measured, platform=platform
     )
     normalized_ref, normalized = _artifact(
         root, entry["normalized_evidence"], "real-web/evidence/", "real-Web baseline"
     )
+    if normalized_ref["path"] != "real-web/evidence/r6-first-baseline.json":
+        raise VerificationError("real-Web revision-1 normalized artifact path mismatch")
     _same(normalized, baseline, "real-Web baseline")
     if raw_ref["sha256"] != baseline["execution_sha256"]:
         raise VerificationError("real-Web execution digest mismatch")
