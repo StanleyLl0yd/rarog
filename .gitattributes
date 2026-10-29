@@ -1,0 +1,6 @@
+# Canonical compatibility evidence must retain exact UTF-8 LF bytes on Windows.
+compatibility/** text eol=lf
+real-web/evidence/** text eol=lf
+real-web/corpus.json text eol=lf
+wpt/evidence/** text eol=lf
+wpt/r6-selection.json text eol=lf
