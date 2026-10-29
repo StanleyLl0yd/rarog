@@ -22,7 +22,7 @@ _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SIGNATURE_KEYS = {
     "schema_version", "algorithm", "key_id", "payload_sha256", "signature_base64"
 }
-_TRUST_KEYS = {"schema_version", "keys"}
+_TRUST_KEYS = {"schema_version", "profile_sha256", "expected_key_id", "keys"}
 _KEY_KEYS = {"algorithm", "key_id", "public_key_spki_der_base64", "status"}
 
 
@@ -71,7 +71,7 @@ def _load(path: Path, keys: set[str], label: str) -> dict[str, Any]:
     return document
 
 
-def _trust(path: Path) -> dict[str, tuple[bytes, str]]:
+def _trust(path: Path) -> tuple[dict[str, tuple[bytes, str]], str, str]:
     root = _load(path, _TRUST_KEYS, "trust root")
     if type(root["schema_version"]) is not int or root["schema_version"] != 1:
         raise SignatureError("unsupported trust schema")
@@ -96,7 +96,15 @@ def _trust(path: Path) -> dict[str, tuple[bytes, str]]:
         order.append(fingerprint)
     if order != sorted(order):
         raise SignatureError("trust entries must be sorted by key ID")
-    return indexed
+    expected = root["expected_key_id"]
+    digest = root["profile_sha256"]
+    if type(expected) is not str or not _SHA256.fullmatch(expected):
+        raise SignatureError("invalid expected signer key ID")
+    if type(digest) is not str or not _SHA256.fullmatch(digest):
+        raise SignatureError("invalid pinned profile digest")
+    if expected not in indexed or indexed[expected][1] != "active":
+        raise SignatureError("expected signer is absent or revoked")
+    return indexed, expected, digest
 
 
 def _payload(root: Path) -> tuple[bytes, str]:
@@ -152,7 +160,7 @@ def verify_signature(
 ) -> dict[str, Any]:
     root = root.resolve(strict=True)
     payload, digest = _payload(root)
-    keys = _trust(trust_file)
+    keys, expected_key, expected_digest = _trust(trust_file)
     record = _load(signature_file, _SIGNATURE_KEYS, "signature")
     if type(record["schema_version"]) is not int or record["schema_version"] != 1:
         raise SignatureError("unsupported signature schema")
@@ -161,8 +169,10 @@ def verify_signature(
     key_id = record["key_id"]
     if type(key_id) is not str or not _SHA256.fullmatch(key_id):
         raise SignatureError("malformed key ID")
-    if key_id not in keys or keys[key_id][1] != "active":
-        raise SignatureError("signer not trusted or key revoked")
+    if key_id != expected_key or key_id not in keys or keys[key_id][1] != "active":
+        raise SignatureError("unexpected signer, untrusted key or revoked key")
+    if digest != expected_digest:
+        raise SignatureError("profile does not match pinned release identity")
     if type(record["payload_sha256"]) is not str or record["payload_sha256"] != digest:
         raise SignatureError("signed payload digest mismatch")
     signature = _b64(record["signature_base64"], "signature")
@@ -185,7 +195,9 @@ def sign_profile(
     if not key.is_file():
         raise SignatureError("private signing key is not a regular file")
     payload, digest = _payload(root)
-    trusted = _trust(trust_file)
+    trusted, expected_key, expected_digest = _trust(trust_file)
+    if digest != expected_digest:
+        raise SignatureError("profile does not match pinned release identity")
     with tempfile.TemporaryDirectory(prefix="rarog-signature-") as directory:
         directory = Path(directory)
         data, public, sig = (
@@ -197,7 +209,7 @@ def sign_profile(
         ], executable=executable)
         der = public.read_bytes()
         key_id = _fingerprint(der)
-        if key_id not in trusted or trusted[key_id] != (der, "active"):
+        if key_id != expected_key or key_id not in trusted or trusted[key_id] != (der, "active"):
             raise SignatureError("signing key does not match an active pinned trust root")
         _openssl([
             "pkeyutl", "-sign", "-rawin", "-inkey", str(key),

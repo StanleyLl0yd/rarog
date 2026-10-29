@@ -42,6 +42,8 @@ class CompatibilitySignatureTests(unittest.TestCase):
         self.key_id = "sha256:" + hashlib.sha256(self.der).hexdigest()
         self.trust_record = {
             "schema_version": 1,
+            "expected_key_id": self.key_id,
+            "profile_sha256": verifier.verify(ROOT)["profile_sha256"],
             "keys": [{
                 "algorithm": "Ed25519",
                 "key_id": self.key_id,
@@ -130,7 +132,8 @@ class CompatibilitySignatureTests(unittest.TestCase):
 
     def test_rejects_revoked_or_replaced_trust(self) -> None:
         self.sign()
-        for case in ("revoked", "unknown-key", "different-spki", "unknown-status"):
+        for case in ("revoked", "unknown-key", "different-spki", "unknown-status",
+                     "wrong-profile-digest", "wrong-expected-key"):
             with self.subTest(case=case):
                 root = copy.deepcopy(self.trust_record)
                 if case == "revoked":
@@ -141,8 +144,12 @@ class CompatibilitySignatureTests(unittest.TestCase):
                     other = bytearray(self.der)
                     other[-1] ^= 1
                     root["keys"][0]["public_key_spki_der_base64"] = base64.b64encode(other).decode()
-                else:
+                elif case == "unknown-status":
                     root["keys"][0]["status"] = "retired"
+                elif case == "wrong-profile-digest":
+                    root["profile_sha256"] = "sha256:" + "0" * 64
+                else:
+                    root["expected_key_id"] = "sha256:" + "0" * 64
                 self.write(self.trust, root)
                 with self.assertRaises(signatures.SignatureError):
                     signatures.verify_signature(ROOT, self.trust, self.signature)

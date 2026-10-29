@@ -49,7 +49,7 @@ The digest is **not a signature**, a common measured engine version or an aggreg
 
 `scripts/compat_profile_signature.py` accepts **only** the exact independently verified compact profile payload from ADR-0147 and signs it with Ed25519 via local OpenSSL 3. It neither generates keys nor signs unverified evidence.
 
-A release operator must first provision an Ed25519 private key **outside** the checkout and independently publish/pin a reviewed public trust root. The trust root is strict canonical JSON with `schema_version: 1` and a non-empty sorted `keys` array; each key has `algorithm: "Ed25519"`, `key_id` (SHA-256 of SPKI DER), `public_key_spki_der_base64` (canonical SPKI DER), and `status: "active"` or `"revoked"`.
+A release operator must first provision an Ed25519 private key **outside** the checkout and independently publish/pin a reviewed public trust root. The release-specific trust root is strict canonical JSON with `schema_version: 1`, `profile_sha256` (the exact independently verified profile digest), `expected_key_id` (the required signer fingerprint), and a non-empty sorted `keys` array; each key has `algorithm: "Ed25519"`, `key_id` (SHA-256 of SPKI DER), `public_key_spki_der_base64` (canonical SPKI DER), and `status: "active"` or `"revoked"`.
 
 After that provisioning, the release operator can sign locally:
 
