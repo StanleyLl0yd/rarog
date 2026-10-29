@@ -65,7 +65,7 @@ R6 real-Web qualification uses a separate versioned corpus contract. Live extern
 
 R6.8 composes those independently reproducible historical evidence sets into `compatibility/profile.json`. The profile is an evidence index, not a new measurement: every entry retains the exact Rarog commit that actually produced it, plus source/corpus identity, raw and normalized evidence digests, platform and scope. The generator rebuilds the WPT and real-Web evidence from their raw sources before accepting them, preserves kind-specific FAIL/ERROR/external states and emits no aggregate score. Profile schema/revision identity therefore remains distinct from measurement identity; signing is a later R6 step after content reproduction is independently established.
 
-See ADR-0139, ADR-0140, ADR-0141, ADR-0142, ADR-0143, ADR-0144, ADR-0145, ADR-0146 and `docs/R6-EXIT.md`.
+See ADR-0139, ADR-0140, ADR-0141, ADR-0142, ADR-0143, ADR-0144, ADR-0145, ADR-0146, ADR-0147 and `docs/R6-EXIT.md`.
 
 ## Long-term process topology
 

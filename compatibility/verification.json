@@ -1,0 +1,15 @@
+{
+  "canonical_payload_bytes": 2097,
+  "evidence_count": 2,
+  "evidence_ids": [
+    "real-web-first-baseline",
+    "wpt-first-selected-baseline"
+  ],
+  "measured_rarog_commits": [
+    "2301370b6ccce06a8839a94a75dfeee12e3a3499",
+    "dcd349dd37b0340ec67a2fb8d36b13980e2fd918"
+  ],
+  "profile_revision": 1,
+  "profile_sha256": "sha256:adc16fa371c260b49b8f9fc476e91fdd304c1a1ef3ceb10712963bdb41731c66",
+  "schema_version": 1
+}
