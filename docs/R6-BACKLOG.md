@@ -23,7 +23,7 @@ R6 converts compatibility claims into reproducible evidence. It must not improve
 
 ## C. Signed compatibility profiles
 
-- [ ] Define the canonical compatibility profile payload from already-versioned evidence.
+- [x] Define the canonical compatibility profile payload from already-versioned evidence.
 - [ ] Make profile generation reproducible and content-addressed.
 - [ ] Add signing only after canonical payload reproduction is verified independently.
 
