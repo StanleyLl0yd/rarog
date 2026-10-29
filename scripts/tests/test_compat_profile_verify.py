@@ -19,6 +19,7 @@ import compat_profile_verify as verifier
 SOURCE_FILES = (
     "compatibility/profile.json",
     "compatibility/profile.md",
+    "compatibility/verification.json",
     "wpt/r6-selection.json",
     "wpt/evidence/r6-first-wptreport.json",
     "wpt/evidence/r6-first-evidence.json",
@@ -69,6 +70,11 @@ class IndependentProfileVerificationTests(unittest.TestCase):
             ["real-web-first-baseline", "wpt-first-selected-baseline"],
         )
         self.assertEqual(len(output["measured_rarog_commits"]), 2)
+        self.assertEqual(output, self.load("compatibility/verification.json"))
+        self.assertEqual(
+            verifier._pretty(output),
+            (self.root / "compatibility/verification.json").read_bytes(),
+        )
 
     def test_independent_cli_output_is_reproducible(self) -> None:
         first = self.root / "one.json"
