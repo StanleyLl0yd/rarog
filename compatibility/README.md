@@ -29,6 +29,18 @@ cmp /tmp/rarog-profile.md compatibility/profile.md
 
 The protected compatibility-evidence test suite performs the same reconstruction automatically.
 
+## Independent verification and content identity
+
+R6.9 adds an independent verifier that does not import or call the profile generator:
+
+```text
+python3 scripts/compat_profile_verify.py --root . --json-out /tmp/rarog-profile-verification.json
+```
+
+It independently binds the historical source evidence, validates the committed profile and Markdown byte-for-byte, and emits the canonical payload SHA-256. The signed-payload candidate uses compact sorted UTF-8 JSON with no ASCII escaping as specified in ADR-0147; the pretty JSON file is a human-readable view of the same data.
+
+The digest is **not a signature**, a common measured engine version or an aggregate compatibility score. Signing remains a separate, later step.
+
 ## Interpretation rules
 
 - WPT and real-Web evidence remain separate kinds.
