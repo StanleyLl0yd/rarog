@@ -201,6 +201,16 @@ class IndependentProfileVerificationTests(unittest.TestCase):
         ):
             verifier.verify(self.root)
 
+    def test_rejects_published_verification_envelope_tampering(self) -> None:
+        name = "compatibility/verification.json"
+        envelope = self.load(name)
+        envelope["canonical_payload_bytes"] = 2098
+        self.store(name, envelope)
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "published verification envelope mismatch"
+        ):
+            verifier.verify(self.root)
+
     def test_rejects_profile_markdown_tampering(self) -> None:
         name = "compatibility/profile.md"
         path = self.root / name
