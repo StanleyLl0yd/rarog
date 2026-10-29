@@ -10,7 +10,7 @@ harfrust = "0.13.3"
 rarog-layout = { path = "../rarog-layout" }
 
 [dev-dependencies]
-font-test-data = "0.7.0"
+font-test-data = "0.9.1"
 
 [lints]
 workspace = true
