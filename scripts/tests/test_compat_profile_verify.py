@@ -221,6 +221,20 @@ class IndependentProfileVerificationTests(unittest.TestCase):
                     self.root / "compatibility/profile.json",
                 )
 
+    def test_rejects_alias_paths_even_with_identical_content(self) -> None:
+        origin = self.root / "wpt/evidence/r6-first-wptreport.json"
+        alias = self.root / "wpt/evidence/alternate-report.json"
+        shutil.copyfile(origin, alias)
+        profile = self.load("compatibility/profile.json")
+        profile["evidence"][1]["raw_evidence"]["path"] = (
+            "wpt/evidence/alternate-report.json"
+        )
+        self.store("compatibility/profile.json", profile)
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "artifact path mismatch"
+        ):
+            verifier.verify(self.root)
+
     def test_rejects_duplicate_json_keys_and_nonfinite_numbers(self) -> None:
         path = self.root / "compatibility/profile.json"
         for bad in ('{"schema_version":1,"schema_version":1}', '{"schema_version":NaN}'):
