@@ -441,7 +441,7 @@ def verify(root: Path) -> dict[str, Any]:
         raise VerificationError("committed profile Markdown does not reproduce independently")
 
     payload_digest = _digest(expected)
-    return {
+    envelope = {
         "schema_version": 1,
         "profile_revision": 1,
         "profile_sha256": payload_digest,
@@ -452,6 +452,12 @@ def verify(root: Path) -> dict[str, Any]:
             {item["measured_rarog_commit"] for item in verified}
         ),
     }
+    published = _resolved_source(
+        root, "compatibility/verification.json", "compatibility/"
+    )
+    if _read_bytes(published) != _pretty(envelope):
+        raise VerificationError("published verification envelope mismatch")
+    return envelope
 
 
 def main(argv: Sequence[str] | None = None) -> int:
